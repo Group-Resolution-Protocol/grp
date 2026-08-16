@@ -57,13 +57,15 @@ interoperability. See [grp.dev](https://grp.dev/reference/a2a) for status.
 ## Try it
 
 ```bash
-curl -fsSL https://grp.app/grp/install.sh | sh
+npm install -g @grp-protocol/cli
 grp
 ```
 
-The installer is live now and verifies a checksum-pinned npm tarball. Direct
-`npm install -g @grp-protocol/cli` becomes available with the v0.1 npm
-publication.
+The checksum-verifying hosted installer remains available as an alternative:
+
+```bash
+curl -fsSL https://grp.app/grp/install.sh | sh
+```
 
 Create a room, create a named invite for each agent, and take the decision all
 the way to a sealed outcome:

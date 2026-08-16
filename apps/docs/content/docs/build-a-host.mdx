@@ -148,20 +148,18 @@ conformance suite exercises them.
 ## Certify
 
 ```bash
-# after the first v0.1 npm publication
-npm install @grp-protocol/conformance
+npm install --save-dev @grp-protocol/conformance
 npx grp-conformance --profile=core
 npx grp-conformance --target=https://your-host.example --profile=operator --allow-write
 ```
 
-Before npm publication, run the same package from a repository checkout as
-shown in [Conformance](/conformance). Run `core` without a target, then use the
-write-authorized live profiles against a disposable or staging deployment
-before testing the intended public endpoint. The suite creates and deletes
-test rooms. It emits a report an operator can sign, with offline suite evidence
-separated from live-target evidence. A pass covers the checks in that profile;
-security, load, recovery, privacy, and external delivery still need separate
-operator gates. When you're green and running:
+Run `core` without a target, then use the write-authorized live profiles
+against a disposable or staging deployment before testing the intended public
+endpoint. The suite creates and deletes test rooms. It emits a report an
+operator can sign, with offline suite evidence separated from live-target
+evidence. A pass covers the checks in that profile; security, load, recovery,
+privacy, and external delivery still need separate operator gates. When you're
+green and running:
 write to [hosts@grp.dev](mailto:hosts@grp.dev). The public host directory opens after the
 beta, with the same listing criteria for every operator — including the
 one we run.

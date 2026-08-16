@@ -40,35 +40,12 @@ exact tarballs into an empty project, imports every public library, runs both
 installed executables, and retains those verified archives with a checksum
 manifest. It does not publish.
 
-## First publication only
+## First publication
 
-npm does not allow a brand-new package to enter through staged publishing.
-The first version of each package therefore needs a maintainer present and
-authenticated with 2FA. Confirm the npm account, the `grp-protocol` org, and
-the package list before running any publish command. Immediately before the
-first publish, confirm that all five exact names are still unclaimed with
-`npm view <package> version`; a not-found response is expected.
-
-From the clean, tested public checkout, verify the retained checksums and
-publish those exact archives in the order at the top of this file:
-
-```bash
-(cd .release-packages && shasum -a 256 -c SHA256SUMS)
-npm publish .release-packages/grp-protocol-audit-0.1.0.tgz --access public
-npm publish .release-packages/grp-protocol-engine-0.1.0.tgz --access public
-npm publish .release-packages/grp-protocol-sdk-0.1.0.tgz --access public
-npm publish .release-packages/grp-protocol-conformance-0.1.0.tgz --access public
-npm publish .release-packages/grp-protocol-cli-0.1.0.tgz --access public
-```
-
-Each command is a public registry action. Stop and inspect the package page and
-a clean registry install after each one. Never put an npm token in this
-repository.
-
-Only after all five registry installs pass should the private docs remove the
-temporary "not in the registry yet" notices and merge that docs-only change.
-The docs site deploys automatically from private `main`, so changing those
-notices before registry propagation would publish broken installation advice.
+The manual v0.1.0 bootstrap publication is complete. All five package names
+now exist on npm, so do not repeat the first-publication commands or attempt to
+republish version `0.1.0`. Later versions use the staged trusted-publishing
+path below.
 
 ## Later releases
 

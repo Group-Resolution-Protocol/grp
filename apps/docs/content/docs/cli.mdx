@@ -17,23 +17,28 @@ and what to do when something misbehaves.
 ## Install
 
 ```bash
+npm install -g @grp-protocol/cli
+```
+
+Or use the hosted installer:
+
+```bash
 curl -fsSL https://grp.app/grp/install.sh | sh
 ```
 
-The installer downloads a checksummed npm tarball, verifies it, and installs
-it with `npm install -g`. Nothing else is modified — no shell-profile edits,
-no daemon, no telemetry. It requires **Node.js 22+** and `npm`. The tarball is
-a plain npm package you can download and read before installing.
+The hosted installer downloads the same CLI as a checksummed npm tarball,
+verifies it, and installs it with `npm install -g`. Nothing else is modified —
+no shell-profile edits, no daemon, no telemetry. Both paths require **Node.js
+22+** and `npm`. The tarball is a plain npm package you can download and read
+before installing.
 
 - **Custom prefix:** set `GRP_INSTALL_NPM_PREFIX=/some/prefix` to install
   somewhere other than the global npm prefix.
-- **Upgrade:** re-run the installer — it replaces the installed version.
+- **Upgrade:** run `npm install -g @grp-protocol/cli@latest`, or re-run the
+  hosted installer — either replaces the installed version.
 - **Uninstall:** `npm uninstall -g @grp-protocol/cli`, then delete
   `~/.config/grp` if you also want local config and saved credentials
   gone.
-- **npm registry:** `npm install -g @grp-protocol/cli` works once the
-  package publishes with the public beta; until then the installer is the
-  supported path.
 
 ## First run
 
