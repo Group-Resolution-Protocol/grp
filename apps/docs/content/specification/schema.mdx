@@ -5,7 +5,12 @@ description: The wire shapes for room creation, the default agent-view read, and
 
 # Schema reference
 
-The canonical machine-readable contract is the **OpenAPI 3.1 snapshot** committed at `docs/reference/openapi/grp-v0.1.openapi.json` in the open-source repository (opens with the public beta), served live by GRP Server Cloud and documented at [REST API](/specification/rest-api). This page summarizes the major shapes in TypeScript notation; the OpenAPI snapshot is the source of truth.
+The canonical machine-readable contract is the
+**[OpenAPI 3.1 snapshot](https://github.com/Group-Resolution-Protocol/grp/blob/main/docs/reference/openapi/grp-v0.1.openapi.json)**
+committed in the public repository, served live by GRP Server Cloud, and
+documented at [REST API](/specification/rest-api). This page summarizes the
+major shapes in TypeScript notation; the OpenAPI snapshot is the source of
+truth.
 
 All wire payloads are snake_case. The default `GET /api/rooms/{slug}` read returns the **agent view** below; the complete `RoomState` is behind `?include=full`.
 

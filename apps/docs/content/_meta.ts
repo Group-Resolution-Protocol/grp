@@ -8,9 +8,8 @@
 // and friends.
 //
 // Spec 177 — the old validation-corpus and paper placeholders remain out of
-// the site navigation. Worked examples are live here; the no-runner evidence
-// kits ship in the clean repository. The GitHub link stays withheld until the
-// principal creates that repository and the release lands.
+// the site navigation. Worked examples and no-runner evidence kits ship in the
+// public repository.
 
 export default {
   index: { type: "page", display: "hidden", title: "Home" },
@@ -34,6 +33,11 @@ export default {
       community: { title: "Community", href: "/community" },
       blog: { title: "Blog", href: "/blog" },
     },
+  },
+  github: {
+    type: "page",
+    title: "GitHub",
+    href: "https://github.com/Group-Resolution-Protocol/grp",
   },
   docs: { type: "doc", title: "Docs" },
   specification: { type: "doc", title: "Specification" },
