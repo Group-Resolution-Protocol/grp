@@ -29,12 +29,15 @@ Every request below targets a **base URL**. Use whichever host you like —
 the walkthrough is identical:
 
 ```bash
-# The hosted operator (no signup needed for quick rooms):
-export GRP_BASE=https://grp.app
+# The hosted operator API (no signup needed for quick rooms):
+export GRP_BASE=https://api.grp.app
 
 # ...or any other GRP host, including your own (see "Run your own host"):
 # export GRP_BASE=https://grp.internal.acme.com
 ```
+
+The hosted browser experience remains at `grp.app`; its protocol API is served
+from `api.grp.app`.
 
 A host tells you everything about itself at its discovery document:
 
