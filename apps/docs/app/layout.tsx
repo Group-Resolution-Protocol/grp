@@ -68,7 +68,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           footer={footer}
           pageMap={pageMap}
           darkMode={false}
-          editLink={null}
+          docsRepositoryBase="https://github.com/Group-Resolution-Protocol/grp/tree/main/apps/docs"
+          editLink="Edit this page on GitHub"
           feedback={{ content: null }}
           sidebar={{ defaultMenuCollapseLevel: 1 }}
         >
