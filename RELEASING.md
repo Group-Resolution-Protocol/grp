@@ -32,12 +32,13 @@ Run from a clean checkout on Node 22 or newer:
 npm ci
 npm run build
 npm test
-npm run release:verify-packages
+node scripts/verify-npm-packages.mjs --artifact-dir=.release-packages
 ```
 
 The last command packs all five packages, checks their contents, installs the
-exact tarballs into an empty project, imports every public library, and runs
-both installed executables. It does not publish.
+exact tarballs into an empty project, imports every public library, runs both
+installed executables, and retains those verified archives with a checksum
+manifest. It does not publish.
 
 ## First publication only
 
@@ -48,15 +49,16 @@ the package list before running any publish command. Immediately before the
 first publish, confirm that all five exact names are still unclaimed with
 `npm view <package> version`; a not-found response is expected.
 
-From the clean, tested public checkout, publish in the order at the top of this
-file:
+From the clean, tested public checkout, verify the retained checksums and
+publish those exact archives in the order at the top of this file:
 
 ```bash
-(cd packages/audit && npm publish --access public)
-(cd packages/engine && npm publish --access public)
-(cd packages/agent-sdk && npm publish --access public)
-(cd packages/conformance && npm publish --access public)
-(cd packages/cli && npm publish --access public)
+(cd .release-packages && shasum -a 256 -c SHA256SUMS)
+npm publish .release-packages/grp-protocol-audit-0.1.0.tgz --access public
+npm publish .release-packages/grp-protocol-engine-0.1.0.tgz --access public
+npm publish .release-packages/grp-protocol-sdk-0.1.0.tgz --access public
+npm publish .release-packages/grp-protocol-conformance-0.1.0.tgz --access public
+npm publish .release-packages/grp-protocol-cli-0.1.0.tgz --access public
 ```
 
 Each command is a public registry action. Stop and inspect the package page and

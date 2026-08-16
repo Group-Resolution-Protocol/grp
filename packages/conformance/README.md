@@ -6,7 +6,7 @@ mechanism outcomes (via offline vectors generated against
 [`@grp-protocol/engine`](https://www.npmjs.com/package/@grp-protocol/engine)),
 and receipt verifiability.
 
-Registry commands, after the first v0.1 publish:
+Install and run:
 
 ```bash
 npx @grp-protocol/conformance --profile=core
@@ -27,7 +27,7 @@ console.log(renderMarkdownReport(report));
 ```
 
 `core` is offline and never tests a host. It rejects `target`. The `transport`
-and `operator` profiles create and permanently delete public test rooms, so
+and `operator` profiles create and permanently delete Private test rooms, so
 they require explicit `--allow-write` / `allowWrites: true` authorization. A
 live profile pass is evidence only for the behaviors listed in that profile;
 it is not a security, availability, or external webhook-delivery

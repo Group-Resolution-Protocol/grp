@@ -2,7 +2,7 @@
 
 TypeScript client and outcome verification helpers for the Group Resolution Protocol v0.1.
 
-Registry install, after the first v0.1 publish:
+Install:
 
 ```bash
 npm install @grp-protocol/sdk

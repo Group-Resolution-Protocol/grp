@@ -4,7 +4,7 @@ Pure-function implementations of GRP's decision mechanisms. No I/O, no
 host state — ballots in, outcome out — so anyone holding the same inputs can
 recompute the result.
 
-Registry install, after the first v0.1 publish:
+Install:
 
 ```bash
 npm install @grp-protocol/engine

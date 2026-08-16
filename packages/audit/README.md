@@ -5,7 +5,7 @@ Signing and verification primitives for GRP receipts: compact JWS
 action vocabulary and Merkle-root helpers hosts use for daily
 transparency publication.
 
-Registry install, after the first v0.1 publish:
+Install:
 
 ```bash
 npm install @grp-protocol/audit
