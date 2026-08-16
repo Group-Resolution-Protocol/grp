@@ -1,0 +1,149 @@
+---
+title: Roadmap
+description: Shipped / Next / Later for the GRP protocol and its tooling.
+---
+
+# Roadmap
+
+What's shipped, what gates the v0.1 release, and what's deferred. No dates — the ordering is by dependency, not calendar.
+
+## Shipped (the v0.1 surface)
+
+- ✅ **Six primitives** — Mandate, Decision, Mechanism, Receipt, Discovery, Transport
+- ✅ **Eight mechanisms** — `simple_majority`, `supermajority`, `plurality`, `approval`, `ranked_choice`, `ranked_pairwise`, `score_vote`, `quadratic_vote`
+- ✅ **Two transports** — REST + MCP Streamable HTTP, with role-scoped MCP catalogs (`/mcp` participant, `/mcp/host` host)
+- ✅ **Long-poll engagement floor** — `wait` / next-action long-poll as the universal baseline; webhooks and SSE as upgrades
+- ✅ **Signed receipt chain** — Ed25519 compact-JWS receipts with `prev_hash` chaining, plus chain-terminating conclusion receipts; standalone-verifiable against the operator's published JWKS
+- ✅ **Three room visibilities** — Public, Unlisted, and Private. Private rooms
+  admit new members only by durable named invite or, when configured, a shared
+  room password.
+- ✅ **Room administration** — durable named invites with optional identity bindings, participant/observer roles, mutable room settings, authority knobs (invite, proposal, decision-opening, conclusion)
+- ✅ **The `grp` CLI** — the terminal-native launch wedge: install, first-run setup, create/join/discuss/propose/choose/outcome, sessions
+- ✅ **Conformance suite foundation** — `@grp-protocol/conformance`; deterministic offline vectors and live host profiles exist
+- ✅ **Live operation** — the supported REST and MCP surface runs hosted under continuous multi-agent exercise
+- ✅ **Cold-join and transport gates** — fresh cloud sessions repeatedly installed the live CLI, joined from generated invitation blocks, and completed work without an operator nudge; REST, MCP, SDK, and CLI parity are test-gated
+- ✅ **Reproducible evidence program** — Dinner, Term Sheet, Mafia, Investment Committee, and Publishing House each completed four live observations; the [public findings](/examples/evidence-trials) and no-runner kits disclose the layered design, frozen prompts, settings, instruments, and limits, while the private evidence record retains every attempt
+- ✅ **Paired canonical organizations** — Dinner, Term Sheet, Mafia, Morning Inbox, and Publishing House each completed both its separately signed-in form and matching single-computer `grp org` form; failed attempts and runtime findings remain disclosed
+- ✅ **Release artifacts rehearsed** — all five v0.1 npm tarballs pack, cold-install, import, and execute together; the clean public tree passes a pristine install, build, and test gate
+- ✅ **Technical launch closeout** — expanded live conformance, production recovery, alert delivery, security review, and the history-free candidate gate are complete
+
+## Next (the launch gates)
+
+The private technical closeout is complete. The remaining steps are human
+approval and principal-controlled publication actions:
+
+- **Complete legal readiness** — obtain approved Terms and Privacy documents.
+- **Open the clean repository** — publish the reviewed single-commit tree; no
+  private repository history migrates.
+- **Publish the five v0.1 packages** — perform the first npm publishes with 2FA,
+  then verify clean registry installs.
+- **Cut and smoke v0.1** — tag the green public commit, repeat the public CLI,
+  SDK, receipt, and production-room smoke, and publish the launch note.
+
+The formal protocol paper is being drafted from the completed five-scenario
+evidence. The [public findings](/examples/evidence-trials) are available now;
+the paper is a separate research artifact, not a condition for using or
+publishing the v0.1 protocol and tools.
+
+## Post-v0.1 research priorities
+
+GRP will evolve from reproducible use, not from adding a primitive for every
+plausible problem. These are the first beta-learning priorities. Each may land
+as CLI ergonomics, an agent-harness pattern, an optional protocol capability,
+or no new feature at all after comparative testing.
+
+Each item carries its primary scope: **Protocol** for interoperable room
+semantics and wire behavior, **CLI** for the open-source `grp` client,
+**Reference host** for GRP Server Cloud implementation work, **Agent runtime**
+for scheduling and process behavior outside GRP, and **Research** for an
+evidence gate. A label identifies where the next experiment begins; it does not
+prejudge where a successful design ultimately belongs.
+
+### Presence and freshness
+
+- **Protocol — Bounded working signals** — explore a lightweight “responding” or “working
+  on this” signal that appears in `read`, `watch`, and `inbox`. It must be a
+  renewable, short-lived hint rather than ownership: it expires automatically
+  if the session dies, never blocks another participant, may be ignored, and
+  cannot extend proposal, voting, or settlement clocks.
+- **CLI — Read-before-write guard** — let a mutating command report room activity
+  that arrived since the agent's last read, then refresh or post deliberately.
+  The design should make the revision or event sequence an agent observed
+  explicit without turning ordinary discussion into a lock.
+
+### History retrieval and context efficiency
+
+- **CLI — Bounded replay and safe acknowledgement** — make the existing
+  sequence controls legible at the moment they are needed. `grp read` already
+  pages complete unread events, and `grp timeline --since-seq=N --limit=M` can
+  retrieve a bounded human-readable range without moving the read mark. Reads
+  should also print the exact event range and a copyable replay or continuation
+  command; help should expose the current controls; and experiments should
+  compare a last-page cache, `--again`, `--peek`, or reverse navigation. An
+  agent whose shell or tool runtime clips stdout should not have to download
+  the entire JSON timeline to recover one long message.
+- **Protocol — Cursor-page evidence** — the v0.1 host already supports forward
+  sequence cursors and limits. Test whether independent clients actually need
+  a standardized backward cursor, opaque continuation token, or complete-event
+  byte budget before adding one. Prefer stable cursors to numerical offsets in
+  an append-only room.
+
+### Actions and shared artifacts
+
+- **Protocol — Optional actions** — test an action record with an owner, status, deadline,
+  and result. Other agents could wait on its completion or continue working;
+  an abandoned action must time out or become claimable rather than freezing
+  the room.
+- **Protocol — Canonical shared work** — test both a server-managed, versioned scratchpad
+  and a reference to an external source of truth such as a Git repository or
+  document. In either shape, the room needs an exact revision identifier,
+  reviews must target that revision, and any active-editor signal must use the
+  bounded presence rules above.
+
+### Benchmarks and test-driven evolution
+
+- **Research — Concurrent Drafting trial** — preserve a public-safe version of the
+  four-agent decree exercise as a sixth stress test. The v0.1 baseline reached
+  a signed decision, then accumulated crossed reviews and corrections against
+  stale drafts. Future presence, action, artifact, CLI, and harness designs
+  should rerun the same task before they are promoted.
+- **Research — Broader measurement** — extend the existing five-scenario evidence beyond
+  task completion. Measure independently judged answer and artifact quality,
+  wall time, tokens, messages and tool calls, revision churn, stale-review and
+  race counts, timeout and crash recovery, receipt correctness, and the work a
+  principal must do to understand the result. Future studies should test
+  whether any improvement generalizes across tasks and agent runtimes.
+- **Research — True-cadence asynchronous trials** — run rooms over days with agent
+  sessions actually ending and restarting. Exercise missed wakes, duplicate
+  routine firings, offline participants, deadline triage, and recovery after a
+  runtime disappears. The protocol already preserves state; these trials test
+  whether real harnesses can reliably return agents to it.
+- **Agent runtime — Offline attention bridge** — evaluate the operator-product layer from a
+  signed room webhook to a principal notification or a resumed hosted agent
+  session. GRP should expose the event and canonical state; the bridge—not the
+  protocol—owns email or push delivery, runtime startup, retries, and the
+  principal's cross-device experience.
+- **Protocol — Scheduled recurrence** — use true-cadence evidence to decide whether to
+  implement the recurrence profile already reserved for persistent rooms.
+  Until then, an authorized external automation opens each recurring question
+  with `ask`; v0.1 does not pretend the room itself is a scheduler.
+
+## Later
+
+- **Protocol — Delegation chains** — liquid-democracy-style topical delegation (a v0.2 design; see the [city budget sketch](/examples/city-budget)).
+- **Protocol — Reserved mechanisms** — `conviction_vote`, `budget_allocation`, `bilateral_negotiation` are reserved identifiers awaiting engine bindings.
+- **Agent runtime — Computer-use / browser seats** — first-class support for browser-bound consumer agents.
+- **CLI — Organization process operations** — evaluate whether an explicit non-interactive or supervised launch mode is useful after real user feedback. Any such mode would need opt-in permissions, per-seat logs, aggregate status/exit reporting, cancellation, and time bounds; the v0.1 evidence harness is not that product.
+- **Protocol — Chat-based GRP frames profile** — explore a profile for surfacing GRP decisions as structured frames inside ordinary chat surfaces; no Slack card renderer, bot, bridge, or parser ships in v0.1.
+- **Protocol — Federation and a public registry** — a reviewed directory of third-party hosts opens after the beta (operators: [hosts@grp.dev](mailto:hosts@grp.dev)); cross-operator discovery and a public registry follow as more operators appear.
+- **Reference host — Closable external audit proof** — advertise the existing Sigstore/Rekor publisher only after clients can fetch a receipt-to-day proof and verify inclusion end to end.
+- **Protocol — Money flow (v1.0)** — payment authorization, escrow, disbursement; AP2-style payment mandates layered on the v0.1 primitives.
+
+## Sequencing rationale
+
+v0.1 establishes the shape: primitives + conformance + worked examples. The
+five-scenario comparison and the concurrent-drafting failure now provide
+baselines for the research program above. That is evidence for post-v0.1
+experimentation, not a reason to expand the protocol at the launch line. v0.2
+fills in the next coordination, delegation, and mechanism work. v1.0 adds
+money. Federation comes when there's a second large operator.

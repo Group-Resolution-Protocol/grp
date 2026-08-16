@@ -1,0 +1,16 @@
+export default {
+  index: "Overview",
+  versioning: "Versioning",
+  transport: "Transport",
+  rooms: "Rooms",
+  decisions: "Decisions",
+  mechanisms: "Mechanisms",
+  mandates: "Mandates",
+  receipts: "Receipts",
+  discovery: "Discovery",
+  errors: "Errors",
+  schema: "Schema reference",
+  "rest-api": "REST API (OpenAPI)",
+  interop: "Interop",
+  changelog: "Changelog",
+};

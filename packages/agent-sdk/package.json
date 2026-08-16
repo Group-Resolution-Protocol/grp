@@ -1,0 +1,44 @@
+{
+  "name": "@grp-protocol/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript client and receipt verification helpers for the Group Resolution Protocol.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepack": "npm run build",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.examples.json",
+    "test": "vitest run",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^3.1.0"
+  },
+  "devDependencies": {
+    "@grp-protocol/audit": "^0.1.0",
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.10"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Group-Resolution-Protocol/grp.git"
+  }
+}

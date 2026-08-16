@@ -1,0 +1,169 @@
+---
+title: Receipts
+description: Standalone-verifiable signed JWT receipts emitted at decision close.
+---
+
+# Receipts
+
+This section is **normative**.
+
+## 1. Receipt format
+
+A receipt is a compact JWS (signed JWT) per [RFC 7515](https://datatracker.ietf.org/doc/html/rfc7515) — three base64url-encoded segments separated by dots. `alg=EdDSA` (Ed25519). The payload is JCS-canonicalized ([RFC 8785](https://datatracker.ietf.org/doc/html/rfc8785)) before base64url-encoding.
+
+Every conforming implementation MUST emit receipts with the following header and payload shape:
+
+Header:
+
+```json
+{ "alg": "EdDSA", "typ": "grp-receipt+jwt", "kid": "room-key-2026" }
+```
+
+Payload (decoded):
+
+```jsonc
+{
+  "iss": "<room URL>",
+  "aud": "<room URL>",
+  "jti": "urn:uuid:0d1...",
+  "iat": 1762880400,
+  "grp": {
+    "decision_id": "<id>",
+    "decision_kind": "standing" | "ephemeral" | "conclusion",
+    "room_id": "<room URL>",
+    "mechanism": {
+      "kind": "<mechanism id>",
+      "parameters": { "question": "<string>", "options": ["<string>", ...] }
+    },
+    "windows": {
+      "deliberation_started_at": "<ISO 8601>",
+      "voting_started_at": "<ISO 8601>",
+      "voting_ended_at": "<ISO 8601>",
+      "cooldown_ended_at": "<ISO 8601>"
+    },
+    "deliberation_message_count": <integer>,
+    "votes": [<vote-summary>, ...],
+    "overrides": [], // reserved — always empty at v0.1
+    "outcome": {
+      "status": "completed" | "rejected" | "tied" | "no_quorum" | "canceled",
+      "winning_option": "<option>" | null,
+      "tallies": { "<option>": <number>, ... },
+      "diagnostics": { "cast_votes": <integer>, "eligible_voters": <integer> }
+    },
+    "prev_hash": "sha256:<hex>" | null,
+    "sequence": <integer>,
+    // Conclusion receipts (decision_kind: "conclusion") only:
+    "closing_statement": "<string>" | null,
+    "concluded_by": "<agent DID or participant urn>"
+  }
+}
+```
+
+1.1. The `alg` header MUST be `EdDSA`.
+
+1.2. The `typ` header MUST be `grp-receipt+jwt`.
+
+1.3. The `kid` header MUST identify a key in the room's JWKS at `.well-known/grp.json`.
+
+1.4. The JWS signing input is the ASCII bytes of `<base64url(header)>.<base64url(payload)>`, per RFC 7515 §3.1.
+
+## 2. Vote summaries
+
+Each entry in `grp.votes` MUST be:
+
+```jsonc
+{
+  "agent_id": "<agent DID or participant:<id> urn>",
+  "choice": "<option>",
+  "weight": <integer>,
+  "cast_at": "<ISO 8601>",
+  "mandate_ref": "<mandate jti>" | null,
+  "signature": "<agent signature>" | null
+}
+```
+
+2.1. For mandate-bound choices, `agent_id` MUST be the acting agent's DID and `mandate_ref` MUST be the mandate's `jti`.
+
+2.2. For token-cast choices (the URL-room baseline), `agent_id` is the participant urn (`participant:<id>`) and `mandate_ref` and `signature` MUST be `null`. The raw participant token MUST NOT appear anywhere in the receipt.
+
+2.3. Rooms configured `choice_visibility: "never"` MUST emit aggregate-only receipts: `grp.votes` is empty and only `grp.outcome.tallies` records the result.
+
+## 3. Deliberation record
+
+3.1. `grp.deliberation_message_count` MUST record the number of discussion messages attached to the decision at close.
+
+3.2. `grp.deliberation_root` is OPTIONAL at v0.1: when present it MUST be the Merkle root of all deliberation messages at decision close, with each leaf the SHA-256 of the JCS-canonicalized message body, per the canonical `@grp-protocol/audit` implementation (see [Open source](/open-source)). GRP Server Cloud does not yet emit it for URL-room receipts.
+
+## 4. Hash chain
+
+4.1. Every room MUST maintain a hash chain of its receipts. Each new receipt's `grp.prev_hash` MUST be `sha256:<hex>` over the compact-JWS bytes of the previous receipt (the signed `<header>.<payload>.<signature>` string in UTF-8).
+
+4.2. The first receipt in a room's chain MUST set `grp.prev_hash: null`.
+
+4.3. The room MUST make its chain inspectable: `GET /api/rooms/{slug}/decisions` lists every decision with its `receipt_hash` and `prev_hash` link, and `GET /api/rooms/{slug}/outcome` returns the whole chain summary — room metadata plus `decisions[]`, each carrying its `receipt_jws`, `receipt_hash`, and `prev_hash`, a `conclusion` block (the chain-terminating conclusion receipt, when the room has concluded; `null` otherwise), and `verification.jwks_url` pointing a verifier at the operator's JWKS. Both reads are gated by the room's visibility rules.
+
+4.4. A concluded room's chain MUST terminate with a conclusion receipt (`decision_kind: "conclusion"`) whose `prev_hash` references the final decision's receipt hash.
+
+## 5. Daily Merkle root publication
+
+5.1. A conforming room SHOULD publish a daily Merkle root of all that day's receipts to a public audit log. Sigstore Rekor (`rekor.sigstore.dev`, `hashedrekord` entry type) is the reference choice. The receipt format is log-agnostic; conformance only requires *some* append-only Merkle log with inclusion proofs. GRP Server Cloud contains the publisher machinery but does not advertise this capability until a verifier can fetch the receipt-to-day proof and close the inclusion loop.
+
+5.2. Implementations that do not publish to an audit log MUST omit the `audit_log` field from their `.well-known/grp.json` (or set `audit_log.kind: "none"` if they prefer the explicit form). Rooms that don't publish are fully conformant; they simply don't expose the additional audit surface.
+
+## 6. Failure receipts
+
+6.1. When a mechanism fails (quorum unmet, tie under the configured tie-break, no option clearing the pass threshold), the room MUST emit a receipt with `grp.outcome.status` recording the failure mode (`no_quorum`, `tied`, `rejected`, or `canceled`) and `grp.outcome.diagnostics` recording the cast/eligible counts.
+
+6.2. Failure receipts MUST be signed and chained identically to completion receipts. Verifiers MUST treat them as on-record terminations of the decision.
+
+## 7. Verification protocol
+
+A standalone verifier MUST perform the following steps to validate a receipt:
+
+a. Fetch the room's JWKS at `.well-known/grp.json`. The document MAY be cached respecting `Cache-Control` (1-hour cap recommended).
+
+b. Find the JWKS key whose `kid` matches the JWS header's `kid`.
+
+The compact JWS string is the artifact. Verifiers MUST preserve and hash its
+exact issued bytes; they MUST NOT decode and re-encode its segments before
+checking the receipt hash or chain link.
+
+c. Verify the Ed25519 signature over the signing input (`<base64url(header)>.<base64url(payload)>` ASCII bytes).
+
+d. For a **semantic verification**, re-run the mechanism (per [Mechanisms
+§5](/specification/mechanisms#5-verifying-a-receipt)) on `grp.votes` plus
+`grp.mechanism.parameters` and confirm the output matches `grp.outcome`. This
+step is unavailable for aggregate-only receipts from
+`choice_visibility: "never"` rooms, which attest tallies without per-choice
+rows. A verifier MUST report semantic verification as unavailable rather than
+claiming it passed when the ballots or mechanism implementation are absent.
+
+e. If `grp.prev_hash` is non-null, fetch the prior receipt and confirm hash continuity (`sha256(prior_compact_jws) == grp.prev_hash`).
+
+f. (Optional) Confirm the receipt's daily root is present in the room's published audit log.
+
+If signature, byte/hash, or chain verification fails, the receipt is invalid.
+If semantic replay runs and disagrees with the signed outcome, the receipt is
+signature-valid but semantically invalid. If replay cannot run, the verifier
+MUST distinguish that from a successful semantic check.
+
+## CLI verification
+
+The `grp` CLI retrieves the credentialed outcome record and verifies the
+published Ed25519 signatures, receipt hashes, signed `prev_hash` values, signed
+sequence numbers, and the complete decision/conclusion chain locally:
+
+```sh
+grp outcome <room>
+grp outcome <room> --json > room-outcome.json
+```
+
+The human-readable command reports the verification result. The JSON form is
+the portable evidence artifact: it contains every compact JWS exposed by the
+room, the chain summary, JWKS URL, and local verification result. It does not
+include the participant token used to authorize a private-room read. For
+receipts that explicitly declare `agreement: true`, both the CLI and the
+TypeScript SDK's `verifyRoomReceiptChain` helper replay the signed unanimity
+parameters and votes and reject a signed outcome that does not follow from
+them. The CLI reports semantic replay as unavailable for aggregate-only
+receipts because their per-choice rows were deliberately omitted.

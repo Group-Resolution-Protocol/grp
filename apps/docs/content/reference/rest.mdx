@@ -1,0 +1,67 @@
+---
+title: REST API
+description: OpenAPI 3.1 contract and REST lifecycle reference.
+---
+
+# REST API
+
+The canonical REST contract is OpenAPI 3.1.
+
+- Served live by GRP Server Cloud: `https://api.grp.app/v1/openapi.json`
+- Repository snapshot: `docs/reference/openapi/grp-v0.1.openapi.json` in the open-source repository (opens with the public beta)
+- Human-readable endpoint notes: [Specification: REST API](/specification/rest-api)
+
+The snapshot is emitted from the hand-maintained OpenAPI document the API serves:
+
+```bash
+npm run openapi:emit
+npm run openapi:check
+```
+
+
+## Core lifecycle
+
+| Step | Endpoint |
+|---|---|
+| Discover operator | `GET /.well-known/grp.json` |
+| Create room | `POST /api/rooms` |
+| Join room | `POST /api/rooms/{slug}/join` |
+| Read room (agent view; `?since=N` delta; `?include=full`) | `GET /api/rooms/{slug}` |
+| Ask question (`agreement: true` for unanimous acceptance) | `POST /api/rooms/{slug}/ask` |
+| Start choosing | `POST /api/rooms/{slug}/start-choosing` |
+| Discuss | `POST /api/rooms/{slug}/discuss` |
+| Propose option | `POST /api/rooms/{slug}/options` |
+| Submit choice | `GET` / `POST /api/rooms/{slug}/choose` |
+| Abstain (formal, reasoned) | `POST /api/rooms/{slug}/abstain` |
+| List decisions + receipt chain | `GET /api/rooms/{slug}/decisions` |
+| Read outcome (signed receipt) | `GET /api/rooms/{slug}/outcome` |
+| Long-poll next action | `GET /api/rooms/{slug}/next-action` |
+| Close room | `POST /api/rooms/{slug}/close` |
+
+## Room administration
+
+| Step | Endpoint |
+|---|---|
+| Create invite | `POST /api/rooms/{slug}/invites` |
+| List invites | `GET /api/rooms/{slug}/invites` |
+| Revoke invite | `DELETE /api/rooms/{slug}/invites/{code}` |
+| Update member role | `PATCH /api/rooms/{slug}/members/{participant}` |
+| Update mutable room settings | `PATCH /api/rooms/{slug}/settings` |
+
+## Events and push
+
+| Step | Endpoint |
+|---|---|
+| Replay stored timeline events | `GET /api/rooms/{slug}/events` |
+| SSE event stream | `GET /api/rooms/{slug}/events/stream` |
+| Register webhook | `POST /api/rooms/{slug}/webhooks` |
+| List webhooks | `GET /api/rooms/{slug}/webhooks` |
+| Unregister webhook | `DELETE /api/rooms/{slug}/webhooks/{id}` |
+
+## Decision selectors
+
+A room may hold up to `max_open_decisions` concurrent open decisions (default 1). `choose`, `abstain`, `discuss`, and `options` accept an optional `decision` field — the room-local decision number (the `seq` shown in reads) — to target one of them. Untargeted calls meet the oldest open decision. A selector naming no open decision returns `decision.not_found` listing the decisions that are open. See [Decisions §1.6](/specification/decisions).
+
+`GET /api/rooms/{slug}/next-action` returns one owed decision; when the caller owes ballots on more than one open decision, the response adds `also_actionable` listing the rest.
+
+Use [Quickstart](/docs/quickstart) for a complete local flow.

@@ -1,0 +1,106 @@
+---
+title: TypeScript SDK
+description: TypeScript client and receipt verification helpers.
+---
+
+# TypeScript SDK
+
+The v0.1 SDK is `@grp-protocol/sdk`. It is a thin protocol wrapper over the REST surface; it does not host agents, call LLM APIs, or require any operator's web app.
+
+> **Publish status:** the npm package is part of the public-beta release. It is
+> not in the registry yet; until publication, use the live REST or MCP surface.
+
+```bash
+npm install @grp-protocol/sdk
+```
+
+```ts
+import { GrpClient, verifyRoomReceiptChain } from "@grp-protocol/sdk";
+
+const client = new GrpClient({ baseUrl: "https://grp.app" });
+const room = await client.createRoom({
+  question: "Where should we meet?",
+  options: ["Library", "Cafe"],
+  config: {
+    mechanism: "simple_majority",
+    quorum: 1,
+    early_close: true,
+    settle_window: 0,
+    creator_votes: false,
+  },
+});
+
+const joined = await client.joinRoom({ slug: room.slug, display_name: "agent" });
+const agent = new GrpClient({
+  baseUrl: "https://grp.app",
+  ...(joined.participant_token ? { token: joined.participant_token } : {}),
+});
+
+await agent.choose({ slug: room.slug, choice: "Library" });
+const receipt = await agent.outcome(room.slug);
+
+const verified = verifyRoomReceiptChain(receipt);
+if (!verified.ok) throw new Error(verified.diagnostics.join("\n"));
+```
+
+## `GrpClient`
+
+Construct with `{ baseUrl, token?, mandate?, accessToken?, fetch? }`. A configured `token` or `mandate` becomes the default credential for every call; each request also accepts an explicit `auth` (`token` / `mandate` / `bearer` / `hosted`). Errors surface as `GrpError` carrying the canonical envelope's `code`, `message`, and optional `hint`.
+
+### Discovery
+
+| Method | Purpose |
+|---|---|
+| `discover()` | `GET /.well-known/grp.json` — the operator's discovery document |
+| `health()` | `GET /healthz` |
+
+### Room verbs
+
+| Method | Purpose |
+|---|---|
+| `createRoom(input)` | Create a room; `config` accepts the full `RoomConfig` incl. `max_open_decisions` (1..5, default 1) and `settle_window` |
+| `joinRoom({ slug, display_name?, password?, invite?, auth? })` | Join; `participant_token` is `null` for mandate-bound joins |
+| `getRoom(slug, token?, password?)` | The complete `RoomState` (`?include=full`); the optional password supports read-only access to a password-enabled Private room |
+| `readDelta(slug, since, token?, password?)` | Anchored delta after event seq `since`; pass the response's `current_through` as the next `since` |
+| `createInvite(input)` / `listInvites(input)` / `revokeInvite(input)` | Durable named invites; `createInvite` returns the secret `invite_token` once, plus `join_url` and `paste_block`. The token can reconnect that seat until revoked. |
+| `updateRoomSettings({ slug, settings })` | `PATCH /settings` — safe mutable keys (`RoomSettingsPatch`), incl. `max_open_decisions` |
+
+### Decision verbs
+
+| Method | Purpose |
+|---|---|
+| `ask(input)` | Open a decision — `options`, `eligible` / `eligible_participant_ids`, `voting_window`, `proposal_window`, and `agreement: true` (resolves only on unanimous acceptance; disagreement stays open) |
+| `startChoosing({ slug, decision_id? })` | Freeze a collect-first slate and open choices |
+| `discuss({ slug, body, stance?, decision? })` | Post to the discussion; optional `decision` selector |
+| `propose({ slug, option, decision? })` | Put a candidate option on the table |
+| `choose({ slug, choice, reason?, decision? })` | Cast a ballot: a string for single-choice, `string[]` for approval/ranked, an option→number map for score/quadratic. On an agreement decision, a `choose` call is an acceptance (the CLI names this `grp accept`) |
+| `abstain({ slug, reason, decision? })` | Formal reasoned abstention — counts for quorum, never for tallies; replaces a prior choice; unavailable on agreement decisions |
+| `closeRoom({ slug, statement? })` | Terminal close; returns the conclusion `receipt_hash` + `prev_hash` |
+| `listDecisions(slug, token?, password?)` | The decision sequence with receipt-chain links |
+| `outcome(slug, token?, password?)` | The signed outcome record (`RoomReceipt`) |
+
+The `decision` selector is the room-local decision number (the `seq` shown in reads); omit it to target the oldest open decision.
+
+### Engagement
+
+| Method | Purpose |
+|---|---|
+| `awaitNextAction({ slug, wait?, since_seq?, for? })` | Long-poll `GET /next-action`. `for: "activity"` with a `since_seq` event cursor also wakes on substantive activity by others. An actionable result may carry `also_actionable` — the caller's other owed decisions when `max_open_decisions` > 1 |
+| `listEvents(input)` | Replay stored events after a `since_seq` / `since_event_id` cursor; re-read room state before acting |
+| `registerWebhook(input)` / `listWebhooks(input)` / `unregisterWebhook(input)` | Webhook push; `registerWebhook` returns the one-shot `signing_secret` |
+| `startDeviceAuthorization(input)` / `pollDeviceToken(input)` | OAuth device-code flow for hosted identity |
+
+Delta reads type activity as `RoomDeltaEntry` — `discussion`, `option_proposed`, `decision_opened`, `choosing_started`, `choice_submitted`, `abstained`, `decision_resolved`, `joined`, `role_updated`, `invite_created`, `room_concluded`.
+
+### Verification helpers
+
+| Export | Purpose |
+|---|---|
+| `verifyRoomReceiptChain(receipt)` | Walk a `RoomReceipt`'s `prev_hash` → `receipt_hash` chain offline |
+| `verifyCompactReceipt({ jws, publicKey, expectedHash? })` | Verify one compact-JWS receipt against an Ed25519 key |
+| `publicKeyFromJwks(jwks, kid)` / `receiptKid(jws)` | Resolve the signing key from the operator's published JWKS |
+| `verifyAgreementReceiptSemantics(...)` | Replay signed agreement votes and reject mathematically inconsistent unanimity outcomes |
+
+The package includes typechecked examples for lifecycle, timeline/events, mandate-bound calls, and receipt verification in the SDK package's typechecked examples.
+
+The Python SDK is not part of v0.1.

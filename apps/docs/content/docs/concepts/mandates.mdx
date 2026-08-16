@@ -1,0 +1,112 @@
+---
+title: Mandates
+description: A signed JWT binding an authorized actor to act on a principal's behalf within a defined scope.
+---
+
+# Mandates
+
+A **mandate** is a signed JWT issued by a principal to an authorized actor. The usual actor is an agent, but the same primitive can authorize an integration, automation, webhook bridge, game host, market monitor, or ticket router. It says: "this actor (identified by this public key) MAY act on my behalf in these rooms, on these actions, with these caps, until this expiration."
+
+Mandates are **optional**. The participant token is the baseline credential on both transports — REST and MCP alike — and rooms default to `auth: "either"`. A mandate is the identity-attested upgrade: a room that needs to know *whose authority* is behind each action sets `auth: "mandate_required"`, and every action then carries a mandate via the `X-Mandate` header. An operator advertises which credential paths it accepts as `auth_modes` in its discovery document (`/.well-known/grp.json`). Mandate-joined participants get no participant token back from join — the mandate *is* the credential — and resolve their seat by the verified mandate's agent DID on subsequent calls, including the long-poll (`wait` / `next-action` works via mandate exactly as via token).
+
+The format is **compact JWS** (RFC 7515) — the same boring shape every OAuth/OIDC stack already speaks. Header + payload + signature, base64url-encoded, dot-separated. `alg=EdDSA` (Ed25519) at v0.1.
+
+## Shape
+
+The compact JWS on the wire:
+
+```
+<base64url(header)>.<base64url(payload)>.<base64url(signature)>
+```
+
+Header:
+
+```json
+{ "alg": "EdDSA", "typ": "grp-mandate+jwt", "kid": "key-1" }
+```
+
+Payload (decoded):
+
+```jsonc
+{
+  "iss": "https://ana.example",
+  "sub": "did:key:z6Mk…ana-claude",
+  "jti": "urn:uuid:6f...",
+  "nbf": 1746662400,
+  "exp": 1778198400,
+  "grp": {
+    "rooms": ["urn:grp:room:household-789"],
+    "actions": ["choose", "discuss", "propose", "ask", "start_choosing", "close"],
+    "weight_cap": 1,
+    "rate_caps": { "limit": 100, "window_seconds": 3600 },
+    "trust_stage": 2
+  }
+}
+```
+
+The payload is **JCS-canonicalized** (RFC 8785) before base64url-encoding — that makes the signing bytes deterministic across implementations.
+
+## Authority and actors
+
+GRP separates the authority from the thing exercising it:
+
+- A **principal** or room role owns the authority.
+- An **actor** exercises that authority: an agent, integration, automation, or direct principal session.
+- A **participant** is eligible to discuss and/or decide inside a decision.
+
+Those are not always the same. A room admin can ask questions without submitting choices in them. An integration can ask a question because a principal authorized it to use `ask`. A department agent can discuss and decide because its principal is a participant.
+
+The audit trail should make the attribution clear:
+
+```txt
+Decision opened by Scott
+Decision opened by Scott's agent · Authorized by Scott
+Decision opened by Linear triage integration · Authorized by Acme Product Ops
+```
+
+## Scope evaluation
+
+The room performs **seven scope checks** on every mandated call:
+
+1. **Signature.** The mandate verifies under the public key resolved from the issuer's JWKS at `.well-known/grp.json` (looked up by the JWS `kid` header).
+2. **Validity window.** `now` is between `nbf` and `exp`.
+3. **Room match.** The target room is in `grp.rooms` (or `grp.rooms` is `["*"]` for an unrestricted mandate).
+4. **Action match.** The requested action is in `grp.actions`.
+5. **Weight cap.** The action's weight (e.g., quadratic credits) is ≤ `grp.weight_cap`.
+6. **Rate cap.** The action's per-window rate is ≤ `grp.rate_caps.limit` per `grp.rate_caps.window_seconds`.
+7. **Revocation status.** The mandate's `jti` is not in the issuer's revocation list (published at the same `.well-known/grp.json`).
+
+A failure on any check rejects the action with a structured error (see [Errors](/specification/errors)).
+
+## Trust stages
+
+`grp.trust_stage` is a 0–2 integer encoding how much friction the principal accepted at issuance in v0.1:
+
+| Stage | Friction | Typical use |
+|---|---|---|
+| 0 | None — implicit on first action | Demo / tutorial |
+| 1 | Email confirmation | Casual auth |
+| 2 | Authenticated session (operator-held key, OIDC/OAuth sign-in) — or device-held key at the principal's option | Default for personal use |
+Stage 3 hardware-attested issuance is not implemented or accepted in v0.1 and
+must not be relied on. The verifier library contains a minimum-stage check for
+future protocol versions, but GRP Server Cloud does not currently expose a
+room configuration that raises that minimum.
+
+## Restricted keys
+
+The hosted onboarding flow may pair a mandate with a **restricted key** (`rk_*`) issued by the host. The restricted key supplies host-account identity for account/email-bound invite redemption; the mandate remains the authorization credential for room actions. A paired request presents:
+
+- `Authorization: Bearer rk_...`
+- `X-Mandate: <compact JWS>`
+- `X-Body-Signature: <Ed25519(JCS(body))>` — **reserved, not enforced at v0.1**; servers accept but do not yet require or verify it
+
+When host-account identity is required, the server verifies that the key's stored `mandate_id` exactly matches the presented mandate. Ordinary mandate-bound room actions do not require an `rk_*`; clients must not mistake the optional hosted-identity proof for a second factor.
+
+## Revocation
+
+A principal revokes a mandate by adding an entry (keyed by the mandate's `jti`) to the `revocations` array in their `.well-known/grp.json`. Rooms that observe the revocation reject subsequent calls with the revoked mandate. Revocations are append-only and the issuer document is fetched fresh per `Cache-Control` (five-minute host cap).
+
+## Cross-references
+
+- [Specification: Mandates](/specification/mandates) — normative spec
+- [Specification: Transport](/specification/transport) — how mandates ride on the wire

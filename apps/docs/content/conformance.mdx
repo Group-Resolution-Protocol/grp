@@ -1,0 +1,109 @@
+---
+title: Conformance
+description: Run the GRP v0.1 conformance suite and interpret its reports.
+---
+
+# Conformance
+
+GRP v0.1 conformance is tested with `@grp-protocol/conformance`. The package
+includes canonical vectors, live probes, JSON/Markdown reports, and signed
+report creation and verification. It requires Node 22 or newer.
+
+Conformance is how an operator makes a narrow, checkable claim. A report does not say "this company is trustworthy." It says a specific target URL passed a specific GRP profile against a specific vector set at a specific time.
+
+## Profiles
+
+| Profile | Use |
+|---|---|
+| `core` | Offline deterministic checks: mechanisms, mandate vectors, receipt vectors, canonicalization, discovery shape. |
+| `transport` | Core plus authenticated REST lifecycle, both required MCP revisions, cross-transport parity, long-poll, event replay, idempotency, shared-link discovery, receipt verification, and cleanup against a live target. |
+| `operator` | Transport plus discovery honesty, every advertised mechanism, mandate-required authorization, negative contracts, and legacy experimental Agent Card checks when advertised. These are not A2A 1.0 conformance. |
+
+Use the smallest profile that matches the claim:
+
+- Use `core` for libraries and mechanism implementations.
+- Use `transport` for room servers that expose REST and MCP.
+- Use `operator` for hosted services that publish discovery, keys, reports,
+  optional experimental bindings, and operational metadata.
+
+## Run
+
+From a repository checkout:
+
+```bash
+npm run conformance --workspace=@grp-protocol/conformance -- --profile=core
+npm run conformance --workspace=@grp-protocol/conformance -- --profile=transport --target=http://localhost:3001 --allow-write
+npm run conformance --workspace=@grp-protocol/conformance -- --profile=operator --target=http://localhost:3001 --allow-write
+```
+
+After the first npm publication, the equivalent commands use
+`npx @grp-protocol/conformance`.
+
+`core` is entirely offline. It rejects `--target` because it gathers no evidence
+about a server. The two live profiles create private test rooms, act in them,
+and permanently delete them. They therefore require the explicit
+`--allow-write` acknowledgement. HTTPS is required for non-loopback targets.
+
+The suite attempts cleanup after every probe, including failed probes. A
+cleanup failure fails the case and names the room in the diagnostic. Do not run
+a live profile against a host where you are not authorized to create and delete
+test data.
+
+The operator profile uses an ephemeral `did:key` mandate for development hosts.
+A hosted service should normally reject arbitrary self-issued mandates and
+trust only approved HTTPS issuer origins. For that deployment, create a
+short-lived mandate with join, discuss, choose, and propose authority for the
+synthetic test rooms; store the compact JWS alone in a mode-`0600` file; and run:
+
+```bash
+npm run conformance --workspace=@grp-protocol/conformance -- \
+  --profile=operator \
+  --target=https://operator.example \
+  --allow-write \
+  --mandate-file=/secure/path/grp-conformance-mandate.jws
+```
+
+The mandate is held in memory only and is never copied into the report. Delete
+the file after the run. Supplying it as an argument value is deliberately not
+supported because command lines are commonly visible to other local processes
+and shell history.
+
+## Signed Reports
+
+```bash
+npm run conformance --workspace=@grp-protocol/conformance -- --profile=operator --target=https://operator.example --allow-write --report=grp-conformance-report.json
+
+GRP_CONFORMANCE_SIGNING_KEY_BASE64=... npm run conformance --workspace=@grp-protocol/conformance -- sign \
+  --report=grp-conformance-report.json \
+  --key-env=GRP_CONFORMANCE_SIGNING_KEY_BASE64 \
+  --kid=operator-2026-05 \
+  --out=grp-conformance-signed.json
+
+npm run conformance --workspace=@grp-protocol/conformance -- verify \
+  --signed-report=grp-conformance-signed.json \
+  --jwks=operator-jwks.json
+```
+
+A publishable operator claim should include the signed report, the operator
+JWKS or known public key, and the target URL tested. A signature proves who
+signed an unchanged report; it does not convert self-attestation into
+independent certification.
+
+## Reading a Report
+
+Every report includes the protocol version, requested profile, target URL,
+pass/fail/skip counts, per-test diagnostics, and the SHA-256 digest of the
+static vector set. Results and summary counts distinguish offline `suite`
+checks from live `target` checks, so an offline vector pass cannot be presented
+as evidence about a named host. Signed reports wrap that report in a compact
+JWS so downstream readers can verify that the report body was not changed after
+signing.
+
+## Claim boundary
+
+Passing `transport` or `operator` is evidence about the protocol behaviors the
+profile actually exercised at that target and time. It is not a security audit,
+load test, availability promise, privacy certification, or proof of webhook
+delivery to an external receiver. The operator profile checks advertised
+webhook registration and SSE stream contracts; operational delivery and
+reconnection testing belong in the operator's deployment gates.

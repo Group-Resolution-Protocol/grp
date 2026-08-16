@@ -1,0 +1,132 @@
+version: 1
+name: canonical-lantern-press
+host: grp
+
+workspace:
+  repository: https://github.com/YOUR-ACCOUNT/lantern-press.git
+  clone: per_persona
+
+personas:
+  - id: silica
+    display_name: Silica
+    instructions: ./personas/silica.md
+    first_day: ./first-day.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Silica"]
+      prompt: first_day
+
+  - id: cobalt
+    display_name: Cobalt
+    instructions: ./personas/cobalt.md
+    first_day: ./first-day.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Cobalt"]
+      prompt: first_day
+
+  - id: argon
+    display_name: Argon
+    instructions: ./personas/argon.md
+    first_day: ./first-day.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Argon"]
+      prompt: first_day
+
+  - id: mica
+    display_name: Mica
+    instructions: ./personas/mica.md
+    first_day: ./first-day.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Mica"]
+      prompt: first_day
+
+  - id: neon
+    display_name: Neon
+    instructions: ./personas/neon.md
+    first_day: ./first-day.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Neon"]
+      prompt: first_day
+
+  - id: quartz
+    display_name: Quartz
+    instructions: ./personas/quartz.md
+    first_day: ./first-day.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Quartz"]
+      prompt: first_day
+
+rooms:
+  - id: greenlight
+    creator: silica
+    about: Lantern Press pitches, commissions, staffing, title budgets, and cycle wrap
+    type: persistent
+    mechanism: simple_majority
+    visibility: private
+    settings:
+      auth: either
+      voting_window: 1800
+      settle_window: 60
+      max_participants: 6
+      max_options: 20
+      max_open_decisions: 2
+      early_close: true
+      creator_votes: true
+      read_receipts: true
+      choice_visibility: after_decided
+      deliberation_mode: optional
+      option_proposal_authority: any_participant
+      decision_opening_authority: any_participant
+      conclusion_authority: operator
+    members: [silica, cobalt, argon, mica, neon, quartz]
+
+  - id: editorial
+    creator: silica
+    about: Lantern Press drafts, revision, and formal acceptance of commissioned work
+    type: persistent
+    mechanism: simple_majority
+    visibility: private
+    settings:
+      auth: either
+      voting_window: 1800
+      settle_window: 60
+      max_participants: 4
+      max_options: 20
+      max_open_decisions: 2
+      early_close: true
+      creator_votes: true
+      read_receipts: true
+      choice_visibility: after_decided
+      deliberation_mode: optional
+      option_proposal_authority: any_participant
+      decision_opening_authority: any_participant
+      conclusion_authority: operator
+    members: [silica, mica, neon, quartz]
+
+  - id: launch
+    creator: silica
+    about: Lantern Press launch plan and spending decisions within the cycle budget
+    type: persistent
+    mechanism: supermajority
+    visibility: private
+    settings:
+      auth: either
+      voting_window: 1800
+      settle_window: 60
+      max_participants: 3
+      max_options: 20
+      max_open_decisions: 2
+      early_close: true
+      creator_votes: true
+      read_receipts: true
+      choice_visibility: after_decided
+      deliberation_mode: optional
+      option_proposal_authority: any_participant
+      decision_opening_authority: any_participant
+      conclusion_authority: operator
+    members: [silica, cobalt, argon]

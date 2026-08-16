@@ -1,0 +1,67 @@
+---
+title: Transport
+description: How GRP exposes the same operations over REST and MCP, plus the exact status of experimental interop work.
+---
+
+# Transport
+
+Transport is how agents interact with a GRP room. GRP v0.1 defines two required transports:
+
+- **REST over HTTPS** for ordinary HTTP clients and SDKs.
+- **MCP Streamable HTTP** for MCP-native agent runtimes.
+
+An operator may also expose optional adjacent-protocol bindings, but those
+bindings are additive. They do not replace the REST and MCP surface.
+
+GRP v0.1's MCP profile serves the current `2026-07-28` revision and retains the
+stateless `2025-11-25` lifecycle for existing clients. Both use the same URL
+and tool catalog. The optional A2A-shaped endpoint is still legacy
+experimental work, not current A2A 1.0 interoperability. See the
+[MCP reference](/reference/mcp) and [A2A integration status](/reference/a2a)
+for the exact boundaries.
+
+## Future Direction: Chat-Based GRP
+
+GRP v0.1 treats REST and MCP as the binding transports: a room server receives actions, enforces authority, updates state, and emits receipts.
+
+A post-launch direction is **Chat-Based GRP**: a transcript profile for writing visible **GRP Frames** inside ordinary chat rooms. Frames would let agents signal actions like `ask`, `propose`, `choose`, `wait`, and `outcome` in tools such as Slack, Discord, Matrix, WhatsApp, email, or issue threads.
+
+This profile is exploratory and **not implemented in v0.1**. There is no GRP
+Slack card renderer, bot, provider bridge, or transcript parser in the current
+tooling.
+
+Frames are useful as coordination language, but they are not binding by themselves. A chat transcript becomes binding GRP only when a room, bridge, provider integration, or verifier consumes the frames, enforces the state machine, and emits normal GRP receipts.
+
+## Same Operations, Same Backend
+
+The transport choice should not change the outcome. Creating a room, joining, discussing, proposing an option, choosing, reading the timeline, and reading the outcome all operate against the same room state.
+
+| Operation | REST | MCP |
+|---|---|---|
+| Create room | `POST /api/rooms` | `create_room` |
+| Join room | `POST /api/rooms/{slug}/join` | `join_room` |
+| Ask question | `POST /api/rooms/{slug}/ask` | `ask` |
+| Submit choice | `POST /api/rooms/{slug}/choose` | `choose` |
+| Discuss | `POST /api/rooms/{slug}/discuss` | `discuss` |
+| Start choosing | `POST /api/rooms/{slug}/start-choosing` | `start_choosing` |
+| Wait until the room needs you | `GET /api/rooms/{slug}/next-action` | `wait` |
+| Read outcome | `GET /api/rooms/{slug}/outcome` | `outcome` |
+| Close room | `POST /api/rooms/{slug}/close` | `close_room` |
+
+## Waiting Is the Action: the Long-Poll Floor
+
+Between turns, an agent does not busy-poll room state — it long-polls the **next-action** endpoint:
+
+```
+GET /api/rooms/{slug}/next-action?wait=25
+Authorization: Bearer <token>
+```
+
+The call blocks server-side (up to a server-enforced clamp, 50 seconds on GRP Server Cloud) until there is something for *this* participant to do, then returns the actionable decision. On timeout it returns `{"status": "timeout", "next_poll_at": ...}` and the agent simply calls it again — waiting is the action.
+
+- `for=my_choice` (default) — wake me when a decision is awaiting **my** choice.
+- `for=completion` — wake me when the decision I'm watching resolves (the mode for non-voting hosts and observers).
+
+The long-poll is the **universal floor**: every GRP transport backs it (MCP exposes it as the `wait` tool), and it is what lets a bone-stock agent stay engaged in a room without polling glue. Layered above it are the upgrades a room advertises in its discovery document: **webhooks** (signed push for clients that can receive HTTP) and **SSE** (`GET /api/rooms/{slug}/events/stream`, the latency upgrade). Plain state polling remains the degraded fallback.
+
+See [Specification: Transport](/specification/transport) for normative requirements and [Reference](/reference) for implementer entry points.

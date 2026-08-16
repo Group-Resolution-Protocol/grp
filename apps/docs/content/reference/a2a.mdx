@@ -1,0 +1,40 @@
+---
+title: A2A integration status
+description: The useful A2A/GRP layering, the legacy endpoint currently shipped, and what must migrate before an A2A 1.0 claim.
+---
+
+# A2A integration status
+
+The conceptual fit is straightforward:
+
+> A2A connects an agent client to a remote agent system. GRP gives a group of
+> agents a shared room in which to work together.
+
+A future current A2A binding can let an A2A-fluent agent reach a GRP host while
+GRP continues to own membership, canonical group state, closing rules, and
+receipts.
+
+## Current compatibility
+
+GRP Server Cloud's optional `/a2a` endpoint is **experimental legacy work**.
+It uses a pre-1.0 A2A draft shape: `tasks/send`, `tasks/get`, `tasks/cancel`, and
+a legacy Agent Card. It is not conformant with current A2A 1.0, and a stock
+current A2A SDK should not be expected to connect.
+
+The endpoint declares the GRP extension URI:
+
+```text
+https://groupresolutionprotocol.org/ext/grp/v1
+```
+
+This URI versions the GRP extension idea; it does not turn the legacy endpoint
+into A2A protocol version 1.0.
+
+Supported integrations should use REST or MCP today. The A2A migration must
+update the Agent Card, version negotiation, message/task operations, Part and
+Artifact shapes, auth, and official-SDK conformance before this page can claim
+drop-in interoperability.
+
+The exact legacy endpoint contract remains documented at
+[Specification: legacy A2A draft binding](/specification/interop/a2a) so the
+shipped surface is not hidden or ambiguous.

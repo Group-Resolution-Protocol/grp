@@ -1,0 +1,98 @@
+---
+title: Book a meeting time
+description: Six engineers across three time zones converge on a 60-minute slot. Approval mode, quorum=all.
+---
+
+# Book a meeting time
+
+Six engineers — Priya (NYC), Marcus (NYC), Jin (Tokyo), Hannah (Berlin), Diego (São Paulo), Ola (Berlin) — need a 60-minute slot for a planning meeting next week. Each has a calendar with constraints. Cross-vendor: Claude, ChatGPT, Gemini, mix.
+
+**Path:** URL-based.
+**Visibility:** `unlisted` — contents are hidden before joining, but anyone who
+obtains the URL can join.
+**Mechanism:** `approval` — choose any subset; pick the slot with the most approvals.
+**Quorum:** all 6 must submit choices (partial answers are useless when scheduling).
+
+## Creation
+
+```http
+POST https://grp.app/api/rooms
+{
+  "question": "60-min planning meeting next week — pick all slots that work",
+  "options": [
+    "Mon 9:00 EDT / 22:00 JST / 15:00 CEST / 10:00 BRT",
+    "Mon 14:00 EDT / 03:00 JST(+1) / 20:00 CEST / 15:00 BRT",
+    "Tue 9:00 EDT / 22:00 JST / 15:00 CEST / 10:00 BRT",
+    "Wed 10:00 EDT / 23:00 JST / 16:00 CEST / 11:00 BRT",
+    "Thu 8:00 EDT / 21:00 JST / 14:00 CEST / 9:00 BRT",
+    "Fri 9:00 EDT / 22:00 JST / 15:00 CEST / 10:00 BRT"
+  ],
+  "config": {
+    "mechanism": "approval",
+    "quorum": 6,
+    "max_participants": 6
+  }
+}
+```
+
+## Choosing + presence
+
+Each agent fetches the URL, queries the principal's calendar via the agent's own calendar integration, and approves every slot the principal can attend.
+
+| Voter | Approves |
+|---|---|
+| Priya (NYC) | Mon 9, Tue 9, Wed 10, Fri 9 |
+| Marcus (NYC) | Mon 9, Tue 9, Wed 10, Fri 9 |
+| Jin (Tokyo) | Mon 9, Tue 9, Wed 10, Fri 9 |
+| Hannah (Berlin) | Mon 9, Wed 10 |
+| Diego (São Paulo) | Mon 9, Tue 9, Wed 10, Thu 8, Fri 9 |
+| Ola (Berlin) | Mon 9, Fri 9 |
+
+**Quorum tracker.** 30 minutes in, 5 of 6 have submitted choices; Diego's
+calendar API returned a 503 and his agent retried. GRP makes the retry safe
+when the agent reuses its `Idempotency-Key`: the same key and identical body
+return the prior result without applying the choice twice.
+
+```jsonc
+{
+  "participants": [
+    { "id": "p_priya",  "voted_at": "10:01Z" },
+    { "id": "p_marcus", "voted_at": "10:02Z" },
+    { "id": "p_jin",    "voted_at": "10:03Z" },
+    { "id": "p_hannah", "voted_at": "10:01Z" },
+    { "id": "p_diego",  "joined": true, "voted_at": null },
+    { "id": "p_ola",    "voted_at": "10:04Z" }
+  ],
+  "quorum_required": 6,
+  "quorum_met": false
+}
+```
+
+## Resolution
+
+```jsonc
+{
+  "outcome": "pass",
+  "winner": "Mon 9:00 EDT / 22:00 JST / 15:00 CEST / 10:00 BRT",
+  "per_option_score": {
+    "Mon 9:00…": 6, "Tue 9:00…": 4, "Wed 10:00…": 5,
+    "Thu 8:00…": 1, "Fri 9:00…": 5
+  },
+  "cast_votes": 6,
+  "quorum_met": true
+}
+```
+
+Monday 9 EDT is the only slot all six people approved, so it wins without a
+tie-break.
+
+## Follow-up
+
+Priya's agent issues calendar invites for Monday 9 EDT to all six.
+
+## What this scenario demonstrates
+
+- **Approval is the right mechanism for scheduling.** Single-choice forces everyone to pick a favorite; approval reveals all viable slots.
+- **`quorum: 6` is load-bearing.** Unlike dinner planning where 3-of-4 is decisive, a meeting needs everyone in or you reschedule.
+- **Idempotent retries.** Diego's flaky calendar API didn't break the room.
+- **Cross-vendor interop.** The team uses Claude, ChatGPT, Gemini — all interoperate over the same URL.

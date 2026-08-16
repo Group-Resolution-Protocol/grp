@@ -1,0 +1,14 @@
+name: Protocol question / proposal
+description: Ask about protocol behavior or float a protocol-affecting change.
+labels: [protocol]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: Question or proposal
+      description: |
+        For proposals, say what would change and why. Protocol-affecting
+        changes follow the GOVERNANCE.md process (public discussion,
+        working implementation, conformance).
+    validations:
+      required: true

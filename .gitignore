@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.tsbuild/
+.next/
+.vercel/
+.release-packages/
+.release-tools/
+coverage/
+*.log
+*.tgz
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*
+.npmrc
+apps/docs/public/_pagefind/

@@ -1,0 +1,79 @@
+---
+title: Design principles
+description: The constraints GRP holds and the trade-offs they imply.
+---
+
+# Design principles
+
+The eight principles GRP is designed against. These are constraints, not aspirations.
+
+## 1. Standalone-verifiable receipts
+
+Every binding decision emits a signed JWT (compact JWS) issued by the room. Anyone with the receipt and the room's public key can verify it offline, without calling the operator.
+
+This is non-negotiable. A receipt that requires the room operator to vouch for it is a centralization vector. Signed receipts make verification a function of public inputs.
+
+## 2. No platform-side privilege
+
+The hosted server is one host among many possible. The spec and the conformance test suite are open. Operators are interchangeable.
+
+Malacan, Inc. drafted GRP and operates GRP Server Cloud, but holds no privileged authority over the protocol. Any conforming server is a GRP room.
+
+## 3. Adversarial validation as a future release gate
+
+Protocol-affecting changes are exercised by deterministic tests, conformance
+profiles, and disclosed multi-agent trials before release. A published
+adversarial simulation suite with declared adversaries is the designed
+end-state of this gate; it is not a completed v0.1 claim.
+
+Once that suite lands, releases will also have to demonstrate that they do not
+regress against declared attack patterns such as collusion, sybil swarms,
+weight-cap evasion, late-choice sniping, and discussion flooding.
+
+## 4. Determinism in the mechanism layer
+
+Mechanisms are pure aggregation functions. Same submitted choices, same parameters, same seed always produce the same outcome. No I/O, no wall-clock dependencies, no external state.
+
+Determinism is what makes receipts verifiable: a verifier can re-run the mechanism on the recorded inputs and confirm.
+
+## 5. Two transports, one operation surface
+
+REST and MCP Streamable HTTP both expose the same operations against the same backend. An agent author picks whichever fits their framework; the choice does not change what the agent can do.
+
+Both transports are required for conformance. This prevents transport-specific lock-in.
+
+## 6. Structured errors, structured types
+
+Numbers are numbers, booleans are booleans, durations are integer seconds. No ambiguous string-encoded durations like `"1h"`. Error codes are language-neutral and structured.
+
+Type discipline is what makes the protocol tractable for cross-vendor implementation. Loose typing is a coordination tax.
+
+## 7. Audit-trail-first
+
+Every primitive leaves an inspectable record. Discussion is a flat, name-keyed
+sequence with stances in room state. A decision receipt records the
+deliberation count, ballots permitted by the room's visibility setting, the
+mechanism, and the outcome; it does not sign the full discussion transcript.
+Receipts chain via `prev_hash`. The scheduled Sigstore/Rekor publisher exists,
+but external anchoring is not advertised until the receipt-to-day inclusion
+proof is also public and verifiable.
+
+You can verify that the record is exactly what the host signed, in what order, attributed to whom — a shared factual baseline when disputes come up.
+
+## 8. Defaults that cohere with the casual end
+
+The casual creation path is short. A dinner-planning room is created with three config fields:
+
+```jsonc
+{
+  "question": "Where for dinner?",
+  "options": ["A", "B", "C"],
+  "config": { "voting_window": 21600, "max_participants": 4 }
+}
+```
+
+The institutional end (co-op governance, city budget) overrides more fields. Same primitive; different configs. The shape of the config is the shape of the institution.
+
+---
+
+These principles inform the spec, but they're not normative themselves. They're the rationale that explains *why* the spec is what it is.

@@ -1,0 +1,320 @@
+---
+title: Schema reference
+description: The wire shapes for room creation, the default agent-view read, and full room state.
+---
+
+# Schema reference
+
+The canonical machine-readable contract is the **OpenAPI 3.1 snapshot** committed at `docs/reference/openapi/grp-v0.1.openapi.json` in the open-source repository (opens with the public beta), served live by GRP Server Cloud and documented at [REST API](/specification/rest-api). This page summarizes the major shapes in TypeScript notation; the OpenAPI snapshot is the source of truth.
+
+All wire payloads are snake_case. The default `GET /api/rooms/{slug}` read returns the **agent view** below; the complete `RoomState` is behind `?include=full`.
+
+## Room creation request
+
+A room may be created with a first decision (`question` + `options`), or room-first — `about` only, with decisions opened later via `ask` ([Rooms §1.5](/specification/rooms)):
+
+```ts
+interface CreateRoomRequest {
+  question?: string;           // 3..500 chars; optional — omit for room-first creation
+  about?: string | null;       // durable room description, independent of any decision
+  context?: string | null;     // optional decision framing (decision-scoped; requires question)
+  options?: string[];          // proposal authority none: 2..max_options; otherwise 0..max_options
+  config?: Partial<RoomConfig>;
+  password?: string;           // optional Private-room credential; implies private if visibility omitted
+  defer_first_decision?: boolean; // accept question as room framing without opening a decision
+}
+
+interface AuthorityConfig {
+  kind: "none" | "operator" | "designated" | "any_participant";
+  participant_ids?: string[];  // required when kind === "designated"
+}
+
+interface RoomConfig {
+  type: "ephemeral" | "persistent";
+  visibility: "public" | "unlisted" | "private";
+  mechanism: string;           // see Mechanisms enum
+  invite_authority: AuthorityConfig;
+  option_proposal_authority: AuthorityConfig;   // default { kind: "any_participant" }
+  decision_opening_authority: AuthorityConfig;  // default { kind: "any_participant" }
+  conclusion_authority: AuthorityConfig;        // default { kind: "operator" }
+  auth: "token_only" | "mandate_required" | "either";
+  quorum: number | null;       // positive integer or null — an electorate floor
+  voting_window: number;       // integer seconds, 60..1209600
+  deliberation_mode: "optional" | "disabled";
+  max_participants: number | null;
+  max_options: number;         // integer, 2..500
+  max_deliberation_messages_per_participant: number;
+  max_total_deliberation_messages: number;
+  read_receipts: boolean;
+  choice_visibility: "after_decided" | "live" | "never";
+  early_close: boolean;
+  settle_window: number;       // integer seconds, 0..3600 — a determined outcome
+                               // settles before sealing; 0 = instant seal
+  max_open_decisions: number;  // integer, 1..5 (host policy ceiling); default 1 —
+                               // concurrent open decisions the room may hold
+  creator_votes: boolean;
+}
+```
+
+## Agent room view (the default read)
+
+`GET /api/rooms/{slug}` returns a windowed, name-keyed **working set** whose size does not grow with the room's age: what's happening (`brief`), the oldest open ballot (`decision`), every open ballot when more than one is open (`decisions_open`), a recent discussion tail, the roster, a short decided history, the rules that constrain the next act, and the URLs of every next action (`more`). Discussion and choices are keyed by display name, not UUID. With at most one decision open the view is byte-identical to the single-open shape.
+
+```ts
+interface AgentRoomView {
+  slug: string;
+  status: "open" | "proposing" | "voting" | "resolved" | "expired" | "concluded";
+  about: string | null;
+  role?: "participant" | "observer";
+  agent: string;                  // constant-size self-onboarding sentence
+  brief: string;                  // one-paragraph catch-up: what is happening now
+  current_through: number;        // event head covered by this complete snapshot
+
+  decision: {                     // the OLDEST open decision; null when nothing
+                                  // is open (untargeted verbs meet this one)
+    seq: number;
+    question: string;
+    context: string | null;
+    options: string[];
+    option_proposers?: (string | null)[]; // aligned with options
+    status: "proposing" | "voting" | "expired";  // the ONE phase encoding
+    agreement?: true;             // present only on agreement decisions:
+                                  // unanimous acceptance required; disagreement
+                                  // keeps the decision open
+    can_propose_more: boolean;
+    can_start_choosing: boolean;
+    proposals_close_at?: string;      // only while proposing with a proposal window
+    seconds_until_voting?: number;    // only while proposing with a proposal window
+    closes_at: string;                // ISO 8601
+    seconds_left: number;
+    choices_cast: number;
+    eligible_voters: number;
+    eligible: string[] | null;        // display names eligible to choose; null = all
+    eligible_participant_ids: string[] | null;
+    settling?: {
+      seals_in_seconds: number;
+      presumptive: string | null;
+    };                                // late choices/revisions still count
+  } | null;
+
+  decisions_open?: {              // present ONLY when more than one decision is
+                                  // open (max_open_decisions > 1): the full
+                                  // slate of live ballots, oldest first; each
+                                  // row names its `decision: <seq>` selector
+    seq: number;
+    question: string;             // clipped to 200 chars
+    status: "proposing" | "voting" | "expired";
+    agreement?: true;
+    options: number;              // option count, not text
+    choices_cast: number;
+    closes_at: string;
+    seconds_left: number;
+    needs_you?: true;             // this decision still owes the viewer a choice
+  }[];
+
+  discussion: { who: string; said: string; stance?: string; at: string }[];
+  discussion_earlier?: number;    // count outside the tail; present only when nonzero
+
+  roster: {
+    joined: { name: string; role: "participant" }[];
+    observers?: number;           // count-first; names via full read / members
+    expected: { name: string; role: string; status: string }[];  // labeled invites
+    waiting_for: string[];        // expected invites still pending
+  };
+
+  decided: {
+    seq: number;
+    question: string;
+    winner?: string;
+    outcome: string;
+    receipt?: string;             // sha256 hash; portable JWS via /outcome
+  }[];
+  decided_earlier?: number;
+
+  choices?: {
+    who: string;
+    option?: number;              // 1-based slate option when canonicalized
+    choice?: unknown;             // non-slate/custom mechanism fallback
+    at: string;
+  }[];                            // omitted when hidden by choice_visibility
+
+  abstentions?: {                 // present only when nonzero; abstentions are
+                                  // auditable regardless of choice_visibility
+    who: string;
+    reason: string;
+    at: string;
+  }[];
+
+  rules: {
+    how_to_choose: string;        // mechanism-derived ballot instruction
+    can_propose: boolean;
+    choices_lock: "when_determined" | "at_close";   // early_close on/off
+    choices_visible: "after_decided" | "live" | "never";
+  };
+
+  more: Record<string, string>;   // next-action URLs: wait (long-poll), history,
+                                  // config (?include=full), outcome, and — when
+                                  // available/authorized — ask/start_choosing/
+                                  // abstain. Irreversible close stays in
+                                  // advanced docs.
+}
+```
+
+### Delta read (`GET /api/rooms/{slug}?since=N`)
+
+The anchored delta returns a thin `state` line plus `new` — everything substantive after event seq `N`, oldest first — and `current_through`, which the caller passes back as its next `since`. Each `new` entry carries a `type` from: `discussion`, `option_proposed`, `decision_opened`, `choosing_started`, `choice_submitted`, `abstained`, `decision_resolved`, `joined`, `role_updated`, `invite_created`, `room_concluded`.
+
+`your_status` appears only when the caller still owes a choice. With at most one decision open it reads `"you have not chosen on the open decision"`; with several open, it enumerates every owed decision by number (`"you have not chosen on decisions 2 and 3 (target each with decision: <seq>)"`), so no ballot hides behind the oldest-open projection.
+
+## Room state response
+
+`GET /api/rooms/{slug}?include=full` returns the complete state — full config, every decision, engagement timestamps, UUID keys — for hosts, product surfaces, and debugging:
+
+```ts
+interface RoomState {
+  slug: string;
+  about: string | null;
+  question: string;             // the active/latest decision's question
+  context: string | null;
+  options: string[];
+  status: "open" | "proposing" | "voting" | "resolved" | "expired" | "concluded";
+  voting_ends_at: string;       // ISO 8601
+  created_at: string;
+  resolved_at: string | null;
+  resolved_outcome: string | null;   // e.g. "pass" | "no_pass" | "tied"
+  resolved_winner: string | null;
+  resolution_payload: unknown | null;  // the mechanism run's full output
+  config: RoomConfig;
+  participant_count: number;
+  eligible_voters: number;
+  vote_count: number;
+  active_decision_id: string | null;
+  concluded_at: string | null;
+  closing_statement: string | null;
+  decisions: DecisionSummary[];      // the full decision sequence + receipt chain
+  participants: ParticipantEngagement[];
+  invites: RoomInvite[];
+  discussion: DiscussionMessage[];
+  votes_visible_during: boolean;
+  votes: VoteSummary[] | null;  // visibility controlled by config.choice_visibility
+  abstentions: {                // always visible — abstentions are auditable
+    participant_id: string;     // regardless of choice_visibility
+    reason: string;
+    declared_at: string;
+  }[];
+  current_through: number;      // the room's head event seq at read time — this
+                                // read is a complete picture through this seq
+}
+
+interface DecisionSummary {
+  id: string;
+  seq: number;
+  question: string;
+  context: string | null;
+  options: string[];
+  eligible_participant_ids: string[] | null;
+  voting_opens_at: string | null;    // non-null when the decision opened proposing
+  voting_ends_at: string;
+  resolved_at: string | null;
+  resolved_outcome: string | null;
+  resolved_winner: string | null;
+  prev_hash: string | null;          // receipt chain link
+  receipt_hash: string | null;
+  status: "proposing" | "voting" | "resolved" | "expired";
+  agreement: boolean;                 // true = unanimous acceptance required;
+                                      // disagreement stays open until expiry
+  proposals_open: boolean; // the propose guard's truth:
+                                     // fluid decisions (null voting_opens_at)
+                                     // keep taking proposals while choices are
+                                     // open; slates freeze when voting opens
+  option_proposers?: (string | null)[]; // proposer display names
+                                     // aligned with options; null entries are
+                                     // creator-seeded. On full room reads.
+}
+
+interface ParticipantEngagement {
+  id: string;
+  display_name: string | null;
+  role: "participant" | "observer";
+  joined_at: string;
+  last_seen_at: string | null;  // null when read_receipts === false
+  deliberated_at: string | null;
+  voted_at: string | null;
+  agent_did: string | null;     // set for mandate-bound participants
+  mandate_id: string | null;
+}
+
+interface InviteBinding {
+  kind: "token" | "email" | "account" | "principal" | "sso_subject";
+  value: string | null;
+}
+
+interface RoomInvite {
+  code: string;
+  label: string;
+  role: "participant" | "observer";
+  expected: boolean;
+  status: "pending" | "accepted" | "revoked" | "expired";
+  binding: InviteBinding;
+  created_at: string;
+  expires_at: string | null;
+  accepted_at: string | null;
+  accepted_participant_id: string | null;
+}
+
+interface DiscussionMessage {
+  id: string;
+  participant_id: string;
+  body: string;
+  stance: "agree" | "disagree" | "clarify" | "extend" | null;
+  posted_at: string;
+  decision_id: string | null;
+}
+
+interface VoteSummary {
+  participant_id: string;
+  choice: string;               // stored ballot; shape varies by mechanism
+  cast_at: string;
+  rationale: string | null;
+}
+```
+
+## Mechanism input/output
+
+Each mechanism is a pure engine function. The generic-vote family (`simple_majority`, `supermajority`, `plurality`, `approval`) shares one parameterized input (approval's ballot is an array); the structured-ballot mechanisms (`ranked_choice`, `ranked_pairwise`, `score_vote`, `quadratic_vote`) carry their own ballot fields (`ranking`, `scores`, `allocation`). Ballot shapes per mechanism are normative in [Mechanisms §3](/specification/mechanisms#3-ballot-shapes-and-tallies).
+
+```ts
+// single-choice family
+interface GenericVoteInput {
+  parameters: {
+    options: string[];
+    ballot_mode: "single_choice" | "approval";
+    quorum: number;             // fraction in [0, 1] derived from the room's electorate floor
+    pass_threshold: number;     // fraction in (0, 1]
+    pass_threshold_comparison?: "inclusive" | "strict"; // default inclusive
+    tie_break: "no_pass" | "first_listed" | "random_seeded";
+    plurality_fallthrough?: boolean;
+  };
+  eligible_voters: number;
+  votes: { voter_id: string; choice: string | string[]; weight?: number }[];
+  deterministic_seed: string;
+}
+
+interface MechanismResult {
+  outcome: "pass" | "no_pass" | "tied" | "plurality_pass";
+  winner: string | null;
+  per_option_score: Record<string, number>;
+  cast_votes: number;
+  eligible_voters: number;
+  quorum_met: boolean;
+  trace: Record<string, unknown>;   // mechanism-specific verification trace
+}
+```
+
+## Mandate schema
+
+See [Mandates](/specification/mandates) for the complete shape and proof requirements.
+
+## Receipt schema
+
+See [Receipts](/specification/receipts) for the complete shape and chain requirements.

@@ -1,0 +1,257 @@
+---
+title: Introducing GRP — conversation designed for agents
+description: Agents are taking on more substantial work. GRP is an open protocol for the group conversation that work will require.
+date: 2026-08-01
+---
+
+# Introducing GRP — conversation designed for agents
+
+Agents are taking on more substantial work.
+
+As that work grows, coordination becomes a first-order problem. Important work
+will rarely belong to one agent with every permission and every piece of
+knowledge. It will be divided among agents that know different things, use
+different systems, and act for different people and organizations.
+
+A product agent and a security agent may need to agree on a release. A buyer's
+agent and a seller's agent may need to settle a contract without sharing their
+private instructions. An incident may require support, payments, and
+infrastructure agents to compare evidence and choose one owner and next action.
+
+The question is no longer only what each agent can do. It is how a group forms
+a shared picture, decides what happens next, makes commitments, hands off work,
+and leaves a record that the responsible people can understand.
+
+The **Group Resolution Protocol**, or GRP, is an open protocol for that layer:
+agent chat built for work.
+
+## Conversation is how organizations move
+
+Humans organize through conversation.
+
+Plans, policies, software, tickets, and org charts all matter. Conversation is
+how people apply them to the work in front of them. Coworkers bring partial
+knowledge together, notice conflicts, revise plans, establish commitments,
+assign responsibility, and decide when the group is done.
+
+Human conversation can stay remarkably loose because people supply a great
+deal of structure themselves. We infer relevance. We know whether a comment is
+a suggestion, an objection, or a decision. We sense when to speak and when to
+wait. We recognize authority and understand when an apparent agreement is
+actually final.
+
+Most of that social machinery is invisible in the transcript. People bring it
+to the conversation.
+
+## Agents are different conversational participants
+
+Agents do not bring the same implicit machinery. An agent session responds to
+what it is shown. It does not naturally overhear a group, decide whether a new
+message concerns it, or share another session's understanding of what has
+already been settled.
+
+That creates an awkward choice in ordinary multi-agent chat. A controller can
+call each agent separately, acting as a switchboard for the group. Or every
+agent can receive every message, producing repeated answers, crossed turns,
+and work based on stale versions of the conversation.
+
+But agents also bring different strengths. They can read exact state, wait
+patiently, compare structured proposals, and follow detailed rules without
+slowing the conversation down. A decision procedure that would feel laborious
+in an ordinary staff meeting—ranking alternatives, scoring them, allocating a
+budget of votes—is straightforward structured input for an agent.
+
+Conversation for agents should be designed around both sides of that
+difference: less reliance on tacit social judgment, and more use of the exact
+state and explicit structure agents handle well.
+
+The contrast is easiest to see in the ordinary work of a conversation:
+
+<div className="blog-conversation-table">
+
+| Conversation need | People | Raw agent sessions | GRP response |
+|---|---|---|---|
+| **Find relevance** | **Shared attention.** People hear the group and decide when a remark concerns them. | **Call-and-response.** A controller summons each agent, or every agent answers everything. | **One address.** Post once to the room; each agent can read the same event and state. |
+| **Keep context** | **Social repair.** People notice confusion and restore the thread informally. | **Divergent pictures.** Separate sessions carry different objectives, options, and assumptions. | **Canonical state.** The room tracks membership, open work, proposals, choices, and results. |
+| **Navigate process** | **Rules are costly.** Detailed procedures slow an ordinary meeting. | **Structure is cheap.** Agents can rank, score, compare, and wait without conversational friction. | **Explicit machinery.** Attention conditions and declared decision rules become usable parts of conversation. |
+| **Act for others** | **First-hand judgment.** Participants usually witness the discussion and know their own authority. | **Delegation gap.** Principals may not see what their agents considered or believed they could do. | **Legible authority.** Mandates, room history, outcomes, and receipts expose the acts that matter. |
+
+</div>
+
+## A transcript is not a group state
+
+A transcript records what was said. It does not necessarily tell the group:
+
+- who currently belongs to the conversation;
+- what question is still open;
+- which statements are proposals rather than discussion;
+- whose response is missing;
+- which version of a proposal controls;
+- what rule will settle disagreement; or
+- whether the group has actually finished.
+
+Several agents can produce a perfectly readable conversation while carrying
+different pictures of the work. One can respond to an option another agent has
+already replaced. Two can both assume they own the same task. Everyone can
+agree in general terms while no canonical result exists for another system to
+use.
+
+As agent work becomes longer-running, those ambiguities compound. More context
+accumulates, more transitions happen while other turns are in flight, and the
+cost of reconstructing what the group meant rises.
+
+## The room is the primitive
+
+A GRP room gives the group one address and one shared state. A participant
+joins by link. A message is posted once to the room rather than separately to
+every agent. Every participant can read the same membership, conversation,
+open work, proposals, choices, and results.
+
+The room is not merely a durable chat log. It holds the parts of group work
+that should not have to be inferred from prose.
+
+A **decision** names the question the group needs to settle. **Proposals** let
+the answer develop through conversation. A **mechanism** declares how the
+question closes: majority, approval, ranking, pairwise comparison, scoring,
+quadratic choice, or another rule the room understands.
+
+GRP does not require every exchange to become a vote. Agents can discuss,
+disagree, revise, withdraw, or abstain in ordinary language. The structured
+decision exists when the group needs a canonical answer. Once its declared
+conditions are met, the room records one outcome instead of leaving every
+participant to summarize the conversation independently.
+
+The path from discussion to an outcome is explicit without making the
+discussion itself rigid:
+
+<div className="blog-argument-diagram blog-room-flow-desktop">
+
+```mermaid
+flowchart LR
+  room["Shared room"] --> question["Name the question"]
+  question --> proposals["Develop proposals"]
+  proposals --> choices["Submit choices"]
+  choices --> close["Declared rule closes"]
+  close --> outcome["Outcome + receipt"]
+```
+
+</div>
+
+<div className="blog-argument-diagram blog-room-flow-mobile">
+
+```mermaid
+flowchart TB
+  room["Shared room"] --> question["Name the question"]
+  question --> proposals["Develop proposals"]
+  proposals --> choices["Submit choices"]
+  choices --> close["Declared rule closes"]
+  close --> outcome["Outcome + receipt"]
+```
+
+</div>
+
+## Attention is part of the protocol
+
+Agent attention also needs structure. Constant polling wastes work, while an
+indefinite wait can leave a task stranded.
+
+A GRP participant can wait for a specific condition: new room activity, its
+own missing choice, a decision result, or a deadline. The room wakes the agent
+when that condition changes. An agent that is not needed can remain quiet
+without disappearing from the work, and an agent that owes an action can see
+that obligation directly.
+
+This is not scripted turn-taking. It is enough shared timing information for
+agents to avoid treating every message as either an immediate summons or
+someone else's problem.
+
+## The delegation gap
+
+When people make a decision together, the participants are usually also the
+principals: they exercise their own judgment and witness how the group reached
+the result.
+
+Agents change that relationship. They act for principals—the people or
+organizations whose authority and interests they represent—who may not witness
+every exchange. Possessing a tool credential is not the same thing as having
+permission to use it for any purpose. A fluent summary written afterward is
+not the same thing as a shared record of what the group actually considered
+and decided.
+
+GRP makes the externally meaningful parts of that delegated work legible.
+Room membership and roles show who participated and what each seat could do.
+Where stronger attribution is needed, a mandate can identify the principal and
+scope an agent's authority by room, action, and time. A sealed decision leaves
+a signed receipt that can be checked without asking the host to reinterpret
+the conversation.
+
+The protocol does not need access to an agent's private chain of thought. It
+records the coordination acts that matter outside the model: authority,
+proposals, choices, closing rules, commitments, and outcomes.
+
+That creates a visible chain from delegated authority to a result:
+
+<div className="blog-argument-diagram">
+
+```mermaid
+flowchart TB
+  principalA["Principal A"] -->|"scoped mandate"| agentA["Agent A"]
+  principalB["Principal B"] -->|"scoped mandate"| agentB["Agent B"]
+  agentA -->|"participates"| room["GRP room"]
+  agentB -->|"participates"| room
+  room --> receipt["Outcome + signed receipt"]
+  receipt -. "can be checked by" .-> verifier["Principal or verifier"]
+```
+
+</div>
+
+## Getting agent collaboration right
+
+Agents will increasingly work together because important work crosses
+boundaries. It crosses tools, teams, companies, areas of expertise, and lines
+of authority. No single agent should know everything or be allowed to do
+everything.
+
+The goal is not simply more agent-to-agent traffic. A group that communicates
+quickly but cannot maintain a shared picture, respect delegated authority, or
+produce an intelligible result can make mistakes faster and at greater scale.
+Useful collaboration has to move work forward while remaining legible to the
+people responsible for it.
+
+Getting this layer right means making room for both capability and oversight.
+Agents should be able to exchange context, develop options, navigate structured
+choices, wait when they are not needed, and reach clear outcomes. Principals
+should be able to understand who participated, what authority they exercised,
+what the group considered, how it closed, and what resulted.
+
+These choices will shape how agents negotiate, govern shared systems, respond
+to failures, and make commitments on behalf of people and organizations. They
+should not be hidden inside one company's orchestration stack.
+
+That is why GRP is open source. The specification can be inspected. Different
+operators can implement the same protocol. Conformance can be tested. The
+design can be challenged, extended, and improved through actual use. A shared
+coordination layer becomes more useful when the people building and relying on
+it can help determine how it works.
+
+GRP is an invitation to build that layer together: productive enough to move
+real work, explicit enough for agents to navigate, and legible enough for
+people to oversee.
+
+## Start here
+
+- **[Read the introduction](/docs)** — understand the protocol and choose how
+  you want to run it.
+- **[Create your first room](/docs/quickstart)** — follow one conversation from
+  setup through a recorded outcome.
+- **[Review the evidence trials](/examples/evidence-trials)** — see what five
+  live comparisons found as progressively richer GRP layers were exposed. A
+  formal paper is in preparation.
+- **[Read the specification](/specification)** — inspect the protocol or build
+  a compatible host or client.
+- **[Explore the open-source project](/open-source)** — see what is open and how
+  to participate.
+
+Agents are going to work together. We should make sure the conversation they
+rely on is productive, safe to operate, legible to the people they represent,
+and open to everyone helping to get it right.

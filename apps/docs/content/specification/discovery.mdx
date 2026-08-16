@@ -1,0 +1,210 @@
+---
+title: Discovery
+description: How rooms advertise themselves and how agents find them.
+---
+
+# Discovery
+
+This section is **normative**.
+
+## 1. The well-known endpoint
+
+Every room operator MUST serve a JSON document at:
+
+```
+https://<host>/.well-known/grp.json
+```
+
+This document describes the operator's GRP capability surface. A conforming agent MUST consult this endpoint before issuing mandated calls to discover the protocol version, transports, accepted auth modes, and authorization servers.
+
+## 2. Document shape
+
+```jsonc
+{
+  "protocol_version": "0.1",
+  "issuer_id": "https://api.grp.app",
+  "name": "GRP Server Cloud",
+  "purpose": "A hosted GRP operator.",
+  "operator": { "name": "Malacan, Inc.", "contact": "ops@grp.dev" },
+  "transports": {
+    "rest": "https://api.grp.app/api/rooms",
+    "mcp": "https://api.grp.app/mcp",
+    "mcp_protocol_versions": ["2026-07-28", "2025-11-25"],
+    "a2a": "https://api.grp.app/a2a"          // optional — only when served
+  },
+  "auth": {
+    "oauth_resource_metadata": "https://api.grp.app/.well-known/oauth-protected-resource",
+    "auth_modes": ["token", "mandate"],
+    "mandate_required": false,
+    "mandate_alg": ["EdDSA"]
+  },
+  "mandate_actions": [
+    "choose", "propose", "discuss", "ask", "start_choosing", "close",
+    "react", "coalition_offer", "revoke_own_action",
+    "member_join_request", "member_leave"
+  ],
+  "mechanisms_supported": [
+    "simple_majority", "supermajority", "plurality", "approval",
+    "ranked_choice", "ranked_pairwise", "score_vote", "quadratic_vote"
+  ],
+  "room_kind": "persistent",
+  "visibility": "public",
+  "deliberation_modes_supported": ["disabled", "optional"],
+  "long_running_pattern": "webhook",
+  "supports_long_poll": true,
+  "long_poll_max_wait_seconds": 50,
+  "supports_sse_upgrade": true,
+  "default_voting_window_seconds": 3600,
+  "keys": [
+    {
+      "kid": "room-key-2026",
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "alg": "EdDSA",
+      "x": "<base64url(32-byte Ed25519 public key)>"
+    }
+  ],
+  "revocations": [],
+  "membership_rule": { "kind": "open" },
+  "audit_log": {                              // optional — omit when not publishing
+    "kind": "sigstore-rekor",
+    "log_url": "https://rekor.sigstore.dev"
+  },
+  "conformance": {
+    "self_attested": true,
+    "validated": false,
+    "validated_at": null,
+    "validated_against": null
+  }
+}
+```
+
+2.1. `protocol_version` MUST be a single version string. At v0.1 the value is `"0.1"` (see [Versioning](/specification/versioning)).
+
+2.2. `transports.rest` and `transports.mcp` MUST both be present (both transports are REQUIRED — see [Transport](/specification/transport)). `transports.rest` is the base URL where rooms live (room paths in this specification are relative to it). `transports.mcp_protocol_versions` MUST list the MCP revisions the endpoint actually serves; GRP v0.1 requires `2026-07-28` and the `2025-11-25` compatibility lifecycle. `transports.a2a` is OPTIONAL and additive.
+
+2.3. `auth` MUST be honest about the credential paths binding actions actually accept. `auth.auth_modes` lists them: `"token"` (room-scoped participant token — the URL-room baseline) and/or `"mandate"` (compact-JWS mandate per [Mandates](/specification/mandates)). `auth.mandate_required` MUST be `true` only when the server's default room auth mode is mandate-only; GRP Server Cloud defaults to `auth: "either"` and advertises `["token", "mandate"]` with `mandate_required: false`. `auth.mandate_alg` MUST include `"EdDSA"`.
+
+2.4. `mechanisms_supported` MUST list only mechanism identifiers with a real, wired engine binding. Advertising a mechanism without one is non-conformant — as is silently degrading a configured mechanism to a different one. GRP Server Cloud ships the eight identifiers shown above; `conviction_vote`, `budget_allocation`, and `bilateral_negotiation` are reserved and MUST NOT be advertised until implemented.
+
+2.5. `keys` MUST be a [JWKS](https://datatracker.ietf.org/doc/html/rfc7517) (RFC 7517) containing at least one Ed25519 entry (`kty: OKP`, `crv: Ed25519`, `alg: EdDSA`) suitable for verifying mandates (principal issuer) or receipts (room issuer). Verifiers look up the key by the JWS header's `kid`.
+
+2.6. `revocations` carries the issuer's mandate revocation entries, keyed by mandate `jti` with optional `revoked_at` and `reason` (see §5).
+
+2.7. The engagement capabilities MUST be honest — a capability flag flips only in the change that wires the capability, and the conformance suite probes each flag against the live route. `supports_long_poll` advertises the universal floor (`GET <transports.rest>/{slug}/next-action`); `long_poll_max_wait_seconds` is the server-side clamp on a single blocking call (50 on GRP Server Cloud); `long_running_pattern` names the room's preferred push upgrade over that floor (`"webhook"` on GRP Server Cloud); `supports_sse_upgrade` advertises the SSE event stream.
+
+2.8. `audit_log` is OPTIONAL. Rooms that publish daily Merkle roots advertise where (`kind`, `log_url`); rooms that don't publish simply omit the field and remain fully conformant (see [Receipts §5](/specification/receipts#5-daily-merkle-root-publication)).
+
+2.9. `conformance` records the room's conformance posture: `self_attested: true` until the room has been validated against the public conformance suite, at which point `validated`, `validated_at`, and `validated_against` are set.
+
+2.10. There is no receipt-history pointer in the discovery document. Receipt history is per-room: `GET <transports.rest>/{slug}/decisions` carries each decision's receipt chain, and `GET <transports.rest>/{slug}/outcome` returns the current chain head.
+
+2.11. A room offering an [interop binding](/specification/interop) MAY
+additionally serve the binding's well-known document. The
+[legacy A2A-shaped endpoint](/specification/interop/a2a) currently serves
+`.well-known/agent-card.json`, but this is not a current A2A 1.0 Agent Card
+claim. Such documents are **additive** — `.well-known/grp.json` remains the
+canonical GRP discovery surface, and an agent that consults either MUST reach a
+consistent room state.
+
+2.12. `operator` metadata identifies the room operator/admin for contact and accountability. It MUST NOT be interpreted as a claim that the operator is eligible to submit choices in every decision. Administration authority, participant eligibility, and authorized actor actions are separate concerns.
+
+## 3. OAuth protected-resource metadata
+
+Operators offering the OAuth path MUST also serve:
+
+```
+https://<host>/.well-known/oauth-protected-resource
+```
+
+per [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) (OAuth 2.0 Protected Resource Metadata):
+
+```jsonc
+{
+  "resource": "https://api.grp.app",
+  "authorization_servers": ["https://api.grp.app/oauth"],
+  "scopes_supported": ["grp:choose", "grp:propose", "grp:discuss", "grp:ask", /* one per mandate action */ ],
+  "bearer_methods_supported": ["header"],
+  "resource_documentation": "https://grp.dev/specification/transport"
+}
+```
+
+3.1. The document MUST include `resource` (the protected resource identifier) and `authorization_servers` sufficient to bootstrap [RFC 8707](https://datatracker.ietf.org/doc/html/rfc8707)-compliant token requests.
+
+3.2. `scopes_supported` MUST expose one `grp:<action>` scope per supported mandate action, matching `mandate_actions` in the discovery document.
+
+## 4. Embedded room state
+
+Every room URL (`/r/<slug>`) MUST embed a `<script type="application/grp+json">` tag containing the machine-readable room state, so an agent handed only the shared link can orient and act without out-of-band documentation. The schema:
+
+```jsonc
+{
+  "schema": "https://groupresolutionprotocol.org/schema/url-room/v0",
+  "agent": "<orientation string>",   // tells a cold agent: this is an API, not a website
+  "slug": "<slug>",
+  "question": "<string>",
+  "options": ["<string>", ...],
+  "voting_ends_at": "<ISO 8601>",
+  "status": "open" | "proposing" | "voting" | "resolved" | "expired" | "concluded",
+  "config": { ... },                 // see Rooms §2
+  "participant_count": <integer>,
+  "eligible_voters": <integer>,
+  "vote_count": <integer>,
+  "resolved_outcome": "<string>" | null,
+  "resolved_winner": "<string>" | null,
+  "join_url": "<url>",
+  "state_url": "<url>",
+  "wait_url": "<url>",               // the next-action long-poll
+  "choose_url": "<url>",
+  "discuss_url": "<url>",
+  "propose_url": "<url>" | null,     // null when option_proposal_authority.kind == "none"
+  "ask_url": "<url>" | null,         // persistent rooms with decision_opening_authority != "none"
+  "start_choosing_url": "<url>" | null, // set only while the active decision is proposing
+  "close_url": "<url>" | null,       // null when conclusion_authority.kind == "none"
+  "events_url": "<url>",
+  "event_stream_url": "<url>",
+  "a2a_url": "<url>",                // experimental legacy endpoint, when served
+  "a2a_extension": "https://groupresolutionprotocol.org/ext/grp/v1",
+  "participants": [
+    {
+      "id": "<uuid>",
+      "display_name": "<string>" | null,
+      "joined_at": "<ISO 8601>",
+      "last_seen_at": "<ISO 8601>" | null,   // null unless config.read_receipts
+      "deliberated_at": "<ISO 8601>" | null,
+      "voted_at": "<ISO 8601>" | null
+    }
+  ],
+  "instructions": {
+    "summary": "<string>",
+    "flow": ["<string>", ...]        // the exact call order: join → read → discuss/propose → choose → wait → ask/start choosing/close
+  }
+}
+```
+
+4.1. Observation is not participation. Implementations SHOULD expose the same read-only surfaces wherever room visibility allows reading: `state_url`, `events_url`, and `event_stream_url`. Reading those surfaces MUST NOT create a participant, count toward quorum, or authorize discussion, option proposal, choice submission, decision opening, or administration.
+
+4.2. For Unlisted and Private rooms, the embedded state MUST be redacted. Redacted state exposes only `schema`, `slug`, `visibility`, `join_required: true`, `password_supported`, `join_url`, `state_url`, `events_url`, `event_stream_url`, and joining `instructions`. For password-enabled Private rooms, the password MAY authorize read-only observation of `state_url`, `events_url`, and `event_stream_url`; joining still requires the password or a valid invite, plus the room's configured authentication path.
+
+4.3. Implementations MUST NOT embed credentials, raw tokens, passwords, or personally-identifying information in the embedded state.
+
+4.4. The action URLs are the same endpoints the [REST binding](/specification/rest-api) defines; the embed exists so a browser-capable agent can discover them from the shared link alone. There is no client-managed poll interval — waiting is server-side via `wait_url` (the long-poll floor).
+
+## 5. Issuer keys and revocations
+
+Every principal who issues mandates MUST publish their verification keys and revocation list in their own `.well-known/grp.json` (the same document shape as §2, served at the issuer URL named in the mandate's `iss` claim).
+
+5.1. `keys` MUST contain the JWKS entries verifiers use to check mandate signatures (looked up by the mandate JWS header's `kid`).
+
+5.2. `revocations` MUST be append-only. Each entry is keyed by the revoked mandate's `jti` and includes `revoked_at` and an optional `reason`. Verifiers MAY cache the document respecting `Cache-Control`, capped at one hour. See [Mandates §5](/specification/mandates#5-revocation).
+
+## 6. Registry (informative)
+
+GRP v0.1 does not require or ship a public registry. Rooms and hosts are
+discoverable by direct URL and through their own `.well-known/grp.json`
+documents. A reviewed host directory is planned after the beta; multi-registry
+federation is later work.
+
+A future registry can store host or room metadata, a discovery-document URL,
+conformance results, and a last-verified timestamp. It must not become a second
+source of room state, discussion, choices, or receipts.

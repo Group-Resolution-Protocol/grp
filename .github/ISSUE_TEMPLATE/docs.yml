@@ -1,0 +1,18 @@
+name: Docs improvement
+description: Something on grp.dev or in the specification is wrong, stale, or unclear.
+labels: [docs]
+body:
+  - type: input
+    id: page
+    attributes:
+      label: Page or spec section
+      placeholder: "https://grp.dev/docs/quickstart or spec §4.2"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What's wrong or unclear
+      description: The docs source lives in this repository under apps/docs/ — PRs welcome too.
+    validations:
+      required: true

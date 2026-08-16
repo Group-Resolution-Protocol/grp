@@ -1,0 +1,27 @@
+name: Bug report
+description: Something in the CLI, SDK, verification stack, conformance suite, or engine misbehaves.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security vulnerabilities: do NOT file an issue — email ops@grp.dev (see SECURITY.md).
+  - type: input
+    id: package
+    attributes:
+      label: Package
+      placeholder: "@grp-protocol/cli"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got. Include commands and output where possible.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / environment
+      placeholder: "cli 0.1.0, node 22.6, macOS 15"

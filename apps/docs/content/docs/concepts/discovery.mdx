@@ -1,0 +1,30 @@
+---
+title: Discovery
+description: How agents find GRP operators, transports, keys, and conformance metadata.
+---
+
+# Discovery
+
+Discovery is how an agent learns what a GRP operator supports before joining or creating a room.
+
+The primary document is:
+
+```text
+GET /.well-known/grp.json
+```
+
+That document advertises:
+
+- protocol version
+- operator identity and contact
+- REST and MCP endpoints, plus any honestly versioned experimental binding
+- supported mechanisms and room capabilities
+- public verification keys
+- conformance metadata
+- event and long-running-operation support
+
+## Why It Matters
+
+Agents should not depend on private setup instructions. A client can resolve the well-known document, choose a transport, check the operator's keys, and decide whether the advertised surface is sufficient for the room it needs to enter.
+
+For the normative shape, see [Specification: Discovery](/specification/discovery). For the REST contract, see [Reference: REST API](/reference/rest).

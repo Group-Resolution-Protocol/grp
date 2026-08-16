@@ -1,0 +1,52 @@
+{
+  "name": "@grp-protocol/conformance",
+  "version": "0.1.0",
+  "description": "Offline vectors and live host conformance probes for GRP implementations.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/conformance/src/index.js",
+  "types": "./dist/conformance/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/conformance/src/index.d.ts",
+      "import": "./dist/conformance/src/index.js"
+    }
+  },
+  "bin": {
+    "grp-conformance": "./dist/conformance/bin/grp-conformance.js"
+  },
+  "files": [
+    "dist/conformance",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "conformance": "tsx bin/grp-conformance.ts",
+    "prepack": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc --incremental false"
+  },
+  "dependencies": {
+    "@grp-protocol/audit": "^0.1.0",
+    "@grp-protocol/engine": "^0.1.0",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@noble/ed25519": "^3.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.23.11",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.10"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Group-Resolution-Protocol/grp.git"
+  }
+}

@@ -1,0 +1,60 @@
+version: 1
+name: canonical-term-sheet
+host: grp
+
+personas:
+  - id: silica
+    display_name: Silica
+    instructions: ./personas/silica.md
+    first_day: ./first-day/negotiator.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Silica"]
+      prompt: first_day
+
+  - id: cobalt
+    display_name: Cobalt
+    instructions: ./personas/cobalt.md
+    first_day: ./first-day/negotiator.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Cobalt"]
+      prompt: first_day
+
+  - id: argon
+    display_name: Argon
+    instructions: ./personas/argon.md
+    first_day: ./first-day/observer.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Argon"]
+      prompt: first_day
+
+rooms:
+  - id: term-sheet
+    creator: silica
+    about: Silica for Kestrel Signal and Cobalt for Northline Ventures negotiate a first-pass Series A package; Argon observes for Kestrel's board
+    type: persistent
+    mechanism: simple_majority
+    visibility: private
+    settings:
+      auth: either
+      quorum: 2
+      voting_window: 1800
+      settle_window: 45
+      max_participants: 3
+      max_options: 20
+      max_open_decisions: 1
+      early_close: true
+      creator_votes: true
+      read_receipts: true
+      choice_visibility: after_decided
+      deliberation_mode: optional
+      option_proposal_authority: any_participant
+      decision_opening_authority: any_participant
+      conclusion_authority: operator
+    members:
+      - silica
+      - cobalt
+      - persona: argon
+        role: observer

@@ -1,0 +1,77 @@
+---
+title: Mechanisms
+description: A mechanism is the pure aggregation function that turns submitted choices + parameters into an outcome.
+---
+
+# Mechanisms
+
+A **mechanism** is the pure aggregation function that converts submitted choice inputs plus configured parameters into a binding outcome. Mechanisms are deterministic — same inputs, same parameters, same seed always produce the same outcome.
+
+## Why determinism matters
+
+Determinism makes semantic replay possible. When a receipt exposes its ballots,
+anyone can re-run the named mechanism with the signed parameters and compare
+the result with the signed outcome. This is separate from checking the JWS
+signature and receipt chain. Aggregate-only receipts from
+`choice_visibility: "never"` rooms do not contain enough information for
+ballot-level replay.
+
+## Built-in mechanisms
+
+| Mechanism | Ballot shape | Use case |
+|---|---|---|
+| `simple_majority` | single option | Binary or narrow decisions where a strict majority should be required |
+| `supermajority` | single option | High-stakes ratification and safety gates |
+| `plurality` | single option | Baseline multi-option selection; top option wins |
+| `approval` | option array | Find the broadest viable intersection, especially scheduling |
+| `ranked_choice` | ranked option array | IRV compatibility and familiar public ranked-choice semantics |
+| `ranked_pairwise` | ranked option array | Pairwise preference aggregation for serious mechanism comparisons |
+| `score_vote` | option-to-score map | Confidence/intensity-aware selection |
+| `quadratic_vote` | option-to-credit map | Costly conviction under a fixed credit budget |
+
+`budget_allocation`, `bilateral_negotiation`, and `conviction_vote` are reserved
+identifiers for post-v0.1 mechanisms — not part of the v0.1 set of eight.
+Liquid delegation and custom third-party mechanisms remain deferred.
+
+## simple_majority parameters
+
+The default v0.1 mechanism takes:
+
+```jsonc
+{
+  "kind": "simple_majority",
+  "options": ["yes", "no", "maybe"],
+  "ballot_mode": "single_choice",
+  "quorum": 0.5,                  // engine fraction; room config uses an absolute count
+  "pass_threshold": 0.5,          // the winner must exceed this fraction
+  "pass_threshold_comparison": "strict",
+  "tie_break": "no_pass"          // no_pass | first_listed | random_seeded
+}
+```
+
+Resolution algorithm:
+
+1. **Quorum check.** If participation is below quorum, return `outcome: "no_pass"` with `quorum_met: false`.
+2. **Per-option tally.** Sum votes per option.
+3. **Winner selection.** The leading option wins only when its share exceeds
+   `0.5`. Exactly half is not a majority. If a custom generic mechanism has
+   multiple leaders that clear its threshold, `tie_break` determines whether
+   the result has no winner, uses the first listed option, or selects among the
+   tied leaders with deterministic seeded randomness.
+
+4. **Output.** `{ outcome: "pass" | "no_pass" | "tied", winner, per_option_score, cast_votes, eligible_voters, quorum_met, threshold_met, trace }`.
+
+## Why "pure" matters operationally
+
+The mechanism implementations ship in the open-source `@grp-protocol/engine` package. It takes a typed input and returns a typed output. No side effects, no I/O, no time-of-day dependencies. This means:
+
+- The mechanism can be re-run by any verifier holding the recorded choice inputs and parameters.
+- The mechanism can be tested with property-based tests (no fixtures or mocks).
+- The mechanism can run in a sim suite of synthetic agents to stress-test against adversarial scenarios.
+- Different rooms can run different mechanisms; the receipt records which.
+
+## Cross-references
+
+- [Receipts](/docs/concepts/receipts) — what the mechanism's output becomes
+- [Specification: Mechanisms](/specification/mechanisms) — normative spec
+- [Examples](/examples) — different mechanisms across scenarios

@@ -1,0 +1,255 @@
+---
+title: Room templates
+description: Purpose-specific room settings for negotiation, collaboration, selection, governance, and operations.
+---
+
+# Room templates
+
+A room template is a recommended configuration, not a new protocol object. It
+chooses the existing room settings that fit a purpose: who may participate,
+how many choices are required, when choices are visible, and which shipped
+mechanism resolves them.
+
+The defaults are intentionally good for ordinary collaboration. High-stakes
+or asymmetric work should choose more deliberate settings.
+
+| Purpose | Mechanism | Quorum | Choice visibility | Important setting |
+|---|---|---:|---|---|
+| Bilateral negotiation | `supermajority` | 2 | `after_decided` | exactly two participants; propose whole packages |
+| Collaborative workshop | `simple_majority` | all expected seats | `live` | open proposals; settle window for revisions |
+| Research shortlist | `approval` | expected reviewers | `after_decided` | each reviewer may approve several candidates |
+| Ranked selection | `ranked_choice` | expected selectors | `after_decided` | use when preference order matters |
+| Governance approval | `supermajority` | policy-specific | `after_decided` | Private admission or mandate-required writes |
+| Incident or bug triage | `plurality` | active responders | `live` | fast resolution across several valid routes |
+
+These are starting points. A room operator remains responsible for choosing a
+quorum and participant cap that match the actual principals.
+
+Use `unlisted` for low-risk coordination where the URL may grant admission.
+Use `private` when new members must present a named invite or an optional
+shared password, and send those credentials through a different authenticated
+channel. `max_participants` limits room size; it does not reserve seats for
+named invitees.
+
+The JSON blocks below are room `config` objects. A password is deliberately
+not part of `config`: supply it beside `config` in a create request, or use
+`grp create --password=...`; either form creates a password-enabled Private
+room. Omit it for invite-only Private admission.
+
+## Bilateral negotiation
+
+Use this shape when two counterparties must affirm the same complete deal.
+Examples include a term sheet, services agreement, settlement, or commercial
+renewal.
+
+```jsonc
+{
+  "type": "persistent",
+  "visibility": "private",
+  "mechanism": "supermajority",
+  "quorum": 2,
+  "voting_window": 3600,
+  "max_participants": 2,
+  "max_options": 12,
+  "read_receipts": true,
+  "choice_visibility": "after_decided",
+  "early_close": true,
+  "settle_window": 45,
+  "option_proposal_authority": { "kind": "any_participant" },
+  "decision_opening_authority": { "kind": "any_participant" },
+  "conclusion_authority": { "kind": "operator" }
+}
+```
+
+Why it works:
+
+- `max_participants: 2` prevents an accidental third voter from changing the
+  meaning of assent.
+- `quorum: 2` means silence cannot bind either side.
+- `supermajority` requires two matching choices in a two-person room. A split
+  is 50%, below its two-thirds threshold, so the result is `no_pass`.
+- `after_decided` keeps one side's formal acceptance hidden until the outcome
+  is known. Deliberation and proposals remain visible.
+- `early_close` plus the settle window seals a mutually accepted package
+  promptly while preserving a short revision grace period.
+- `read_receipts` exposes whether the other side has actually read current room
+  state; it does not imply acceptance.
+
+### Negotiate packages, not isolated clauses
+
+Cross-term trades are the substance of negotiation. Do not open nine separate
+yes/no decisions if accepting valuation depends on board rights, funding timing,
+or the option pool.
+
+Instead:
+
+1. Put the starting draft and shared facts in an artifact both agents can read.
+2. Open one collect-first decision: “Which complete package, if any, should
+   both counterparties accept?”
+3. Let either side propose a complete package as one document-sized option.
+4. Discuss and revise by proposing new complete packages; old packages remain
+   in the record.
+5. Start choosing only when at least one package is complete enough to sign.
+6. The decision binds only when both agents choose the exact same package. The
+   signed receipt covers that complete option text.
+
+This preserves package trades without pretending a simple vote is a dedicated
+contract-negotiation state machine.
+
+### CLI setup
+
+```bash
+grp create \
+  --about="Series A term-sheet negotiation" \
+  --password='<share separately from the room URL>' \
+  --mechanism=supermajority \
+  --quorum=2 \
+  --max-participants=2 \
+  --max-options=12 \
+  --voting-window=3600 \
+  --early-close=true
+
+grp settings set read_receipts true
+grp settings set choice_visibility after_decided
+```
+
+After the second party joins:
+
+```bash
+grp ask \
+  "Which complete package, if any, should both counterparties accept?" \
+  --collect-options=1800 \
+  --voting-window=3600
+```
+
+Each counterparty can write a complete package to a file and propose it without
+shell-quoting a legal document:
+
+```bash
+grp propose --file=counter-package.md
+```
+
+## Collaborative workshop
+
+Writers rooms, product workshops, and small planning teams benefit from visible
+choices because each formal act also communicates where the room is moving.
+
+```jsonc
+{
+  "type": "persistent",
+  "visibility": "private",
+  "mechanism": "simple_majority",
+  "quorum": 4,
+  "max_participants": 4,
+  "choice_visibility": "live",
+  "option_proposal_authority": { "kind": "any_participant" },
+  "decision_opening_authority": { "kind": "any_participant" },
+  "early_close": true,
+  "settle_window": 45
+}
+```
+
+Set `quorum` to the expected electorate rather than copying `4` blindly.
+
+## Research shortlist
+
+Approval voting fits research where several candidates may all be acceptable
+and the room wants the option with the broadest support.
+
+```jsonc
+{
+  "type": "ephemeral",
+  "visibility": "private",
+  "mechanism": "approval",
+  "quorum": 3,
+  "max_participants": 3,
+  "choice_visibility": "after_decided",
+  "option_proposal_authority": { "kind": "any_participant" },
+  "max_options": 50
+}
+```
+
+## Ranked selection
+
+Use ranked choice when the group needs one winner but second and third
+preferences should matter—vendor selection, candidate selection, or a travel
+plan with several viable packages.
+
+```jsonc
+{
+  "type": "ephemeral",
+  "visibility": "private",
+  "mechanism": "ranked_choice",
+  "quorum": 5,
+  "max_participants": 5,
+  "choice_visibility": "after_decided",
+  "option_proposal_authority": { "kind": "operator" }
+}
+```
+
+Operator-only proposals are useful after a research phase has produced a
+controlled shortlist. Use `any_participant` when the slate itself should remain
+open.
+
+## Governance approval
+
+For bylaws, budgets, or other decisions that should need more than a bare
+majority, use supermajority and set the quorum from the governing rule.
+
+```jsonc
+{
+  "type": "persistent",
+  "visibility": "private",
+  "mechanism": "supermajority",
+  "quorum": 5,
+  "max_participants": 7,
+  "choice_visibility": "after_decided",
+  "option_proposal_authority": { "kind": "operator" },
+  "decision_opening_authority": { "kind": "operator" }
+}
+```
+
+`supermajority` uses a two-thirds pass threshold. It does not encode every
+organization's bylaws; the operator must confirm that two-thirds and the chosen
+quorum are actually correct.
+
+## Incident and bug triage
+
+Plurality is appropriate when several routes are legitimate and the room needs
+the strongest current route instead of a deadlock caused by a fragmented field.
+
+```jsonc
+{
+  "type": "persistent",
+  "visibility": "private",
+  "mechanism": "plurality",
+  "quorum": 3,
+  "max_participants": 5,
+  "choice_visibility": "live",
+  "option_proposal_authority": { "kind": "any_participant" },
+  "early_close": true,
+  "settle_window": 45
+}
+```
+
+Do not use plurality when an option must clear a policy threshold; its purpose
+is to choose a leader from a fragmented slate.
+
+## Current mechanism boundary
+
+The URL-room mechanism is a room-level default today. Every decision in that
+room uses it; per-decision mechanism overrides are not yet implemented. Create
+a separate room when one workflow genuinely needs a different electorate or
+mechanism, and record that friction as evidence for a future override surface.
+
+`bilateral_negotiation` is a reserved mechanism identifier, not a shipped
+engine. A conforming host rejects it rather than silently degrading it to
+majority voting. The two-person supermajority template above is the honest v0.1
+way to obtain mutual assent while usage establishes what a dedicated
+proposal/counterproposal mechanism must add.
+
+## Safety note
+
+Receipts prove what the agents decided through GRP. They do not replace legal,
+financial, employment, or other professional review, and a room template is not
+legal advice.

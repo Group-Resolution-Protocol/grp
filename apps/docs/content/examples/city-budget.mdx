@@ -1,0 +1,123 @@
+---
+title: Participatory budget
+description: Residents use quadratic voting to choose among complete $1M capital plans; topical delegation remains a future extension.
+---
+
+# Participatory budget
+
+A city asks 500 residents to choose among several complete plans for a $1M
+capital budget. Each plan says exactly how the money would be spent. Residents
+get nine credits each and may put them all behind one plan or spread them
+across plans they could support.
+
+This is a decision GRP v0.1 can represent directly. The shipped
+`quadratic_vote` mechanism selects one option; it does not divide money among
+the options. That is why each option below is a complete budget plan rather
+than a single department or project.
+
+**Path:** REST or MCP with one mandate per eligible resident.
+
+**Visibility:** `public` for a public-records process.
+
+**Mechanism:** `quadratic_vote`, with the v0.1 budget of nine credits per
+voter.
+
+**Quorum:** 250 residents.
+
+**Window:** 14 days.
+
+## 1. Create the standing room
+
+```http
+POST https://grp.app/api/rooms
+X-Mandate: {city-clerk's-mandate}
+Content-Type: application/json
+
+{
+  "about": "2026 participatory capital budget",
+  "defer_first_decision": true,
+  "config": {
+    "type": "persistent",
+    "visibility": "public",
+    "mechanism": "quadratic_vote",
+    "quorum": 250,
+    "voting_window": 1209600,
+    "max_participants": 501,
+    "auth": "mandate_required",
+    "decision_opening_authority": { "kind": "operator" },
+    "creator_votes": false
+  }
+}
+```
+
+The response supplies a random `slug`; every later request uses that value.
+The clerk occupies the non-voting operator seat, so `max_participants: 501`
+leaves room for 500 resident voters. Each resident joins by presenting a
+mandate issued through the city's own eligibility process.
+
+## 2. Open the budget decision
+
+Once enrollment is ready, the clerk opens the question. Each option is a full
+plan that totals $1M.
+
+```http
+POST https://grp.app/api/rooms/{slug}/ask
+X-Mandate: {city-clerk's-mandate}
+Content-Type: application/json
+
+{
+  "question": "Which complete capital plan should the city adopt for 2026?",
+  "context": "Each option totals $1M. Allocate at most nine credits across the plans.",
+  "options": [
+    "Plan A — schools $400K; housing $300K; transit $200K; parks $100K",
+    "Plan B — housing $400K; transit $300K; climate $200K; libraries $100K",
+    "Plan C — roads $350K; public safety $250K; schools $250K; small business $150K",
+    "Plan D — climate $350K; parks $250K; transit $250K; public art $150K"
+  ]
+}
+```
+
+## 3. Cast a quadratic ballot
+
+A resident can express both preference and intensity. This ballot spends all
+nine available credits:
+
+```http
+POST https://grp.app/api/rooms/{slug}/choose
+X-Mandate: {resident's-mandate}
+Content-Type: application/json
+
+{
+  "choice": {
+    "Plan A — schools $400K; housing $300K; transit $200K; parks $100K": 5,
+    "Plan B — housing $400K; transit $300K; climate $200K; libraries $100K": 3,
+    "Plan D — climate $350K; parks $250K; transit $250K; public art $150K": 1
+  },
+  "rationale": "I prefer Plan A, but Plans B and D also address urgent needs."
+}
+```
+
+The mechanism adds `sqrt(credits)` to each plan's score for each voter. The
+transport accepts a structurally valid allocation even if it overspends; at
+resolution, the mechanism marks any ballot spending more than nine credits as
+invalid and excludes it from the tally. The signed receipt records the options,
+ballots allowed by the room's visibility policy, tally, and outcome. The city
+executes the winning plan outside GRP.
+
+## What this example shows
+
+- **The ballot can carry intensity.** A resident need not pretend that every
+  acceptable plan is equally good.
+- **The option must match the mechanism.** The shipped mechanism chooses a
+  winner. It is not the separate, post-v0.1 `budget_allocation` mechanism.
+- **Eligibility stays outside the protocol.** The city decides who is a
+  resident and issues mandates; GRP enforces those credentials in the room.
+- **The room leaves a public record.** The decision and its receipt remain
+  readable under the host's advertised retention policy.
+
+## Future extension: topical delegation
+
+Liquid, topic-scoped delegation is not part of v0.1. A later profile could let
+a resident delegate a bounded set of credits to a trusted specialist, with the
+scope and cap signed into the delegation. Until that extension is specified
+and implemented, every resident casts their own ballot.

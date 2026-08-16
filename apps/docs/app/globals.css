@@ -1,0 +1,426 @@
+.nextra-card {
+  padding-left: 1.25rem !important;
+  padding-right: 1.25rem !important;
+}
+
+.grp-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: currentColor;
+}
+
+.grp-logo-mark {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 5px;
+  display: block;
+}
+
+.grp-logo-text {
+  font-size: 0.875rem;
+  font-weight: 650;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.grp-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.grp-theme-switch {
+  display: flex;
+  align-items: center;
+  border: 1px solid color-mix(in oklab, currentColor 14%, transparent);
+  border-radius: 999px;
+  margin: 0;
+  padding: 2px;
+  color: color-mix(in oklab, currentColor 72%, transparent);
+}
+
+.grp-theme-switch-button {
+  min-width: 2.75rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  padding: 0.25rem 0.55rem;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+.grp-theme-switch-button:hover {
+  color: currentColor;
+}
+
+.grp-theme-switch-button[aria-pressed="true"] {
+  background: color-mix(in oklab, currentColor 10%, transparent);
+  color: currentColor;
+}
+
+.grp-theme-switch-button:focus-visible {
+  outline: 2px solid color-mix(in oklab, currentColor 30%, transparent);
+  outline-offset: 2px;
+}
+
+.homepage-comparison table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.homepage-comparison th:first-child {
+  width: 15%;
+}
+
+.homepage-layer-table table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.homepage-layer-table th:first-child {
+  width: 12%;
+}
+
+.homepage-launch-video {
+  margin: 1.5rem 0 1.75rem;
+}
+
+.homepage-launch-video video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 2736 / 1504;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, currentColor 14%, transparent);
+  border-radius: 0.75rem;
+  background: #111;
+  object-fit: contain;
+}
+
+.homepage-launch-video figcaption {
+  margin-top: 0.65rem;
+  color: color-mix(in oklab, currentColor 62%, transparent);
+  font-size: 0.8rem;
+  line-height: 1.25rem;
+}
+
+.homepage-core-diagram {
+  overflow-x: auto;
+}
+
+.homepage-core-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.blog-conversation-table table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.blog-conversation-table th:first-child {
+  width: 16%;
+}
+
+.blog-argument-diagram {
+  overflow-x: auto;
+}
+
+.blog-argument-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.blog-room-flow-mobile {
+  display: none;
+}
+
+.evidence-table table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.evidence-layer-table th:first-child,
+.evidence-finding-table th:first-child,
+.evidence-status-table th:first-child {
+  width: 20%;
+}
+
+.homepage-core-diagram-mobile {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .blog-room-flow-desktop {
+    display: none;
+  }
+
+  .blog-room-flow-mobile {
+    display: block;
+  }
+
+  .homepage-core-diagram-desktop {
+    display: none;
+  }
+
+  .homepage-core-diagram-mobile {
+    display: block;
+  }
+
+  .homepage-comparison table,
+  .homepage-comparison tbody,
+  .homepage-comparison tr,
+  .homepage-comparison td {
+    display: block;
+    width: 100%;
+  }
+
+  .homepage-comparison thead {
+    display: none;
+  }
+
+  .homepage-comparison tbody {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .homepage-comparison tr {
+    overflow: hidden;
+    border: 1px solid color-mix(in oklab, currentColor 14%, transparent);
+    border-radius: 0.65rem;
+  }
+
+  .homepage-comparison td {
+    border: 0 !important;
+    background: transparent !important;
+    padding: 0.8rem 0.9rem !important;
+  }
+
+  .homepage-comparison td + td {
+    border-top: 1px solid color-mix(in oklab, currentColor 10%, transparent) !important;
+  }
+
+  .homepage-comparison td:first-child {
+    background: color-mix(in oklab, currentColor 6%, transparent) !important;
+    font-size: 0.95rem;
+  }
+
+  .homepage-comparison td:not(:first-child)::before {
+    display: block;
+    margin-bottom: 0.35rem;
+    color: color-mix(in oklab, currentColor 58%, transparent);
+    font-size: 0.67rem;
+    font-weight: 650;
+    letter-spacing: 0.06em;
+    line-height: 1rem;
+    text-transform: uppercase;
+  }
+
+  .homepage-comparison td:nth-child(2)::before {
+    content: "Human conversation";
+  }
+
+  .homepage-comparison td:nth-child(3)::before {
+    content: "Raw agent chat";
+  }
+
+  .homepage-comparison td:nth-child(4)::before {
+    content: "A GRP room";
+  }
+
+  .homepage-layer-table table,
+  .homepage-layer-table tbody,
+  .homepage-layer-table tr,
+  .homepage-layer-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .homepage-layer-table thead {
+    display: none;
+  }
+
+  .homepage-layer-table tbody {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .homepage-layer-table tr {
+    overflow: hidden;
+    border: 1px solid color-mix(in oklab, currentColor 14%, transparent);
+    border-radius: 0.65rem;
+  }
+
+  .homepage-layer-table td {
+    border: 0 !important;
+    background: transparent !important;
+    padding: 0.8rem 0.9rem !important;
+  }
+
+  .homepage-layer-table td + td {
+    border-top: 1px solid color-mix(in oklab, currentColor 10%, transparent) !important;
+  }
+
+  .homepage-layer-table td:first-child {
+    background: color-mix(in oklab, currentColor 6%, transparent) !important;
+    font-size: 0.95rem;
+  }
+
+  .homepage-layer-table td:not(:first-child)::before {
+    display: block;
+    margin-bottom: 0.35rem;
+    color: color-mix(in oklab, currentColor 58%, transparent);
+    font-size: 0.67rem;
+    font-weight: 650;
+    letter-spacing: 0.06em;
+    line-height: 1rem;
+    text-transform: uppercase;
+  }
+
+  .homepage-layer-table td:nth-child(2)::before {
+    content: "Core question";
+  }
+
+  .homepage-layer-table td:nth-child(3)::before {
+    content: "Connection";
+  }
+
+  .homepage-layer-table td:nth-child(4)::before {
+    content: "What it provides";
+  }
+
+  .blog-conversation-table table,
+  .blog-conversation-table tbody,
+  .blog-conversation-table tr,
+  .blog-conversation-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .blog-conversation-table thead {
+    display: none;
+  }
+
+  .blog-conversation-table tbody {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .blog-conversation-table tr {
+    overflow: hidden;
+    border: 1px solid color-mix(in oklab, currentColor 14%, transparent);
+    border-radius: 0.65rem;
+  }
+
+  .blog-conversation-table td {
+    border: 0 !important;
+    background: transparent !important;
+    padding: 0.8rem 0.9rem !important;
+  }
+
+  .blog-conversation-table td + td {
+    border-top: 1px solid color-mix(in oklab, currentColor 10%, transparent) !important;
+  }
+
+  .blog-conversation-table td:first-child {
+    background: color-mix(in oklab, currentColor 6%, transparent) !important;
+    font-size: 0.95rem;
+  }
+
+  .blog-conversation-table td:not(:first-child)::before {
+    display: block;
+    margin-bottom: 0.35rem;
+    color: color-mix(in oklab, currentColor 58%, transparent);
+    font-size: 0.67rem;
+    font-weight: 650;
+    letter-spacing: 0.06em;
+    line-height: 1rem;
+    text-transform: uppercase;
+  }
+
+  .blog-conversation-table td:nth-child(2)::before {
+    content: "People";
+  }
+
+  .blog-conversation-table td:nth-child(3)::before {
+    content: "Raw agent sessions";
+  }
+
+  .blog-conversation-table td:nth-child(4)::before {
+    content: "GRP response";
+  }
+
+  .evidence-table table,
+  .evidence-table tbody,
+  .evidence-table tr,
+  .evidence-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .evidence-table thead {
+    display: none;
+  }
+
+  .evidence-table tbody {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .evidence-table tr {
+    overflow: hidden;
+    border: 1px solid color-mix(in oklab, currentColor 14%, transparent);
+    border-radius: 0.65rem;
+  }
+
+  .evidence-table td {
+    border: 0 !important;
+    background: transparent !important;
+    padding: 0.8rem 0.9rem !important;
+  }
+
+  .evidence-table td + td {
+    border-top: 1px solid color-mix(in oklab, currentColor 10%, transparent) !important;
+  }
+
+  .evidence-table td:first-child {
+    background: color-mix(in oklab, currentColor 6%, transparent) !important;
+    font-size: 0.95rem;
+  }
+
+  .evidence-table td:not(:first-child)::before {
+    display: block;
+    margin-bottom: 0.35rem;
+    color: color-mix(in oklab, currentColor 58%, transparent);
+    font-size: 0.67rem;
+    font-weight: 650;
+    letter-spacing: 0.06em;
+    line-height: 1rem;
+    text-transform: uppercase;
+  }
+
+  .evidence-layer-table td:nth-child(2)::before {
+    content: "What the agents received";
+  }
+
+  .evidence-layer-table td:nth-child(3)::before {
+    content: "What it tested";
+  }
+
+  .evidence-finding-table td:nth-child(2)::before {
+    content: "What the observations showed";
+  }
+
+  .evidence-status-table td:nth-child(2)::before {
+    content: "v0.1 status";
+  }
+}

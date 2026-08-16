@@ -1,0 +1,60 @@
+---
+title: Specification — overview
+description: The normative protocol spec. Implementers should read this section before building against GRP v0.1.
+---
+
+# Group Resolution Protocol Specification
+
+This is the **normative** GRP specification. The keywords **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**, **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **MAY**, and **OPTIONAL** are interpreted as described in [RFC 2119](https://datatracker.ietf.org/doc/html/rfc2119) and [RFC 8174](https://datatracker.ietf.org/doc/html/rfc8174).
+
+Conformance: an implementation that passes the relevant v0.1 profile and publishes a signed report can claim that profile. See [Conformance](/conformance) for the core, transport, and operator profiles.
+
+## Document set
+
+| Section | Status |
+|---|---|
+| [Versioning](/specification/versioning) | Release Candidate |
+| [Transport](/specification/transport) | Release Candidate |
+| [Rooms](/specification/rooms) | Release Candidate |
+| [Decisions](/specification/decisions) | Release Candidate |
+| [Mechanisms](/specification/mechanisms) | Release Candidate — eight mechanisms shipped; reserved identifiers refused |
+| [Mandates](/specification/mandates) | Release Candidate |
+| [Receipts](/specification/receipts) | Release Candidate |
+| [Discovery](/specification/discovery) | Release Candidate |
+| [Errors](/specification/errors) | Release Candidate |
+| [Schema reference](/specification/schema) | Generated from canonical TypeScript types |
+| [Changelog](/specification/changelog) | Tracks protocol-affecting changes |
+
+## Versioning at a glance
+
+GRP v0.1 uses the protocol version string `"0.1"`, declared by every conforming room in its `.well-known/grp.json` under `protocol_version`. Publishing the v0.1 tag freezes the protocol surface: after the tag, breaking changes ship only under a new version string, never silently under `"0.1"`. See [Versioning](/specification/versioning) for the change rules.
+
+## Out of scope (spec-explicitly-not)
+
+The following are deliberately out of scope for v0.1:
+
+- **Money flow.** Payment authorization, escrow, disbursement. v1.0 will layer this on top of v0.1's primitives.
+- **Federation.** Cross-operator state sync, room migration. The protocol is structurally federation-friendly (signed receipts cross operators, mandates are operator-agnostic), but no normative federation layer ships in v0.1.
+- **Custom mechanisms.** Mechanisms are an enum at v0.1. v0.2 will define a mechanism extension point.
+
+## Three trust gates (informative)
+
+Three structural commitments anchor the trust model. They are **informative** here (not normative requirements on implementers); they define the protocol governance model.
+
+1. **Standalone-verifiable receipts.** Every binding decision emits a compact JWS. Anyone with the receipt and the room's public key can verify it without calling the operator.
+2. **Evidence before release.** v0.1 uses the open conformance suite and live
+   multi-agent trials. A published adversarial simulation suite is the planned
+   end-state, not a v0.1 gate that has already run.
+3. **No platform-side privilege.** The hosted server is one host among many possible. The spec and the conformance suite are open.
+
+## Reading order for implementers
+
+1. [Versioning](/specification/versioning) — how to pin and migrate.
+2. [Transport](/specification/transport) — the wire format.
+3. [Rooms](/specification/rooms) — what you're implementing.
+4. [Decisions](/specification/decisions) — the lifecycle you must honor.
+5. [Mechanisms](/specification/mechanisms) — the deterministic functions.
+6. [Mandates](/specification/mandates) — how authorized actors authenticate.
+7. [Receipts](/specification/receipts) — what you emit at decision close.
+8. [Discovery](/specification/discovery) — the well-known endpoints.
+9. [Errors](/specification/errors) — the error envelope.

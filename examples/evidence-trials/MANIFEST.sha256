@@ -1,0 +1,123 @@
+# Earlier evidence-kit versions remain identified by their source commits and
+# manifest digests in specs 053, 186, and 188 and the corresponding run reports.
+# This version adds the prospectively frozen Term Sheet three-surface
+# development kit and makes the existing six-browser grid a standing
+# preflight and closeout invariant. It preserves Dinner paper-set attempt 1,
+# the fixed element-name assignments, deterministic all-idle completion,
+# Dinner judge outputs, and the three-surface Investment Committee design.
+# This revision also requires an explicit zero-running-task audit before the
+# registered task end and before surveys. Historical runs and their earlier
+# manifest digests are not relabeled.
+# The prospective Term Sheet revision raises only its hard safety cap from 30
+# to 60 minutes and keeps its pre-opened decision alive for two hours. It does
+# not change participant guidance, mandates, surfaces, models, extraction,
+# blind adjudication, or surveys.
+# Spec 191 adds an independently frozen Dinner messages-only sidecar. It does
+# not relabel or reopen Dinner's completed three-surface observations.
+# The paper-sidecar revision changes no participant guidance. It names watch
+# honestly as arrival notification and narrows the mechanical analysis rule so
+# assent must concern the primary plan rather than a fallback or side task.
+# After the first paper-sidecar judge ignored the transcript-only boundary, the
+# judge prompt makes the same boundary explicit as a no-tools/no-repository
+# instruction. Its outcome criteria, transcript, and schema are unchanged.
+# This revision adds the prospectively frozen Term Sheet messages-only
+# development sidecar. It also makes the existing Term Sheet judge and survey
+# boundaries explicitly no-tools/no-repository without changing participant
+# guidance, outcome criteria, response schemas, or negotiation content.
+# This revision adds the prospectively frozen Mafia messages-only development
+# sidecar: fixed element-name roles, three no-decision rooms, a task-required
+# neutral moderator, and frozen extraction, judgment, survey, and rubric files.
+# This revision adds Mafia's prospective three-GRP-surface development kit:
+# decisions-disabled chat, natural GRP, and one pre-opened Day 1 plurality
+# decision. Its completed messages-only history remains separate and unchanged.
+# The structured-Mafia setup correction keeps participant guidance unchanged,
+# makes Mica an observer in the private role rooms, and requires named day seats
+# to join before the exact Day 1 electorate is opened.
+# This revision adds the independently runnable Investment Committee
+# messages-only surface and aligns the paper sequence with the principal's
+# decision to run the committee before deciding on a full Publishing House
+# comparison. No committee task fact, mandate, GRP-room setting, option,
+# extractor, judge, survey, model, effort, cap, or completion rule changes.
+# This revision adds the prospectively frozen Publishing House four-observation
+# paper kit. Prior canonical and Stage A/B runs remain development history; the
+# principal waived a duplicate rehearsal block. The four fresh arms share one
+# neutral company seed, fixed six element-name roles, three-room topology,
+# 75-minute safety cap, extraction, judge, survey, and rubric.
+# Verify from the repository root with: shasum -a 256 -c examples/evidence-trials/MANIFEST.sha256
+be6dc4828028fc4c722032e7e38340a163a365668ba889761cbeedfddafdb206  examples/evidence-trials/README.md
+beb423dcc667542c361f76d11aee024275a0119b3050f5fd5babb68820cfbc8f  examples/evidence-trials/dinner/README.md
+30d747683492a06c1e05612afadedc92d380804d978624e8ec8c26f1e12dc40b  examples/evidence-trials/dinner/config/room-configs.md
+e2252dcd1fc59ed4f48562aa84a0f5bd47d0637f79f12ae3c3109349d1e0d09c  examples/evidence-trials/dinner/instruments/chat-extraction.md
+7da0a52030add2ae325214fc20e1e6926f9b0ce4b811d23261375bfe847994e4  examples/evidence-trials/dinner/instruments/judge-prompt.md
+96d303f34e0c140df31a2db7678e805c7d734c8aaa0fe9f4deb98895249bea74  examples/evidence-trials/dinner/instruments/rubric.md
+0a439c20de721e6f6488cc9edbabf7f127bab558b2ce8b7fb0f39c96e5af0f2f  examples/evidence-trials/dinner/instruments/survey.md
+24da81bd5693b0b2ecbd49d6bc0cc8bd68162d5aa9a6c3a8980729fed6cad3b6  examples/evidence-trials/dinner/instruments/messages-only-rubric.md
+8e17e9de6099d356016ae4354aded5fbbc1e593d0497f200fdd245058a7c5e11  examples/evidence-trials/dinner/messages-only.md
+e9bb4316a832a6b38928adf683a096087418946ee352f01ee8c09dce7e43782c  examples/evidence-trials/dinner/prompts/README.md
+a211eee03eec979e85dc7b1b45a5ff6f9afac2a898bc2974b68619bd9d9ec809  examples/evidence-trials/dinner/prompts/argon.md
+b088e1607522aed08592fe57c4fa2bae1afc576acc3b7ac6ffd62849736e66b1  examples/evidence-trials/dinner/prompts/cobalt.md
+ce43bc7ed48be84756ae7a8b18bfdc15701fb888815cb6e1292217b39289e400  examples/evidence-trials/dinner/prompts/common.md
+e1e116f99c32ba951c406369499fd52172cc358c6257fed0152a92f0924b784d  examples/evidence-trials/dinner/prompts/silica.md
+ae852077fe7b0a608ba582332f0642616a5a68cb173d153de34cf90915e86f42  examples/evidence-trials/investment-committee/README.md
+c8143caec5c70a99fd1722686084d1d4c15ad84240792355b86e55136f0416aa  examples/evidence-trials/investment-committee/config/room-configs.md
+fdc4153407484e37a035532a538b8ad4fdeaa254d4994d34a4a0ca982e34daf4  examples/evidence-trials/investment-committee/evidence-packet.md
+61b5fdfb4a8eadc4bdda851f3cc26dd3821edaf8259d4c7a7e9df7e7b3517b93  examples/evidence-trials/investment-committee/instruments/chat-extraction.md
+5e3a7ff8ec275dd4e85c145907d6ca67faf33a876a64345aa02f42b33595d59f  examples/evidence-trials/investment-committee/instruments/judge-prompt.md
+526110821b0f65a878ab3691ffc11ac498303b09ebed62f35b52b7d999d021ec  examples/evidence-trials/investment-committee/instruments/rubric.md
+3f21c58bc6edd4712899530c57051c63b6b40c3148552a49b9813fb6524854c0  examples/evidence-trials/investment-committee/instruments/survey.md
+db9cf54c404d42d078513e56a33a77df60682384ce0950a0b89e1cac16d45cc5  examples/evidence-trials/investment-committee/messages-only.md
+703161b62b1285f88af211feca10056ea6fa55419c7c259b56b79b95d8d36048  examples/evidence-trials/investment-committee/prompts/README.md
+090f92eae8de516ed0e73df0e078f054f8f3094f4a99eea3d4e2244a87f73082  examples/evidence-trials/investment-committee/prompts/argon.md
+7c85b6e5c89f132979f9120ba79903c2bdd98f2e02b4edf2414ffbbad2b089c4  examples/evidence-trials/investment-committee/prompts/cobalt.md
+ee6a6534564d6223e8c1f09e056d3980406d4414df43a894f35d96583a95c01c  examples/evidence-trials/investment-committee/prompts/common.md
+32b782870a757ff72093c696d43464b540162091b8bba50c30097a659e912baa  examples/evidence-trials/investment-committee/prompts/mica.md
+b2a07ae661606457e87411a116e37c748cd22a77abb6121e68e26cf35a20104a  examples/evidence-trials/investment-committee/prompts/neon.md
+bcb03b1bac5fe9ce58105175d01a6cd339d7ac41904b14a8a48072dc911f964e  examples/evidence-trials/investment-committee/prompts/silica.md
+138770265982c55af59d7244bfb9e29f5602728d3a3214a28df96b7af5237808  examples/evidence-trials/mafia/README.md
+77e30a53b73cc52614bcb982884a4fe6000d20103ae42d04bf7976af171aea8a  examples/evidence-trials/mafia/config/room-configs.md
+16500507d7b742dba65933b61191b2312ff75ea5a6cd91e16c4b6a451075e1fa  examples/evidence-trials/mafia/instruments/extraction.md
+c873b426bc106ff6ce9be613d43e094e046bb1c4efe9c9592aa28beff7648478  examples/evidence-trials/mafia/instruments/grp-rubric.md
+c03537ba7cd911747b03e91e3afd55b56e55707b953508241c8a7d1e52a73e29  examples/evidence-trials/mafia/instruments/judge-prompt.md
+f5f115e00e3f43d703a27b3ac63c00e9e810689afafc12bda08a5b84d0c3462c  examples/evidence-trials/mafia/instruments/messages-only-rubric.md
+fb98f884f9fdac664661728ccada24f559547fa518ed2172e08a3cfdce655759  examples/evidence-trials/mafia/instruments/survey.md
+60eef1ab225c15e2b2d1aa45a2a6095e0f8e95219be988842b81f6cb7781f0a4  examples/evidence-trials/mafia/messages-only.md
+bc1bfcbb3ffea34aff28b8fbd7d5fd6ddf73651bf52c6990544d2051f9964cb3  examples/evidence-trials/mafia/prompts/README.md
+69e1bcb2aa628f988004e63c6e36417ad69023c7af59957a5fb91b1a4dd0477f  examples/evidence-trials/mafia/prompts/argon.md
+822548e8649f3a2c50632d500bcf14233bf0eab6b9013d2bc8d7eac34b32b351  examples/evidence-trials/mafia/prompts/cobalt.md
+a4be30778cc9558aff27eeb09604cc2b3592dc6683c3948373df6cded8d10b7a  examples/evidence-trials/mafia/prompts/common-player.md
+cb18b25b299ca223901bbb6782eabacdec5f9ba31256b0d0d9768619620a3821  examples/evidence-trials/mafia/prompts/mica.md
+990a827191331e9266119f72152d3c18780db8e89dcd8f75ec912b7ab1a4ef43  examples/evidence-trials/mafia/prompts/mica-grp.md
+0736007fada75c7cbc7b3f490f1aa338707aa69165020651484989ce1326a13d  examples/evidence-trials/mafia/prompts/neon.md
+2672b8bacd866359d3684be256340f07d063406a4d2bb7c94fc0a3b45136f00c  examples/evidence-trials/mafia/prompts/silica.md
+39930dddf831b69bf4d7416a762b14ca6394ada1f460ff1fe1041402b3156225  examples/evidence-trials/publishing-house/README.md
+ecdc42cf14a3fbe61ddaa24d0c1655017d9447353d185386cf4701d0f0fdab4c  examples/evidence-trials/publishing-house/config/room-configs.md
+dc4b773655f7a3303299a28119ebba7ab36260270830b853a74fa462368b6c78  examples/evidence-trials/publishing-house/instruments/chat-extraction.md
+e0dae1ea19a4f5536d9c7ccc4b4ff9aab974e423fb23b7486e94d9040e26f352  examples/evidence-trials/publishing-house/instruments/judge-prompt.md
+7d7fb362dd0cbb276e4f241152f91e0def0f7b4ce3b5888300cbabb65de181e9  examples/evidence-trials/publishing-house/instruments/rubric.md
+dd51ebd9078b194b95c628225bf0a7732c9513c57b1e98c9aef55cb21f83f1e0  examples/evidence-trials/publishing-house/instruments/survey.md
+9760763c1657c1742265a13df200d48263d11b143d0953d44e7702d83d2c5ceb  examples/evidence-trials/publishing-house/messages-only.md
+862f90662a4fa59e0443894c0a019a24eb946d6a026bc1e2d0d3a47833cf078c  examples/evidence-trials/publishing-house/prompts/README.md
+3b506a486975bad115caef0425b8f7df4588c95f288619bea8d7b592506ac6c5  examples/evidence-trials/publishing-house/prompts/argon.md
+a69ce495fe303ec74246e34e52cbb43ced9553a3045ee78e150f74cd98445dd7  examples/evidence-trials/publishing-house/prompts/cobalt.md
+2fa94b2a17cf743dfe1e36111f161fbe6810f853363e99a3056f8fd493a0b11b  examples/evidence-trials/publishing-house/prompts/common.md
+7c36a9057e8a7d1ba9a3ab4e12b61c8612a649bf2527f2b1755b11bd06f0f0d3  examples/evidence-trials/publishing-house/prompts/mica.md
+715f86fb01c47c9f59c2873afcb24511bfd15574987094634766405ea7af93ad  examples/evidence-trials/publishing-house/prompts/neon.md
+13b0679eeb4a3f42be5d22ae67b7e892b9359024122c08a19fd205607dde994e  examples/evidence-trials/publishing-house/prompts/quartz.md
+f9a5a2e7f09cb79f4734fa8ab1dd1f3e8c37756e08f911feee303c7d9e741ef5  examples/evidence-trials/publishing-house/prompts/silica.md
+370ea53c6b00e5f29967cf60fa4ed8a2d52baa15763a1e5cca8b4579c0369aca  examples/evidence-trials/publishing-house/seed/README.md
+ff67fb9dff133c0ef4f9e48f882da6d0b985e2a66fbee75404993254287f53c8  examples/evidence-trials/publishing-house/seed/books.md
+c2d086075e35c9cffe5353becc7e771150e37bddc37b1d093f7994662b43151c  examples/evidence-trials/publishing-house/seed/staff.md
+780cb2e17a728ccf7d86aebee5f329df68d402f287e62c64bd9dc897493cbe3e  examples/evidence-trials/run-record-template.md
+9bbffccd51ecea7c00a814acd32e07f4402efc8e4ec06857e030985a8324a4b8  examples/evidence-trials/term-sheet/README.md
+5b22a353a824d71364da82f8e8c3da80eae1289b67a48519ffcb6c75041a1b87  examples/evidence-trials/term-sheet/config/room-configs.md
+919867ded63e1c44c0e500f0c871c09e74f415e489e7aad539c52736e6118de2  examples/evidence-trials/term-sheet/instruments/chat-extraction.md
+66469d4270e0feaecf169fefa847b926b2329eeb1b7346dc0621f3892d1b0723  examples/evidence-trials/term-sheet/instruments/judge-prompt.md
+aa4e281110b3842a98b742c644543d3300beb54300dab092d6467109a778448d  examples/evidence-trials/term-sheet/instruments/rubric.md
+4a3e276cb1892f7f88c9c00219d6ea74b73a0af4bbe1c2b015ba610f79de774e  examples/evidence-trials/term-sheet/instruments/messages-only-rubric.md
+b2a8f3c12f185ffe779af2c2a016d27f815634da896cb0bb9f8699902555824a  examples/evidence-trials/term-sheet/instruments/survey.md
+992edf24318888a16b3ef20e2cba758b86b024a98f38dffd185b7037b2ae79d2  examples/evidence-trials/term-sheet/messages-only.md
+914484cf562e1a536e27631ee04059aa95d64bf3c2f6d598960d5c58c1bcad78  examples/evidence-trials/term-sheet/prompts/README.md
+948c83e6a4f272e87582cefac5552c6e69d53de41fa2ac65f2e55fe8e1eb95c7  examples/evidence-trials/term-sheet/prompts/argon.md
+aa9b04f6a52720fb11b43327ba76835e9047a598e8011324208c89e705e4714f  examples/evidence-trials/term-sheet/prompts/cobalt.md
+e400774e5b23eddbfcd7949129bab0ae16dcc7e2ca98bc9a785ea8202e25a32d  examples/evidence-trials/term-sheet/prompts/common.md
+5ad0637d08b1aeac2d280a6e5a3c7e998caf9f869e4719843c65b2b250dfe127  examples/evidence-trials/term-sheet/prompts/silica.md

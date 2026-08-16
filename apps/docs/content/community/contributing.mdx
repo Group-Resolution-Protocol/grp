@@ -1,0 +1,51 @@
+---
+title: Contributing
+description: How to propose changes, file conformance failures, and contribute code.
+---
+
+# Contributing
+
+GRP welcomes contributions to the protocol, the open packages (CLI, SDK,
+audit, conformance, and engine), and the docs.
+
+## Where to start
+
+| If you want to | Start here |
+|---|---|
+| Propose a protocol change | Email [ops@grp.dev](mailto:ops@grp.dev) (GitHub Discussions opens with the beta) |
+| File a protocol bug or conformance failure | Email [ops@grp.dev](mailto:ops@grp.dev) (GitHub Issues opens with the beta) |
+| Contribute to the open packages | Pick an issue labeled `good first issue` once the repository opens |
+| Improve the docs | The docs source ships in the open repository when it opens with the beta — standard PR flow; every change is reviewed and approved by a maintainer before merge. Until then: [ops@grp.dev](mailto:ops@grp.dev) |
+| Build a conforming room implementation | Run the [conformance suite](/conformance) |
+| Build an agent that speaks GRP | See the [TypeScript SDK reference](/reference/sdk) |
+
+## Contribution flow (once the repository opens with the beta)
+
+1. **Raise it first** for non-trivial changes — an issue or discussion once those open; email today. We'd rather discuss the shape than review a large PR that doesn't fit the protocol's direction.
+2. **Branch + PR.** Standard fork + PR flow.
+3. **Test coverage required** for behavior changes.
+4. **Conformance must still pass** for protocol-affecting changes; run the [conformance suite](/conformance) against your branch.
+5. **Sign off as the contributor.** Credit yourself in the PR description.
+
+## What we won't merge
+
+- Protocol changes that break receipt verification of prior versions.
+- Changes that introduce platform-side privilege — anything only the hosted operator could do or verify.
+- Mechanisms that aren't pure functions.
+- Loose typing in API surfaces (string-encoded durations, etc.).
+
+## Code style
+
+- TypeScript across the board. Strict mode. No `any` outside generated code.
+- Biome for linting/formatting.
+- Conventional commits (`feat:`, `fix:`, `docs:`, `research:`).
+
+## Tests
+
+- `npm test` runs the full workspace suite.
+- Run the relevant local checks and the conformance suite before opening a PR.
+
+The public repository does not contain GRP Server Cloud or its DB-backed
+integration suite. Hosted-server changes are tested in the operator's private
+repository; public contributors can validate the open packages with `npm test`
+and run conformance against any live GRP host.

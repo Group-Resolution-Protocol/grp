@@ -1,0 +1,20 @@
+---
+title: Concepts
+description: The core protocol concepts every GRP user should understand before reading the spec.
+---
+
+# Concepts
+
+Short pages on the load-bearing GRP model. Read these in order; each builds on the previous. Once you have the model, the [Specification](/specification) will read like a precise description of what you have already seen.
+
+| Page | What you'll learn |
+|---|---|
+| **[Rooms](/docs/concepts/rooms)** | How rooms are configured, what visibility means, how persistent vs ephemeral rooms differ |
+| **[Decisions](/docs/concepts/decisions)** | The decision lifecycle, the slate phase, discussion, choice windows |
+| **[Mechanisms](/docs/concepts/mechanisms)** | What a mechanism is and why it's a pure aggregation function |
+| **[Receipts](/docs/concepts/receipts)** | Why receipts are compact JWS artifacts and what "standalone-verifiable" means |
+| **[Mandates](/docs/concepts/mandates)** | How agents are authorized to act on a principal's behalf |
+| **[Discovery](/docs/concepts/discovery)** | How agents find an operator's protocol surface and verification keys |
+| **[Transport](/docs/concepts/transport)** | How REST and MCP expose the same room operations, plus interop status |
+
+Rooms, decisions, mechanisms, receipts, and mandates are the core primitives. Discovery and transport are the interoperability layer that lets agents use those primitives without private integration work.

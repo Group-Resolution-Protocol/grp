@@ -1,0 +1,187 @@
+---
+title: Mechanisms
+description: The pure aggregation function each room runs at decision close. Normative.
+---
+
+# Mechanisms
+
+This section is **normative**.
+
+## 1. Mechanism contract
+
+A mechanism is a pure function:
+
+```
+mechanism: (parameters, eligible_voters, votes, deterministic_seed) → output
+```
+
+1.1. **Pure.** The function MUST be deterministic: same inputs always produce the same output. The function MUST NOT perform I/O, depend on the wall clock, or read external state. Any randomness (seeded tie-breaks) MUST derive solely from `deterministic_seed`.
+
+1.2. **Typed inputs.** Implementations MUST validate the input shape and reject malformed inputs with a structured error. A ballot that is individually malformed (wrong shape for the mechanism, out-of-range value, over-budget allocation) is excluded from the tally and counted in the trace's invalid-ballot diagnostics.
+
+1.3. **Typed outputs.** The output MUST match the shape:
+
+```jsonc
+{
+  "outcome": "pass" | "no_pass" | "tied" | "plurality_pass",
+  "winner": <option-key> | null,
+  "per_option_score": { "<option>": <number>, ... },
+  "cast_votes": <integer>,
+  "eligible_voters": <integer>,
+  "quorum_met": <boolean>,
+  "trace": { /* mechanism-specific verification trace */ }
+}
+```
+
+1.4. **Verification trace.** The `trace` field MUST contain enough information to allow an independent verifier to re-execute the mechanism and confirm the output (at minimum: the effective parameters, invalid-ballot count, and any tie-resolution reason). The exact shape varies per mechanism; see §4 for `simple_majority`.
+
+1.5. **Quorum.** Every mechanism honors a `quorum` parameter as a fraction in `[0, 1]` of `eligible_voters`. The room derives this fraction from its configured integer quorum, which acts as an electorate floor ([Rooms §2.3](/specification/rooms)). A quorum failure resolves as `outcome: "no_pass"` with `quorum_met: false` and `winner: null`.
+
+## 2. Mechanism enum
+
+A conforming room MUST recognize the following mechanism kinds at v0.1:
+
+| Kind | Status |
+|---|---|
+| `simple_majority` | REQUIRED at v0.1 |
+| `supermajority` | REQUIRED at v0.1 — a distinct enum value on the wire (single-choice ballot, 2/3 pass threshold) |
+| `plurality` | REQUIRED at v0.1 |
+| `approval` | REQUIRED at v0.1 |
+| `ranked_choice` | REQUIRED at v0.1 (IRV-style ranked choice) |
+| `ranked_pairwise` | REQUIRED at v0.1 (pairwise/beatpath ranked method) |
+| `score_vote` | REQUIRED at v0.1 |
+| `quadratic_vote` | REQUIRED at v0.1 |
+| `budget_allocation` | Reserved — configuring a room with it MUST be refused with a clear "not yet supported" error |
+| `conviction_vote` | Reserved — configuration refused |
+| `bilateral_negotiation` | Reserved — configuration refused |
+
+A room MUST run exactly the mechanism it was configured with — **no silent degradation** to a different mechanism, ever. Reserved identifiers exist so receipts carry forward without schema migration when those mechanisms land. Custom mechanisms MUST NOT be advertised under reserved names. v0.2 will define an extension namespace.
+
+## 3. Ballot shapes and tallies
+
+Every choice submission (`POST /choose`, MCP `choose`) carries a ballot whose shape is fixed by the room's mechanism. A ballot naming any option outside the current slate MUST be rejected (`choice.invalid_option`). The room's agent view states the expected shape in `rules.how_to_choose`. Seeded tie-breaks below are deterministic: the seed is the decision id.
+
+### 3.1 `simple_majority`
+
+- **Ballot:** a single option string.
+- **Tally:** one count per ballot; the top option wins iff it exceeds half of cast ballots (`pass_threshold: 0.5`).
+- **Tie / threshold unmet:** resolves `no_pass` (no winner).
+
+### 3.2 `supermajority`
+
+- **Ballot:** a single option string.
+- **Tally:** as `simple_majority` with `pass_threshold: 2/3` of cast ballots.
+- **Tie / threshold unmet:** resolves `no_pass`.
+
+### 3.3 `plurality`
+
+- **Ballot:** a single option string.
+- **Tally:** as `simple_majority`, but if quorum is met and no option clears the threshold, the top-scored option wins anyway (`plurality_fallthrough` — winners come strictly from the cast-ballot leaders; the fall-through never invents an option).
+- **Tie:** multi-way ties at the top are resolved by seeded-deterministic random pick.
+
+### 3.4 `approval`
+
+- **Ballot:** an array of option strings — every option the voter finds acceptable. Duplicates are deduplicated, order-preserving.
+- **Tally:** each approval counts one; highest approval count wins (plurality fall-through is on, so a fragmented field still resolves to its leader).
+- **Tie:** seeded-deterministic random pick.
+
+### 3.5 `ranked_choice`
+
+- **Ballot:** a ranked array of option strings, best first. Each option MAY appear at most once; a duplicate is a rejected ballot.
+- **Tally:** instant-runoff (IRV) — repeatedly eliminate the option with the fewest first-place votes and redistribute those ballots to their next surviving preference, until an option holds a majority of the remaining non-exhausted ballots. An exhausted ballot still counts toward quorum (it was cast).
+- **Tie:** bottom-ties during elimination and top-ties in the final round are resolved by seeded-deterministic random pick.
+
+### 3.6 `ranked_pairwise`
+
+- **Ballot:** a ranked array of option strings, best first (same shape and duplicate rule as `ranked_choice`). A ranked option beats every unranked option on that ballot.
+- **Tally:** pairwise preference matrix + strongest-path (Schulze beatpath) comparison; each option scores +1 per opponent it beats and −1 per opponent that beats it, and the top score wins.
+- **Tie:** seeded-deterministic random pick among top-tied options.
+
+### 3.7 `score_vote`
+
+- **Ballot:** an object mapping options to scores. Reference range: integer-or-decimal scores from **0 to 5** (`min_score: 0`, `max_score: 5`); an unscored option counts as the minimum. A ballot with any out-of-range score is rejected from the tally; a ballot MUST score at least one option above the minimum.
+- **Tally:** per-option score sum; highest total wins. An all-minimum field resolves `no_pass`.
+- **Tie:** seeded-deterministic random pick.
+
+### 3.8 `quadratic_vote`
+
+- **Ballot:** an object mapping options to non-negative **integer credits**, spending at most the per-voter budget. Reference budget: **9 credits** (`credits_per_voter: 9`). A ballot spending over budget, or allocating nothing, is rejected from the tally.
+- **Tally:** an option's score is the sum over voters of `sqrt(credits allocated)` — the quadratic cost curve; highest score wins. A zero-score field resolves `no_pass`.
+- **Tie:** seeded-deterministic random pick.
+
+## 4. simple_majority (worked definition)
+
+4.1. **Parameters.**
+
+```jsonc
+{
+  "options": ["yes", "no", ...],
+  "ballot_mode": "single_choice",
+  "quorum": 0.5,                  // fraction in [0, 1]
+  "pass_threshold": 0.5,          // fraction in (0, 1]
+  "pass_threshold_comparison": "strict", // exactly half is not a majority
+  "tie_break": "no_pass" | "first_listed" | "random_seeded",
+  "plurality_fallthrough": false
+}
+```
+
+4.2. **Algorithm.**
+
+a. Quorum check. Compute `participation = cast_votes / eligible_voters`. If `participation < quorum`, return `{ outcome: "no_pass", winner: null, quorum_met: false, ... }`.
+
+b. Per-option tally. For each option `o`, count ballots whose `choice === o`. Call this `score[o]`.
+
+c. Top option. Let `top` be the option(s) with the maximum `score`. If multiple, the decision is in a tie state.
+
+d. Threshold check. For `simple_majority`, if `score[top] / cast_votes <=
+pass_threshold`, the threshold is unmet. The generic engine also supports
+`pass_threshold_comparison: "inclusive"`; `supermajority` uses that comparison,
+so exactly two-thirds meets its threshold.
+
+e. Resolution.
+   - If single `top` AND threshold met: `{ outcome: "pass", winner: top, ... }`.
+   - If threshold unmet AND `plurality_fallthrough` is true: the top-scored option wins (`outcome: "plurality_pass"`), with multi-way top ties resolved by `tie_break`.
+   - Otherwise, on threshold unmet OR tie:
+     - `tie_break === "no_pass"`: `{ outcome: "no_pass", winner: null, ... }` (a strict top tie resolves `outcome: "tied"`).
+     - `tie_break === "first_listed"`: pick the first option in `parameters.options` order from among the tied; `outcome: "pass"`.
+     - `tie_break === "random_seeded"`: deterministic SHA-256-based selection from the tied set, seeded by `deterministic_seed`; `outcome: "pass"`.
+
+4.3. **Trace.** The output's `trace` field MUST include at minimum:
+
+```jsonc
+{
+  "parameters": { /* the effective parameters above */ },
+  "invalid_votes": 0,
+  "duplicate_voter_ids": [],
+  "tie_resolution_reason": "<present when a tie-break or fall-through fired>"
+}
+```
+
+## 5. Verifying a receipt
+
+A semantic verifier with a receipt that exposes ballots and an implementation
+of the named mechanism:
+
+a. Verifies the receipt's signature against the published key.
+b. Extracts `votes`, `parameters`, and `eligible_voters` from the receipt body.
+c. Re-runs the mechanism with these inputs.
+d. Confirms the recomputed output matches the receipt's `grp` claim.
+
+If recomputation disagrees with the signed outcome, the receipt is
+signature-valid but semantically invalid. If the receipt deliberately omits
+ballots or the verifier lacks that mechanism, it MUST report semantic replay
+as unavailable rather than as passed. Signature, hash, and chain verification
+remain defined in [Receipts §7](/specification/receipts#7-verification-protocol).
+
+## 6. Future adversarial validation (informative)
+
+6.1. A published adversarial simulation suite — synthetic agents with declared
+adversarial strategies — is the designed end-state for protocol release
+validation. It is not part of the v0.1 conformance profile or a gate that the
+v0.1 release claims to have completed.
+
+6.2. The suite includes (non-exhaustively): collusion, sybil swarms, weight-cap evasion, late-vote sniping, deliberation flooding, vote-flipping after position-update, mechanism-input fuzzing.
+
+6.3. Once that gate is adopted, its versioned cases, thresholds, failures, and
+results should ship with the protocol release they evaluate. The current v0.1
+gates are the conformance suite and the disclosed live trial program.

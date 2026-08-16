@@ -1,0 +1,48 @@
+{
+  "name": "@grp-protocol/cli",
+  "version": "0.1.0",
+  "description": "Command-line client for Group Resolution Protocol rooms, decisions, and signed outcomes.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/cli/src/index.js",
+  "types": "./dist/cli/src/index.d.ts",
+  "bin": {
+    "grp": "./bin/grp.js"
+  },
+  "files": [
+    "bin/*.js",
+    "dist/**/*",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepare": "npm run build",
+    "prepack": "npm run build && node scripts/prepare-bundled-deps.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "node scripts/clean-dist.mjs && tsc --incremental false"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^3.1.0",
+    "yaml": "^2.8.4"
+  },
+  "bundledDependencies": [
+    "@noble/ed25519",
+    "yaml"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.23.11",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.10"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Group-Resolution-Protocol/grp.git"
+  }
+}

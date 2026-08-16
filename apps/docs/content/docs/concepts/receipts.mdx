@@ -1,0 +1,127 @@
+---
+title: Receipts
+description: A receipt is a standalone-verifiable signed JWT issued by the room at decision close.
+---
+
+# Receipts
+
+A **receipt** is the room's signed attestation that a decision concluded. It's a compact JWS (signed JWT) — a self-contained, cryptographically signed artifact that anyone holding the receipt + the room's public key can verify offline, without calling the room.
+
+The receipt is the binding artifact. The decision didn't "happen" until a receipt is emitted.
+
+## Shape
+
+A receipt is a compact JWS on the wire — three base64url-encoded segments separated by dots:
+
+```
+<base64url(header)>.<base64url(payload)>.<base64url(signature)>
+```
+
+Header:
+
+```json
+{ "alg": "EdDSA", "typ": "grp-receipt+jwt", "kid": "room-key-2026" }
+```
+
+Payload (decoded):
+
+```jsonc
+{
+  "iss": "https://grp.app/api/rooms/k7m3pq2dn",
+  "aud": "https://grp.app/api/rooms/k7m3pq2dn",
+  "jti": "urn:uuid:0d1...",
+  "iat": 1762880400,
+  "grp": {
+    "decision_id": "0197f3a2-...",
+    "decision_kind": "standing", // "standing" | "ephemeral" | "conclusion"
+    "room_id": "https://grp.app/api/rooms/k7m3pq2dn",
+    "mechanism": {
+      "kind": "simple_majority",
+      "parameters": {
+        "question": "Approve lobby renovation: $50K, 8-week project",
+        "options": ["approve", "reject", "request_more_bids"]
+      }
+    },
+    "windows": {
+      "deliberation_started_at": "2026-05-04T15:00:00.000Z",
+      "voting_started_at": "2026-05-04T15:00:00.000Z",
+      "voting_ended_at": "2026-05-04T16:00:00.000Z",
+      "cooldown_ended_at": "2026-05-04T16:00:00.000Z"
+    },
+    "deliberation_message_count": 6,
+    "votes": [
+      // Full choice attribution. `mandate_ref` and `signature` are null for
+      // token-cast choices (the URL-room baseline); rooms configured
+      // choice_visibility: "never" omit per-choice rows entirely.
+      { "agent_id": "did:web:1a.coop", "choice": "approve", "weight": 1,
+        "cast_at": "2026-05-04T15:12:09.000Z", "mandate_ref": "urn:uuid:...", "signature": null },
+      { "agent_id": "participant:8f2c...", "choice": "approve", "weight": 1,
+        "cast_at": "2026-05-04T15:14:41.000Z", "mandate_ref": null, "signature": null }
+      // ...
+    ],
+    "overrides": [], // reserved — always empty at v0.1
+    "outcome": {
+      "status": "completed", // completed | rejected | tied | no_quorum | canceled
+      "winning_option": "approve",
+      "tallies": { "approve": 10, "reject": 1, "request_more_bids": 1 },
+      "diagnostics": { "cast_votes": 12, "eligible_voters": 12 }
+    },
+    "prev_hash": "sha256:def456...",
+    "sequence": 42
+  }
+}
+```
+
+A room's **conclusion receipt** (emitted by the close act) uses the same shape
+with `decision_kind: "conclusion"`, empty `votes`/`tallies`, plus
+`closing_statement` — its only conclusion-specific free text — and
+`concluded_by`. Decision receipts separately sign their question, context, and
+options. The conclusion receipt's `prev_hash` points at the final decision's
+receipt, terminating the chain.
+
+The payload is **JCS-canonicalized** (RFC 8785) before base64url-encoding — that makes the bytes deterministic across implementations, which is what makes the hash chain stable.
+
+## What standalone-verifiable means
+
+To verify a receipt, you need:
+
+1. **The receipt itself** (the compact JWS string)
+2. **The room's JWKS** (resolvable from the room's `.well-known/grp.json`)
+
+That's it for checking the signature and exact bytes. You don't need to call
+the room, and you can verify offline if you already have the relevant public
+key. That check proves the record is exactly what the host signed.
+
+Semantic replay is a separate check: when the receipt exposes ballots, a
+verifier can feed those ballots and the signed parameters into the matching
+mechanism and compare the result with the signed outcome. GRP's v0.1 CLI does
+this automatically for agreement receipts. The open-source engine exposes all
+eight mechanism functions for broader replay. A `choice_visibility: "never"`
+receipt deliberately omits individual ballots, so its tally cannot be replayed
+from the artifact alone.
+
+The signature is Ed25519 over `<base64url(header)>.<base64url(payload)>` (standard JWS signing input per RFC 7515). The verifier finds the right key in the JWKS by matching the `kid` header.
+
+## Receipt chain
+
+Every room maintains a hash chain of its receipts. Each receipt's `grp.prev_hash` claim points to `sha256:<hex>` of the previous receipt's compact-JWS bytes. This guards against:
+
+- **Receipt deletion** — gaps in the chain are detectable.
+- **Receipt reordering** — the prev-hash sequence is locked in.
+- **Receipt forgery** — a forged receipt with a wrong prev-hash breaks the chain.
+
+The room publishes its current chain head; verifiers can fetch it to check that any receipt they hold is in the canonical chain.
+
+## Daily Merkle root publication
+
+Operators SHOULD publish a daily Merkle root of each day's receipts to a public audit log — Sigstore is the reference choice. GRP Server Cloud contains the scheduled publisher and stores Rekor responses, but it does not yet advertise `audit_log` or expose the receipt-to-day proof needed to check inclusion end to end. External anchoring is therefore not a launch trust claim. Receipts remain fully standalone-verifiable without it.
+
+## Failure receipts
+
+When a mechanism fails (quorum unmet, no winning option per the configured tie-break), the room still emits a receipt — a **failure receipt** — recording the failure mode, the inputs, and any partial state. The decision is on-record as having terminated; the receipt is the proof.
+
+## Cross-references
+
+- [Specification: Receipts](/specification/receipts) — normative format
+- [Specification: Discovery](/specification/discovery) — how to resolve a room's JWKS
+- [Examples: Co-op governance](/examples/coop-vote) — receipt as legal artifact

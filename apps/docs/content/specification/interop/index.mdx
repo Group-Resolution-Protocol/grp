@@ -1,0 +1,48 @@
+---
+title: Interop — overview
+description: How GRP can compose with adjacent agent protocols, including the exact status of experimental bindings.
+---
+
+# Interop
+
+Interop bindings are optional. A room that publishes only
+`.well-known/grp.json` is GRP-conformant. A binding can let a room also be
+reachable through another protocol's discovery and interaction surfaces, but
+an operator may claim compatibility only after the binding matches a named
+released version and passes its conformance requirements.
+
+For A2A specifically, the intended layering is that an A2A agent addresses the
+GRP host while GRP remains the source of group membership, canonical state,
+mechanism semantics, and receipts. The shipped experimental endpoint predates
+A2A 1.0 and does not yet establish current A2A interoperability.
+
+## What an interop binding is
+
+A binding is a small, URI-identified spec that defines:
+
+1. **Discovery.** How the other protocol locates a GRP room.
+2. **Mapping.** How the other protocol's primitives correspond to GRP primitives (room, decision, choice, discussion, receipt).
+3. **Payload typing.** The media types and headers the binding uses on the wire.
+4. **Conformance.** What an implementer MUST do to claim the binding.
+
+Bindings are **additive**. They do not change the GRP wire (REST + MCP per [Transport](/specification/transport)). They give agents a second front door.
+
+## Why bindings instead of additional transports
+
+GRP's core transports — REST and MCP Streamable HTTP — are the wire. New transports cost: a third REQUIRED transport doubles the conformance surface and forces every room operator to maintain a third codepath. The MCP binding works as a transport because MCP is a tool-call wire that maps cleanly onto GRP's operation table. Most other agent protocols are shaped differently — peer-to-peer task wires, payment wires, identity substrates — and a binding is the right shape: a scoped translation layer that the room's operator opts into.
+
+## Status
+
+| Binding | Status | Reserved URI |
+|---|---|---|
+| [Legacy A2A draft binding](/specification/interop/a2a) | Experimental; not A2A 1.0 conformant | `https://groupresolutionprotocol.org/ext/grp/v1` |
+
+Bindings for AITP-02, AP2, and ANP are under evaluation and may land at v0.2.
+
+## Threat model carried over
+
+Interop bindings inherit GRP's trust gates:
+
+- **Standalone-verifiable receipts.** The receipt is the same compact JWS regardless of which envelope wrapped the choice. Anyone with the receipt and the room's public key can verify it offline.
+- **Mandate-bound participation.** Where a binding offers a mandate-authenticated participation path, it MUST verify mandates per [Transport §4](/specification/transport#4-mandate-authentication). A binding MUST NOT advertise mandate support until that verification is implemented end to end, and it MUST NOT introduce a new authentication primitive.
+- **No platform-side privilege.** Bindings are URI-identified and the URI is permanent. A binding's specification is open; the hosted server is one of many possible implementations.

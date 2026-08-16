@@ -1,0 +1,44 @@
+{
+  "name": "@grp-protocol/engine",
+  "version": "0.1.0",
+  "description": "Pure-function reference implementations of GRP decision mechanisms.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/engine/src/index.js",
+  "types": "./dist/engine/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/engine/src/index.d.ts",
+      "import": "./dist/engine/src/index.js"
+    }
+  },
+  "files": [
+    "dist/engine/src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepack": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@grp-protocol/audit": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "fast-check": "^3.23.2",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.10"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Group-Resolution-Protocol/grp.git"
+  }
+}

@@ -1,0 +1,95 @@
+name: Stage npm packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type STAGE to build and submit all five packages for 2FA review
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: ${{ inputs.confirmation == 'STAGE' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Install the locked public tree
+        run: npm ci
+
+      - name: Build and test the public tree
+        run: |
+          npm run build
+          npm test
+
+      - name: Verify package provenance metadata
+        run: node scripts/check-npm-release-metadata.mjs --repository="https://github.com/${GITHUB_REPOSITORY}"
+
+      - name: Install the pinned staged-publishing client
+        run: >-
+          npm install --ignore-scripts --no-audit --no-fund
+          --package-lock=false --prefix .release-tools npm@11.15.0
+
+      - name: Pack, install, and retain the exact release artifacts
+        run: node scripts/verify-npm-packages.mjs --artifact-dir=.release-packages
+
+      - name: Upload the verified release bundle
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: npm-release-bundle
+          path: |
+            .release-packages
+            .release-tools
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  stage:
+    needs: prepare
+    if: ${{ inputs.confirmation == 'STAGE' }}
+    runs-on: ubuntu-latest
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Download the verified release bundle
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: npm-release-bundle
+          path: release
+
+      - name: Verify release bundle checksums
+        working-directory: release/.release-packages
+        run: shasum -a 256 -c SHA256SUMS
+
+      - name: Stage all five packages for maintainer review
+        run: |
+          NPM_CLI="release/.release-tools/node_modules/npm/bin/npm-cli.js"
+          node "$NPM_CLI" stage publish --ignore-scripts release/.release-packages/grp-protocol-audit-0.1.0.tgz
+          node "$NPM_CLI" stage publish --ignore-scripts release/.release-packages/grp-protocol-engine-0.1.0.tgz
+          node "$NPM_CLI" stage publish --ignore-scripts release/.release-packages/grp-protocol-sdk-0.1.0.tgz
+          node "$NPM_CLI" stage publish --ignore-scripts release/.release-packages/grp-protocol-conformance-0.1.0.tgz
+          node "$NPM_CLI" stage publish --ignore-scripts release/.release-packages/grp-protocol-cli-0.1.0.tgz

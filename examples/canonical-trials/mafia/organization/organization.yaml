@@ -1,0 +1,122 @@
+version: 1
+name: canonical-mafia
+host: grp
+
+personas:
+  - id: mica
+    display_name: Mica
+    instructions: ./personas/mica.md
+    first_day: ./first-day/moderator.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Mica"]
+      prompt: first_day
+
+  - id: silica
+    display_name: Silica
+    instructions: ./personas/silica.md
+    first_day: ./first-day/player.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Silica"]
+      prompt: first_day
+
+  - id: cobalt
+    display_name: Cobalt
+    instructions: ./personas/cobalt.md
+    first_day: ./first-day/player.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Cobalt"]
+      prompt: first_day
+
+  - id: argon
+    display_name: Argon
+    instructions: ./personas/argon.md
+    first_day: ./first-day/player.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Argon"]
+      prompt: first_day
+
+  - id: neon
+    display_name: Neon
+    instructions: ./personas/neon.md
+    first_day: ./first-day/player.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Neon"]
+      prompt: first_day
+
+rooms:
+  - id: day
+    creator: mica
+    about: Four-player Mafia day room for discussion and formal elimination decisions; Mica moderates without voting
+    type: persistent
+    mechanism: plurality
+    visibility: private
+    settings:
+      auth: either
+      voting_window: 240
+      settle_window: 0
+      max_participants: 5
+      max_options: 4
+      max_open_decisions: 1
+      early_close: true
+      creator_votes: false
+      read_receipts: true
+      choice_visibility: after_decided
+      deliberation_mode: optional
+      invite_authority: operator
+      option_proposal_authority: operator
+      decision_opening_authority: operator
+      conclusion_authority: operator
+    members: [mica, silica, cobalt, argon, neon]
+
+  - id: mafia-night
+    creator: mica
+    about: Private Mafia night-action room
+    type: persistent
+    mechanism: simple_majority
+    visibility: private
+    settings:
+      auth: either
+      voting_window: 240
+      settle_window: 0
+      max_participants: 2
+      max_options: 4
+      max_open_decisions: 1
+      early_close: true
+      creator_votes: false
+      read_receipts: true
+      choice_visibility: after_decided
+      deliberation_mode: optional
+      invite_authority: operator
+      option_proposal_authority: operator
+      decision_opening_authority: operator
+      conclusion_authority: operator
+    members: [mica, silica]
+
+  - id: doctor-night
+    creator: mica
+    about: Private Doctor night-action room
+    type: persistent
+    mechanism: simple_majority
+    visibility: private
+    settings:
+      auth: either
+      voting_window: 240
+      settle_window: 0
+      max_participants: 2
+      max_options: 4
+      max_open_decisions: 1
+      early_close: true
+      creator_votes: false
+      read_receipts: true
+      choice_visibility: after_decided
+      deliberation_mode: optional
+      invite_authority: operator
+      option_proposal_authority: operator
+      decision_opening_authority: operator
+      conclusion_authority: operator
+    members: [mica, cobalt]

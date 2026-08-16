@@ -1,0 +1,114 @@
+---
+title: Errors
+description: The structured error envelope and the v0.1 error code namespace.
+---
+
+# Errors
+
+This section is **normative**.
+
+## 1. Error envelope
+
+A conforming room MUST return errors in the following JSON shape:
+
+```jsonc
+{
+  "error": {
+    "code": "<stable-dot-code>",      // one of the codes in §3 or vendor:<vendor>:<code>
+    "message": "<human_readable>",    // instructive, single-paragraph English
+    "hint": "<next action>",          // optional
+    "details": { /* optional, error-specific structured fields */ },
+    "request_id": "<id>"              // optional
+  }
+}
+```
+
+1.1. `error.code` MUST be one of the codes in §3 OR a vendor-prefixed code (`vendor:<vendor>:<code>`).
+
+1.2. `error.message` MUST be a single-paragraph English description suitable for logging and instructive enough for an agent to self-correct. It MUST NOT contain credentials, tokens, or PII.
+
+1.3. `error.hint` MAY carry the concrete next action when one exists.
+
+1.4. `error.details` MAY contain structured context to aid debugging. Implementations MUST NOT include private data.
+
+## 2. HTTP status mapping
+
+| HTTP status | When |
+|---|---|
+| `400 Bad Request` | Malformed input — bad JSON, missing required field, type mismatch, invalid choice |
+| `401 Unauthorized` | Presented credential is invalid, expired, or revoked |
+| `403 Forbidden` | Authenticated but lacking permission — visibility gate, authority denial, eligibility |
+| `404 Not Found` | Room or decision does not exist |
+| `409 Conflict` | Capacity reached, idempotency conflict |
+| `429 Too Many Requests` | Rate limit (per-mandate or per-IP) hit |
+| `500 Internal Server Error` | Server-side failure |
+
+## 3. Error code namespace
+
+Codes are COARSE stable buckets — the instructive `message` carries the specifics. Implementations MUST use the following codes when the condition applies:
+
+### 3.1 Auth
+
+- `auth.required`          — no token or mandate presented on an endpoint that needs one
+- `auth.invalid_token`     — participant token unrecognized for this room
+- `participant.token_superseded` — the presented token WAS this seat's credential until a seat recovery rotated it out: the seat was re-joined from another session. Seats are single-session; a shared invite makes each rejoin evict the other session.
+- `auth.invalid_password`  — a supplied Private-room password is incorrect
+- `auth.mandate_required`  — room config requires a mandate; token-only call rejected
+- `auth.mandate_not_accepted` — room config is token-only; mandate rejected
+- `mandate.*`              — mandate verification failures (signature, scope, expiry, revocation, caps); see [Mandates](/specification/mandates)
+
+### 3.2 Rooms
+
+- `room.not_found`         — room does not exist
+- `room.join_required`     — a restricted Unlisted/Private read requires access
+- `room.invite_required`   — a new Private-room seat supplied neither a valid invite nor room password
+- `room.at_capacity`       — `max_participants` reached
+- `room.concluded`         — room is closed and read-only
+
+`room.join_required` is HTTP 403 and its `details` carries the non-sensitive metadata sliver an unauthorized caller may see:
+
+```jsonc
+{
+  "error": {
+    "code": "room.join_required",
+    "message": "this is an unlisted room — join it before reading",
+    "hint": "POST /api/rooms/{slug}/join, then read again with your participant token",
+    "details": {
+      "slug": "<slug>",
+      "visibility": "unlisted",
+      "join_required": true,
+      "password_supported": false
+    }
+  }
+}
+```
+
+### 3.3 Decisions and choices
+
+- `decision.not_open`      — no open decision, or the targeted decision is resolved (HTTP 400 — this is what a choice on an expired or absent decision returns)
+- `decision.not_found`     — a `decision` selector (the room-local decision number) names no decision in the room (HTTP 404; the message lists the open decisions)
+- `decision.proposing`     — choice submitted while the decision is still collecting options
+- `choice.invalid_option`  — submitted choice not in the current options
+- `choice.not_eligible`    — caller is not in the decision's eligible participant set
+
+### 3.4 Invites and authority
+
+- `invite.invalid`         — invite expired, revoked, unavailable, not found, or bound to a different identity
+- `authority.denied`       — action attempted without the configured authority (proposal, decision opening, conclusion, invites, settings)
+
+### 3.5 Input and server
+
+- `input.invalid`          — generic malformed-input bucket; `message` identifies the field
+- `idempotency.conflict`   — same idempotency-key with different body
+- `rate_limit.exceeded`   — rate limit hit
+- `internal.error`         — unexpected server-side failure
+
+## 4. Idempotency-conflict semantics
+
+When a request with a previously-seen idempotency-key arrives with a **different** body, the room MUST return HTTP 409 with an idempotency-conflict error. The room MUST NOT process the new request.
+
+When the same key arrives with an **identical** body, the room MUST return the prior result without re-processing.
+
+## 5. Localization (informative)
+
+The `message` field is English at v0.1. Future versions MAY add a `messages` map keyed by language tag. Code values are language-neutral and MUST NOT be localized.

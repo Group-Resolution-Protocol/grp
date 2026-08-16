@@ -1,0 +1,49 @@
+---
+title: Versioning
+description: How GRP versions the protocol surface and what the v0.1 tag freezes.
+---
+
+# Versioning
+
+This section is **normative**.
+
+## 1. Version format
+
+GRP protocol versions are short `major.minor` strings. The current version is `0.1`.
+
+1.1. A room MUST declare its protocol version in `.well-known/grp.json` under the singular `protocol_version` field (see [Discovery §2](/specification/discovery#2-document-shape)). At v0.1 the value is `"0.1"`.
+
+1.2. Conformance reports identify the validated surface as `grp/0.1`. Tooling MAY accept `grp/0.1`, `v0.1`, and `0.1` as equivalent spellings of the same version.
+
+## 2. The freeze
+
+Publishing v0.1 (the SDK release, the public docs, the `v0.1` tag) **freezes the protocol surface**. Before the tag, the surface may change without a version bump — the specification tracks the shipped v0.1 surface. After the tag:
+
+2.1. The published v0.1 specification MUST NOT change except for editorial corrections that do not alter the protocol's behavior.
+
+2.2. Behavior-affecting changes MUST ship as a new protocol version with an updated `protocol_version` value.
+
+## 3. Compatibility policy
+
+3.1. **Additive changes are non-breaking** and do not require a version bump: new OPTIONAL request fields, new response fields, new mechanism identifiers in `mechanisms_supported`, new error codes within the [namespace rules](/specification/errors#3-error-code-namespace), and new capability flags in the discovery document.
+
+3.2. Clients MUST ignore response fields they do not recognize.
+
+3.3. GRP commits to **strict backwards compatibility within a major (v0.x) series**. A receipt issued under one published version MUST verify under any subsequent published version of the same major series.
+
+## 4. Breaking changes
+
+Breaking changes — changes that invalidate receipts, change the canonical scope-evaluation algorithm, rename lifecycle states, or remove/retype wire fields — MUST advance the protocol version, and a major-series advance (e.g., v0 → v1) MUST publish a migration guide. This is the reason the freeze is the release gate: before the tag a protocol correction is a free edit; after it, a breaking change costs the ecosystem a migration.
+
+## 5. Deprecation
+
+The pre-freeze action aliases `vote`, `put-question`, `conclude`, and
+`deliberate` were removed before v0.1. The only retained input alias is
+`for=my_vote` for `for=my_choice` on next-action waits. New clients MUST use
+the canonical vocabulary; the alias is documented in the
+[Changelog](/specification/changelog) and MAY be removed at a later protocol
+version.
+
+## 6. Capability negotiation
+
+A room declares its protocol version and capabilities in `.well-known/grp.json`. An agent MUST check `protocol_version` before issuing binding calls and MUST NOT proceed against a version it does not support. Capability flags (auth modes, mechanisms, engagement patterns) are honest per [Discovery §2](/specification/discovery#2-document-shape) — an agent can trust an advertised capability to be backed by a live route.

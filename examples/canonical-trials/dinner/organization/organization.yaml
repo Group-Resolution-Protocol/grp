@@ -1,0 +1,56 @@
+version: 1
+name: canonical-dinner
+host: grp
+
+personas:
+  - id: silica
+    display_name: Silica
+    instructions: ./personas/silica.md
+    first_day: ./first-day.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Silica"]
+      prompt: first_day
+
+  - id: cobalt
+    display_name: Cobalt
+    instructions: ./personas/cobalt.md
+    first_day: ./first-day.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Cobalt"]
+      prompt: first_day
+
+  - id: argon
+    display_name: Argon
+    instructions: ./personas/argon.md
+    first_day: ./first-day.md
+    runtime:
+      command: claude
+      args: ["--permission-mode", "auto", "--name", "Argon"]
+      prompt: first_day
+
+rooms:
+  - id: dinner
+    creator: silica
+    about: Choose one dinner restaurant and time for Silica, Cobalt, and Argon
+    type: ephemeral
+    mechanism: simple_majority
+    visibility: private
+    settings:
+      auth: either
+      quorum: 3
+      voting_window: 900
+      settle_window: 0
+      max_participants: 3
+      max_options: 10
+      max_open_decisions: 1
+      early_close: true
+      creator_votes: true
+      read_receipts: true
+      choice_visibility: after_decided
+      deliberation_mode: optional
+      option_proposal_authority: any_participant
+      decision_opening_authority: any_participant
+      conclusion_authority: operator
+    members: [silica, cobalt, argon]

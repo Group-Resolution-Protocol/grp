@@ -1,0 +1,47 @@
+---
+title: Governance
+description: How GRP is run and how protocol-affecting changes are made.
+---
+
+# Governance
+
+GRP at v0.1 follows a **steward + open-proposal** model. The steward (Malacan, Inc.) drafts and maintains the spec; protocol-affecting changes go through public review.
+
+## Roles
+
+- **Steward (Malacan, Inc.)** — drafts the spec, maintains the open protocol tooling, and operates GRP Server Cloud, a hosted GRP operator. The steward holds no protocol privilege: any operator implements the same public spec and passes the same open conformance suite, and every host's receipts are standalone-verifiable. Neutral governance (a foundation or standards home) is an explicit, pre-committed revisit once multiple serious independent implementations exist.
+- **Implementers** — anyone running a conforming room. Implementers are equal: any conforming server is a valid GRP room.
+- **Contributors** — anyone proposing changes (by email today; GitHub Discussions and PRs when the repository opens with the beta).
+
+## Change process at v0.1
+
+Until the SEP (specification enhancement proposal) process lands at v0.2:
+
+1. **Raise the proposal** — email [ops@grp.dev](mailto:ops@grp.dev) today; a GitHub Discussion once the repository opens with the beta.
+2. **Discussion phase** — minimum 14 days for substantive proposals; longer for breaking changes.
+3. **Implementation + conformance** — the proposal must come with a working implementation and pass the conformance suite (the adversarial sim suite when it lands).
+4. **Publish** — accepted proposals ship in the next dated spec version.
+
+The [specification changelog](/specification/changelog) is the running public record of accepted changes. Once external contributors begin proposing changes, we'll formalize the SEP process.
+
+## What "protocol-affecting" means
+
+A change is protocol-affecting if it:
+
+- Adds, removes, or changes a normative requirement
+- Changes the canonical scope-evaluation algorithm
+- Changes the receipt format in ways that invalidate prior receipts
+- Adds or removes a mandatory transport
+- Changes a mechanism's deterministic behavior
+
+Editorial corrections (clarifying prose, fixing typos, restructuring sections without changing requirements) are NOT protocol-affecting and ship in editorial revisions.
+
+## v0.2 governance additions
+
+At v0.2, governance gains:
+
+- **SEP index** — formal change-proposal documents.
+- **Working Groups** — for areas that warrant ongoing focus (mechanism design, conformance testing, registry).
+- **Implementer council** — multi-operator advisory on protocol direction once a second large operator emerges.
+
+These don't make sense at v0.1; we'll add them as the ecosystem grows.

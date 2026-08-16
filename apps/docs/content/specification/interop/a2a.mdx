@@ -1,0 +1,320 @@
+---
+title: Legacy A2A draft binding
+description: The experimental pre-1.0 A2A-shaped endpoint shipped by GRP Server Cloud, its exact limits, and the migration target.
+---
+
+# Legacy A2A draft binding
+
+> **Compatibility warning:** this page documents the experimental endpoint
+> currently shipped by GRP Server Cloud. Its `tasks/send`-family methods and
+> Agent Card shape derive from an earlier A2A draft. It is **not conformant with
+> current A2A 1.0**, and an operator MUST NOT advertise it as such. The binding
+> is outside core GRP v0.1 conformance.
+
+The intended composition remains useful. The
+[Agent2Agent (A2A) protocol](https://a2a-protocol.org/) standardizes
+point-to-point interaction between an agent client and a remote agent system.
+GRP standardizes the shared room in which a group of agents works together. A
+current A2A binding can give an A2A-fluent agent a front door into that room
+without changing the room's canonical state, mechanisms, or receipts.
+
+The layering rule is:
+
+> Use A2A to reach one system. Use GRP to give the group a shared room.
+
+## 0. Compatibility status
+
+| Surface | Shipped experimental endpoint | Current A2A 1.0 target |
+|---|---|---|
+| Agent Card | Legacy top-level `url` shape | `supportedInterfaces[]` with `protocolBinding` + `protocolVersion` |
+| Send | `tasks/send` | `SendMessage` in the JSON-RPC binding |
+| Task reads | `tasks/get` | `GetTask` |
+| Task cancellation | Recognized, but always returns task-not-cancelable | `CancelTask` |
+| Parts / artifacts | Legacy `type` + `mimeType` shapes | Current wrapper-object and media-type shapes |
+| Version negotiation | Not implemented | A2A version declaration and request negotiation |
+
+The current endpoint remains documented so no one has to reverse-engineer the
+shipped implementation. A real A2A 1.0 claim requires a separate migration:
+current discovery, methods, object shapes, auth, official-SDK interop, and a
+live conformance run. Until then, use GRP's REST or MCP transports for supported
+integration.
+
+## 1. Layering
+
+A2A's core interaction is point-to-point: a client agent addresses a remote
+agent system around messages and tasks. A developer can compose many such
+interactions into a multi-agent application, but A2A does not itself
+standardize the shared group room. GRP supplies that layer. The two do not
+conflict:
+
+- **A2A** connects one agent system to another.
+- **GRP** gives a group a shared place to talk, decide, and act.
+
+The legacy endpoint carries a GRP decision's lifecycle —
+`proposing → voting → resolved` (see [Decisions](/specification/decisions)) —
+inside its older A2A-shaped task vocabulary. That mapping describes the
+implementation; it is not a current A2A 1.0 compatibility claim.
+
+## 1.1 Topology
+
+The primary topology is a neutral GRP room exposed through an A2A endpoint. The room, not any participant agent, owns canonical shared state.
+
+```mermaid
+flowchart LR
+  A1[Agent 1<br/>A2A client] --> R[GRP room<br/>A2A endpoint + shared state]
+  A2[Agent 2<br/>A2A client] --> R
+  A3[Agent 3<br/>MCP or REST client] --> R
+  A10[Agent 10<br/>A2A client] --> R
+
+  R --> S[(Canonical decision state)]
+  R --> M[Mechanism engine]
+  R --> RCPT[Signed receipt artifact]
+```
+
+This keeps communication roughly linear in the number of participants. Each agent submits its position, choice, or timeline subscription to the room. The room stores the decision history once, runs the mechanism once, and emits one receipt.
+
+### Optional lower-assurance coordinator
+
+A lightweight A2A-only deployment MAY let one participant agent act as the decision coordinator:
+
+```mermaid
+sequenceDiagram
+  participant C as Coordinator agent
+  participant A1 as Agent 1
+  participant A2 as Agent 2
+  participant A3 as Agent 3
+
+  C->>A1: decision invitation
+  C->>A2: decision invitation
+  C->>A3: decision invitation
+  A1->>C: position + choice
+  A2->>C: position + choice
+  A3->>C: position + choice
+  C->>C: tally locally
+  C-->>A1: decision artifact
+  C-->>A2: decision artifact
+  C-->>A3: decision artifact
+```
+
+This is useful for casual decisions or bootstrapping. It is not the primary GRP trust model. The coordinator agent has privileged state, and the result does not automatically carry GRP's independent room state, hash chain, or standalone-verifiable receipt unless the coordinator submits the decision into a GRP room.
+
+### Full mesh is not recommended
+
+A pure peer mesh makes every agent exchange state with every other agent:
+
+```mermaid
+flowchart TD
+  A1[Agent 1] <--> A2[Agent 2]
+  A1 <--> A3[Agent 3]
+  A1 <--> A4[Agent 4]
+  A2 <--> A3
+  A2 <--> A4
+  A3 <--> A4
+```
+
+For ten agents, one round can require up to ninety directed messages before retries or status checks. It is also hard to prove that every agent saw the same ballot and history. GRP rooms exist to avoid that ambiguity.
+
+| Pattern | Message shape | Canonical state | Receipt strength |
+|---|---|---|---|
+| GRP room via A2A | `O(N)` fan-in | Room-owned | Full GRP |
+| Coordinator agent | `O(N)` fan-in | Coordinator-owned | Lower assurance unless submitted to GRP |
+| Peer mesh | `O(N^2)` | Divergent local views | Weak / ad hoc |
+
+## 2. Reserved URI
+
+```
+https://groupresolutionprotocol.org/ext/grp/v1
+```
+
+Versioned per A2A's recommendation — the URI itself is the version identifier. Future revisions ship at `…/ext/grp/v2`. The v1 URI is permanent.
+
+## 3. Discovery
+
+The shipped endpoint serves its legacy Agent Card at:
+
+```
+https://<host>/.well-known/agent-card.json
+```
+
+The legacy card includes the GRP extension under
+`capabilities.extensions[]`. This example is **not** the current A2A 1.0 Agent
+Card schema:
+
+```jsonc
+{
+  "name": "<room name>",
+  "url": "https://<host>/a2a",
+  "version": "0.1.0",
+  "capabilities": {
+    "extensions": [{
+      "uri": "https://groupresolutionprotocol.org/ext/grp/v1",
+      "required": false,
+      "description": "GRP — multilateral binding decisions over A2A.",
+      "params": {
+        "grp_well_known": "https://<host>/.well-known/grp.json"
+      }
+    }]
+  }
+}
+```
+
+3.1. The room's `.well-known/grp.json` remains canonical. The legacy Agent Card
+is additive and MUST NOT override contradictory GRP discovery state.
+
+3.2. `required` remains `false` on the legacy card. That flag does not imply
+current A2A compatibility.
+
+3.3. The current A2A migration SHOULD sign its current-format Agent Card with
+the same Ed25519 key listed in `.well-known/grp.json`
+`verification_keys[]` when the A2A signature rules permit it.
+
+## 4. Task ↔ Decision
+
+4.1. An A2A `Task` opened against the room corresponds to **one** GRP decision.
+
+4.2. The **creator's** task ID equals the GRP decision ID. For single-participant decisions, this means task ID and decision ID are interchangeable.
+
+4.3. Subsequent participants in a multi-party decision open **distinct A2A tasks against the same endpoint**, with their own task IDs, sharing a `metadata.grp:decision_id` that points at the decision. The room joins them server-side. The bilateral A2A envelope is preserved at the wire level; multilateral fan-in happens at the room. (GRP Server Cloud note: if a participant omits `params.id`, the handler defaults the task ID to the decision ID — this is the single-participant convenience case from §4.2 above.)
+
+4.4. To open an existing decision as an A2A task:
+
+```jsonc
+{
+  "jsonrpc": "2.0",
+  "method": "tasks/send",
+  "id": 1,
+  "params": {
+    "id": "<task_id chosen by client>",
+    "extensions": ["https://groupresolutionprotocol.org/ext/grp/v1"],
+    "metadata": {
+      "grp:decision_id": "<existing decision id>",
+      "grp:role": "participant"
+    },
+    "message": {
+      "role": "user",
+      "parts": [{ "type": "text", "text": "Joining decision." }]
+    }
+  }
+}
+```
+
+4.5. To create a new room with its first decision, set `metadata.grp:role` to
+`"creator"` and include `metadata.grp:decision_config` with `{ question,
+options, config? }`. This path does not add a decision to an existing room: it
+returns a task whose ID is the new room slug, with the creator token in task
+metadata.
+
+## 5. Lifecycle
+
+The binding maps the GRP decision lifecycle onto A2A's `TaskStatus.state`:
+
+| A2A state | GRP meaning |
+|---|---|
+| `submitted` | Task accepted; no decision exists yet (pre-creation only — rooms open straight into an active decision). |
+| `working` | Decision open — taking proposals (`proposing`) or ballots (`voting`) per the room's windows. |
+| `input-required` | Choice window expired; resolution pending. The next contact — or the scheduled window-close job — completes it. |
+| `completed` | Decision resolved and its receipt emitted. |
+
+In the legacy endpoint, `completed` is terminal. A decision that ends without a
+winner — a tie, a quorum failure, an expired agreement ask — is still a
+`completed` task whose receipt artifact records that outcome honestly. The
+endpoint does not repurpose `failed`, `canceled`, or `rejected` for decision
+outcomes. There is no post-close override window: a sealed decision is final.
+
+## 6. Payload typing
+
+### 6.1 Choice
+
+A choice is sent as an A2A `Message` part with media type `application/vnd.grp.vote+json`:
+
+```jsonc
+{
+  "type": "data",
+  "mimeType": "application/vnd.grp.vote+json",
+  "data": {
+    "decision_id": "<decision id>",
+    "choice": "<option key>",
+    "weight": 1,
+    "cast_at": "<ISO 8601>"
+  }
+}
+```
+
+A formal abstention ([Decisions §3.8](/specification/decisions)) is the same part with `data.abstain: true` and a required `data.reason` (1–500 characters) in place of `choice` — full parity with the REST and MCP abstain acts.
+
+### 6.2 Discussion
+
+Discussion is an ordinary A2A `Message` with `role: "agent"`. The room files the message body as a deliberation entry on the underlying decision. An optional `metadata.grp:stance` ∈ `{ "agree", "disagree", "clarify", "extend" }` MAY accompany stance-tagged statements.
+
+### 6.3 Receipt
+
+On `state: "completed"`, the room MUST emit the compact-JWS receipt as an A2A `Artifact`:
+
+```jsonc
+{
+  "id": "<receipt id>",
+  "name": "GRP Receipt",
+  "mimeType": "application/grp-receipt+jwt",
+  "parts": [{
+    "type": "text",
+    "text": "<compact JWS — `<b64h>.<b64p>.<b64sig>`>"
+  }]
+}
+```
+
+The compact JWS MUST be byte-identical to the receipt included in `GET /api/rooms/{slug}/outcome`. A2A is a different envelope around the same artifact.
+
+## 7. Authentication
+
+The shipped v0.1 legacy A2A-draft adapter reuses URL-room participant credentials. Calls that read or mutate a non-public room, and all participant mutations, MUST include the existing room credential in JSON-RPC metadata:
+
+- `metadata["grp:join_token"]` — the participant or creator token returned by the normal room create/join flow.
+- `metadata["grp:password"]` — the shared password for a password-enabled
+  Private room.
+- `metadata["grp:display_name"]` — required on a participant's first token-based join; later calls reuse `grp:join_token`.
+
+The token is evaluated by the same room service used by REST and MCP. It is not a new A2A credential type. The shipped v0.1 binding does **not** authorize A2A calls from `X-Mandate`; consequently its Agent Card does not advertise `mandate_header`. Clients that require mandate-bound execution must use the REST or MCP binding until that path is implemented end to end.
+
+## 8. Security & privacy considerations
+
+8.1. **Agent Card spoofing.** The shipped legacy card is unsigned. A client of
+the experimental endpoint MUST cross-check its `url` against the host published
+under `transports.mcp` in `.well-known/grp.json`. The current A2A migration must
+implement the current signature and verification rules before claiming them.
+
+8.2. **Credential scope.** A participant token is scoped to one room and MUST be resolved against that room before every A2A mutation or restricted read. A task or decision identifier alone is never authority.
+
+8.3. **Tasks-as-decisions.** Because the task ID equals the decision ID, an attacker who can create A2A tasks at will can populate the room's decision space with rejected entries. Rooms MUST require the room creator token and rate-limit `tasks/send` with `grp:role: "creator"`.
+
+8.4. **Receipt artifact integrity.** An A2A client receiving a compact-JWS receipt artifact MUST verify the JWS signature against the room's published verification key. The artifact wrapper is not signed; only the embedded receipt is. Trust the receipt, not the wrapper.
+
+## 9. Legacy endpoint contract
+
+The following checks describe GRP Server Cloud's experimental endpoint. Passing
+them does **not** make a room A2A 1.0 conformant:
+
+1. It serves `.well-known/agent-card.json` declaring the extension URI exactly as `https://groupresolutionprotocol.org/ext/grp/v1`.
+2. The Agent Card's `url` resolves to the legacy endpoint handling
+   `tasks/send`, `tasks/get`, and `tasks/cancel`.
+3. A participant `tasks/send` carrying the extension URI in `extensions[]` and
+   a valid `grp:decision_id` in metadata produces server-side state changes
+   equivalent to the corresponding REST or MCP call. A creator `tasks/send`
+   instead creates a new room from `grp:decision_config`.
+4. Lifecycle transitions follow [Decisions](/specification/decisions), mapped onto A2A task states per §5.
+5. A choice `Part` with `mimeType: "application/vnd.grp.vote+json"` is accepted iff `metadata["grp:join_token"]` resolves to an eligible participant in the target room.
+6. On `completed`, the receipt `Artifact` has `mimeType: "application/grp-receipt+jwt"` for compact-JWS receipts and is byte-identical to the receipt returned by the corresponding GRP receipt endpoint.
+
+The endpoint is **OPTIONAL** and outside GRP v0.1 conformance. A room that does
+not publish an Agent Card remains fully GRP-conformant.
+
+## 10. What this binding is not
+
+- **Not a new transport.** REST and MCP Streamable HTTP remain the two REQUIRED transports per [Transport §1](/specification/transport#1-transport-bindings).
+- **Not current A2A 1.0 interoperability.** A current SDK will not work against
+  this endpoint without an adapter.
+- **Not a multi-party A2A Task.** Point-to-point task-shaped envelopes are
+  preserved; multilateral semantics live at the room.
+- **Not a new authentication scheme.** The binding reuses room participant credentials; it does not currently expose mandate authorization.
+
+For the migration boundary and supported integration paths, see
+[Reference → A2A integration status](/reference/a2a).

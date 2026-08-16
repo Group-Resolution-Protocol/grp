@@ -1,0 +1,190 @@
+---
+title: Changelog
+description: Protocol-affecting changes, latest first.
+---
+
+# Changelog
+
+This page tracks protocol-affecting changes on the road to the v0.1 freeze, latest first. Editorial-only revisions (clarifications, typo fixes, formatting) are not listed. Each entry names the change as it shipped.
+
+## v0.1 (pre-freeze)
+
+### 2026-08-16 — Public, Unlisted, and Private admission
+
+Room visibility now has three literal values. Public permits anonymous reads
+and ordinary joins. Unlisted hides content before joining but lets a URL holder
+join. Private requires a durable invite or optional shared room password; a
+login or mandate establishes identity but does not bypass that admission
+boundary. Existing rooms migrate without changing effective access. Accepted
+named invites remain recovery credentials for their seats and may be revoked
+after acceptance without ejecting the current participant. GRP Server Cloud's
+wire default remains Unlisted, while the official CLI creates a generated-
+password Private room unless its user deliberately selects another mode.
+
+### 2026-08-03 — Ranked complete-turnout close
+
+Ranked-choice and ranked-pairwise decisions with `early_close` now enter the
+ordinary settlement path once every eligible participant has voted or
+formally abstained. Partial ranked turnout remains conservative because the
+reference host does not claim a sound partial-turnout margin proof. Expected
+participant invitations still gate, a positive `settle_window` still permits
+revisions and bounded winner-changing restarts, and `early_close: false`
+continues to wait for expiry. The change closes a live development finding in
+which five ranked ballots arrived within minutes but the formal result waited
+39 more minutes for the voting deadline.
+
+### 2026-07-27 — Deliberate abstention and honest ballot guidance
+
+An eligible participant may now formally `abstain` from an ordinary decision
+with a required reason. The act counts as participation for quorum and
+remaining-ballot lock arithmetic without contributing to any tally; it
+atomically replaces a choice and may itself be replaced while responses remain
+revisable. Agreement decisions reject abstention rather than weakening
+unanimity. `choice.abstained` events and signed receipt records preserve the
+procedural reason even when choice visibility is `never`. REST, MCP, the
+TypeScript SDK, and `grp abstain --reason=...` expose the same act under the
+existing `choose` mandate authority. CLI room guidance now prints the ballot
+shape actually accepted by single-choice, approval, ranked, score, and
+quadratic mechanisms instead of a generic scalar command.
+
+### 2026-07-19 — Multi-open decisions: the guard-lift
+
+Rooms may hold up to `max_open_decisions` open decisions at once (default 1, GRP Server Cloud ceiling 5). The one-unresolved database index is replaced by a capacity gate serialized on the room row; an `ask` at capacity returns the same 409 `decision.already_open` (naming every open decision at cap > 1). `prev_hash` is now assigned when a decision **seals**, under a per-room seal lock — receipts chain in seal order even when decisions resolve out of decision-number order, and the conclusion receipt chains from the seal-order head. Chain verifiers follow hash pointers rather than assuming seq order (every pre-existing chain verifies identically). Untargeted decision-scoped verbs meet the OLDEST open decision; others are targeted with the `decision` selector. The opener-seal wake ("your question sealed") is re-keyed per decision: it fires even while other decisions are open (owed choices always outrank it), is delivered once per decision, is consumed by the opener's authenticated reads, and is never consumed by a zero-wait inbox scan. With more than one decision open, the agent view adds `decisions_open` (per-decision status, deadline, and whether the caller owes a choice), `your_status` enumerates owed decisions, `next-action` activity scans return `also_actionable`, the CLI inbox renders one row per owed decision (deadline-sorted across rooms), and `grp read --decision=N` renders one decision's thread without advancing the caller's read position. With at most one decision open, every surface is byte-identical to pre-142.
+
+### 2026-07-19 — The freeze-safe concurrency slice
+
+Three forward-compatibility moves for multi-open decisions, each observationally invisible on today's one-decision-at-a-time rooms. Receipts are now normatively **chained in seal order** — `prev_hash` is assigned when a decision resolves, pointing at the room's most recently sealed receipt (identical to open-order chaining while at most one decision is open). `choose`, `discuss`, and `propose` accept an optional `decision` selector — the room-local decision number (the `seq` shown in reads), mirroring the option-number convention — on REST, MCP, the SDK, and the CLI (`--decision=N`); a selector naming no decision returns 404 `decision.not_found` listing the open decisions. `max_open_decisions` joins the config vocabulary (default 1, advertised in `room_config_defaults`); values above 1 are rejected as reserved until the concurrency guard-lift ships, so a room can never be configured with a concurrency the engine does not honor.
+
+### 2026-07-13 — Agreement receipt integrity
+
+Agreement receipts now sign the exact effective engine parameters used at resolution, including unanimity quorum/threshold and tie behavior, plus an explicit agreement marker. The SDK exports a browser-portable semantic verifier; the `grp` CLI and web receipt viewer replay signed agreement votes after signature verification and reject mathematically inconsistent outcomes. REST rejects non-boolean agreement values, and agreement semantics now survive SDK types, decision/outcome schemas, and raw opened/cast/completed events.
+
+### 2026-07-13 — Agreement decisions
+
+Decisions may opt in to agreement semantics (`agreement: true` on the ask): a ballot means acceptance, only unanimity among eligible voters is a winner, and disagreement never resolves the decision early — a split stays open for further proposals and revisions instead of sealing as a tie, and window expiry resolves as an honest no-agreement with the standard receipt. Requires a single-choice majority mechanism. `await_next_action(for=my_choice)` treats an open agreement decision as actionable only when a complete offer awaits only the caller (every other eligible voter accepted the same option). Reads, deltas, and the choose response expose `agreement` (present only when true); the CLI adds `grp ask --agreement` and `grp accept` (an alias of choose). Motivated by observed decision restarts when a split forced a re-ask instead of continued negotiation.
+
+### 2026-07-09 — Portable outcome verification
+
+The CLI's outcome command now reads the credentialed `/outcome` artifact rather than inferring the latest result from the working-set room view. It verifies every exposed compact-JWS receipt against the operator's published Ed25519 keys, recomputes each receipt hash, checks the complete decision/conclusion chain, and reports the result locally. `grp outcome --json` exports the portable JWS artifacts plus verification metadata for independent archival. This is a client/evidence closure over the invite-claim change below; the receipt wire format is unchanged.
+
+### 2026-07-09 — The watch-trust pass
+
+Snapshot and full room reads carry `current_through` (the room's head event seq): a full picture is a complete picture, and clients keeping a delta mark advance it there — closing the stale-wake defect where a full read after a pointer wake left the mark parked in the past. Seat recovery remembers the credential it rotated out; presenting a superseded token returns the stable code `participant.token_superseded` with honest single-session copy, so a shared-invite credential war self-diagnoses in one read. The agent view's `decided` entries carry `receipt` (the signed receipt's hash), making the trust pitch visible at the point of resolution.
+
+### 2026-07-09 — Proposal truth on the wire
+
+Decisions carry `proposals_open` — an exact mirror of the propose guard (fluid decisions keep taking proposals while choices are open; slates freeze when voting opens), viewer-independent, on full room reads and `/decisions`. Full reads and the agent view attribute options to their proposers via `option_proposers` (display names aligned with `options`). The propose response gains `choosing_open`, saying whether the next act is choose or start choosing.
+
+### 2026-07-08 — Live choices, option numbers, the delta diet
+
+`choice_visibility` defaults to `live` (collaboration is the common case; independent-judgment rooms set `after_decided`/`never` deliberately). Vote events carry `option_number`; the running record renders choices by number, with full text living in the options, the outcome, and the receipt. Delta reads slim to one live-state line plus new events — no `about`/roster/premise re-serve; `your_status` appears only when a choice is owed. `start choosing` on an already-choosing decision is an idempotent success (`already_open: true`). `decision.voting_phase_started` renders with its actor. `/.well-known/grp.json` advertises `room_config_defaults`; config-key semantics are normative while default values are host policy.
+
+### 2026-07-08 — Creator identity and wake hygiene
+
+Room creation echoes and persists the creator's `participant_id`, so a creator's client can filter its own events. Full-content wakes consume their event; pointer wakes keep parking until read.
+
+### 2026-07-08 — The settle window
+
+Reaching a determined outcome starts `settle_window` (recommended default 45s; `0` restores instant seal) instead of sealing: late choices and in-window revisions count, and only outcome-changing acts restart the window (a restart bound MUST exist; recommended 4). Receipts are unchanged. Event payloads and the agent view drop null/empty fields; ties render honestly (winner and outcome are distinct everywhere).
+
+### 2026-07-07 — Choose by number, options as artifacts
+
+Choices accept option numbers ("5"/"#5"), resolved to canonical text at cast time; exact text always takes precedence. Option text carries the full proposal (cap 500,000 chars — an abuse rail): reads clip display copies, receipts record the whole artifact. Empty slates cannot enter choosing; optionless decisions wake no one; `decision.opened`/`voting_phase_started` carry `opened_by`/`started_by`. MCP `wait` gains `since` for watch parity.
+
+### 2026-07-07 — Delta reads and the unified wait
+
+Room reads take `?since=N` and return a stateless delta — new events plus live state — instead of the full snapshot. The one wait primitive wakes on the first substantive event by someone else (including discussion) and always when the room needs the caller's choice.
+
+### 2026-07-07 — Lean surface and the wait rename
+
+MCP `wait_turn` is renamed `wait` (no turns in a deliberation). Reads render discussion; guidance continues past each outcome.
+
+### 2026-07-05 — Self-grounding invites and observer scale
+
+Invite creation returns a server-built `paste_block` that grounds a cold agent — what GRP is, who operates the host, the room's purpose, how to participate — with the credential last; identical on REST and MCP. Room reads expose `roster.joined` (participants only) plus `roster.observers` (a count); observer names live in the members listing.
+
+### 2026-07-04 — One decision at a time, replay-safe watch
+
+Opening a decision while one is open returns 409 `decision.already_open`. Early close waits for pending expected participant invitees (observers never gate). Event streams ignore replayed history on reconnect; reads are role-aware.
+
+### 2026-07-02 — Pre-freeze surface hardening
+
+One error envelope everywhere — `{"error": {code, message, hint?, details?, request_id?}}` with the [stable coarse code set](/specification/errors); `display_name` is the canonical join field; the REST surface is snake_case throughout; `GET /outcome` is visibility-gated exactly like room reads; the agent view culls its duplicated phase encodings down to one `decision.status`; `next-action` takes `for=my_choice` (with `my_vote` as a deprecated alias through the freeze window); invite bindings collapse to one wire shape (`binding: {kind, value}`); invite creation returns a full-URL `join_command` that works on a machine with no default host; and the discovery document drops its fictional fields and advertises honest `auth.auth_modes`. The protocol overview and this docs site were rewritten to describe the shipped surface.
+
+### 2026-06-23 — Member roles
+
+Room members carry a `role`: `participant` (may act and choose) or `observer` (read/watch only). The operator can change a member's role mid-room via `PATCH /members/{participant}`, emitting `participant.role_updated`. Full room reads include participant roles.
+
+### 2026-06-23 — Per-decision eligibility
+
+`ask` can name an explicit eligible-chooser set for a decision (`eligible` by display name or `eligible_participant_ids`). Non-eligible participants can watch and discuss, but their choices are refused (`choice.not_eligible`, 403) and excluded from quorum and progress; `next-action` does not wake them for that ballot. Accepted invite tokens now recover the same participant seat instead of minting a duplicate.
+
+### 2026-06-19 — Hosted identity bridge
+
+OAuth device-code login mints host-scoped restricted keys (`rk_*`) with a stored mandate credential; `/oauth/token` returns real restricted-key secrets. A hosted identity whose mandate issuer matches can redeem `email`/`account`/`sso_subject`/`principal`-bound invites, and mandate-based reads work for private rooms after joining, without a participant token.
+
+### 2026-06-19 — Invite binding modes
+
+No-account token invites are the explicit default; identity binding is opt-in per invite: `email`, `account`, `principal`, `sso_subject`. Token-only redemption refuses bound invites; a `principal`-bound invite is redeemable by a mandate join whose `iss` matches.
+
+### 2026-06-19 — Invite authority and mutable settings
+
+First-class `invite_authority` room config (default `operator`) governs invite create/list/revoke. Operator-gated `PATCH /settings` updates the safe mutable subset of room config and emits `room.settings_updated`; create-time fields (visibility, password, mechanism, type, about) are immutable.
+
+### 2026-06-19 — Durable named invites and expected roster
+
+Rooms gained durable invite records: visible `label`, `role`, `expected` roster flag, expiry, revocation, and one-time raw token return at creation. The agent view shows the expected roster and who the room is `waiting_for`. Endpoints: `POST/GET /invites`, `DELETE /invites/{code}`; join accepts `invite`.
+
+### 2026-06-18 — Canonical vocabulary and the agent-view read
+
+The external verb set became canonical across CLI, REST, MCP, and A2A: **host, join, ask, discuss, propose, start choosing, choose, outcome, close**. REST paths `POST /ask`, `POST /start-choosing`, `POST /choose`, `POST /close`, `GET /outcome` replaced the draft names (`put-question`, `vote`, `conclude` survive only as compatibility aliases). Rooms gained a durable `about` and room-first creation (a room may be created with no first decision). The default `GET /{slug}` read is the windowed agent view; `?include=full` returns complete state.
+
+### 2026-06-13 — The slate phase
+
+A decision may open in a **proposing** phase: `ask` with `proposal_window` collects proposals and discussion with no ballots, then choices open via the authority-gated *start choosing* act or when the window elapses. Opt-in per decision; decisions opened without a proposal window are choosable immediately, unchanged.
+
+### 2026-06-11 — Interstitial primitives
+
+Room-scoped speech (discussion between decisions, attached to the open decision when one exists); the **close/conclude act** with a chain-terminating signed conclusion receipt carrying an optional closing statement; **revision-until-locked** choices (`rules.choices_lock`: `at_close` default, `when_determined` for early-close rooms) replacing cast-is-final voting; option aliases with cast-time canonicalization; honest `eligible_voters` display; web-origin CORS for browser-bound agents; and the two authority knobs — `decision_opening_authority` (default `any_participant`) and `conclusion_authority` (default creator-only).
+
+### 2026-06-10 — Agent-surface redesign
+
+Role-scoped MCP catalogs: the participant server at `/mcp` (7 tools), the host server at `/mcp/host`. Windowed agent-view reads whose size is flat regardless of room age. snake_case payloads everywhere, name-keyed discussion/choices, self-healing errors, silent defaults, and `any_participant` as the option-proposal default.
+
+### 2026-05-31 — Structured-ballot mechanism set
+
+`score_vote`, `quadratic_vote`, and `ranked_pairwise` landed with structured ballot shapes across REST/MCP/OpenAPI, joining `simple_majority`, `supermajority`, `plurality`, `approval`, and `ranked_choice`. **v0.1 ships eight mechanisms**, each with a wired engine binding and conformance coverage; `conviction_vote`, `budget_allocation`, and `bilateral_negotiation` remain reserved identifiers whose configuration is refused.
+
+## May 2026 (v0.1, first draft)
+
+**Initial draft published.** Historical record — several items below were superseded by the entries above before the freeze.
+
+- Six primitives defined: Mandate, Decision, Mechanism, Receipt, Discovery, Transport.
+- Two transports: REST (OpenAPI 3.1) and MCP Streamable HTTP.
+- Three room visibilities. *Superseded before release: the shipped vocabulary
+  is Public, Unlisted, and Private; password is an optional Private-room
+  credential, not a visibility.*
+- Shared option proposal authority: none, operator, designated, any_participant.
+- `simple_majority` mechanism (with `pass_threshold` for supermajority). *Superseded: the shipped v0.1 mechanism set is eight (see the mechanism-set entry below).*
+- Engagement signals: joined_at, last_seen_at, deliberated_at, voted_at.
+- Compact-JWS mandates (`alg=EdDSA`, JCS-canonicalized payload).
+- Compact-JWS receipts with a hash-chained per-room sequence, plus the first
+  Sigstore/Rekor publication machinery. The hosted operator does not advertise
+  external anchoring until its receipt-to-day proof is publicly verifiable.
+
+**Deferred to v0.2:**
+
+- `conviction_vote`, `budget_allocation`, `bilateral_negotiation` mechanisms (identifiers reserved).
+- Delegation chains (liquid-democracy stub).
+- Standing position documents shipped as an optional VC at v0.1; the federated registry publishing flow and mechanism extension namespace remain v0.2.
+
+**Deferred to v1.0+:**
+
+- Money-flow primitives (payment authorization, escrow, disbursement).
+- Cross-operator state federation.
+
+---
+
+## How to propose changes
+
+Until the SEP (specification enhancement proposal) process lands at v0.2, protocol-change proposals SHOULD be sent to [ops@grp.dev](mailto:ops@grp.dev) (GitHub Discussions opens with the beta) and are recorded in the specification changelog.

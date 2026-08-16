@@ -1,0 +1,167 @@
+---
+title: Build a GRP host
+description: The implementer's guide — how to build a conformant GRP host from the spec, the OpenAPI contract, and the conformance suite, in dependency order.
+---
+
+# Build a GRP host
+
+This guide is the path from "empty repository" to "conformant GRP host."
+The hosted server is not open source; the interoperability contract and
+verification stack are: a compact normative
+[specification](/specification), a machine-readable
+[REST contract](/specification/rest-api), and a
+[conformance suite](/conformance) that checks the published protocol behaviors
+it exercises. Independent implementations are the point — the same model that
+gave Matrix multiple homeservers and the web multiple browsers. A
+deliberately minimal example host — core profile, conformance-passing,
+explicitly not for production — is planned to publish after the beta;
+until it exists, this guide plus the conformance suite is the path.
+
+## The shape of a host
+
+A minimal conformant host is: an HTTP service, a database, and one
+Ed25519 signing key. The protocol surface divides into six concerns,
+and they layer in dependency order:
+
+1. **Discovery** — serve `/.well-known/grp.json`
+2. **Rooms** — create, join, read
+3. **Decisions** — open questions, take options, collect choices
+4. **Resolution** — mechanisms, windows, sealing
+5. **Receipts** — signed outcomes that any holder can verify against the
+   operator's published keys
+6. **Engagement** — required cursor replay and long-poll, with optional push
+
+Build them in that order; each is testable before the next exists.
+
+## 1. Discovery
+
+Everything starts at [`/.well-known/grp.json`](/specification/discovery):
+your host's self-description — protocol version, operator identity,
+transport endpoints, supported auth modes, supported
+[mechanisms](/specification/mechanisms), room-config defaults, and the
+JWKS holding your receipt-verification public keys. Clients and agents
+trust this document, not documentation, so keep it generated from live
+configuration rather than hand-written.
+
+## 2. Rooms
+
+[Rooms](/specification/rooms) are the container: slug, visibility
+(`public` / `unlisted` / `private`), configuration, participants with
+opaque tokens. The subtle requirements worth reading twice:
+
+- **The read wall.** Outsiders reading an Unlisted or Private room get the
+  `room.join_required` envelope and learn nothing beyond the room's
+  existence, its visibility, whether Private password admission exists, and
+  how to join — no status, no counts. The URL alone admits Unlisted members;
+  Private admission requires a valid invite or configured room password.
+- **Roles.** Participants act; observers read. Authority configuration
+  (who may invite, propose, open decisions, conclude) is room config, not
+  code.
+- **Reads are layered.** The default read is a constant-size agent view;
+  `?since=N` returns an anchored delta; `?include=full` returns complete
+  state. Agents live on the delta — get its `current_through` bookkeeping
+  exactly right.
+
+## 3. Decisions
+
+A [decision](/specification/decisions) is one bounded question with
+options, an optional proposal phase, a voting window, and eligibility.
+Sharp edges the spec is explicit about:
+
+- Decisions can be **fluid** (options stay open while choices arrive) or
+  **slate** (options freeze when choosing starts) — the propose guard
+  differs.
+- Several decisions may be open at once, up to the room's
+  `max_open_decisions`; untargeted verbs address the oldest open one.
+- **Abstention is a first-class act** with a required reason — it clears
+  the participant's obligation without expressing preference.
+- Choice visibility (`live` / `after_decided` / `never`) governs what
+  reads expose while choosing is underway.
+
+## 4. Resolution
+
+Outcomes come from pure [mechanism](/specification/mechanisms) functions —
+`simple_majority`, `plurality`, `supermajority`, `approval`,
+`ranked_choice`, `ranked_pairwise`, `score_vote`, `quadratic_vote`. The open-source `engine` package implements all eight exactly
+as specified; using it is allowed and saves you the subtle tie-breaking
+cases, but conformance — not code sharing — is what makes you correct.
+
+Timing is where implementations usually go wrong:
+
+- Windows close by **clock**, but resolution may be **lazy** — a room
+  with an expired window resolves on the next meaningful touch. Nothing
+  in the spec requires a scheduler; everything requires that no read ever
+  shows an expired-but-unresolved decision as open.
+- A **settle window** can hold a decision open for revisions after every
+  eligible choice is in; revisions during settle count.
+- Early close, quorum, and eligibility all interact — the conformance
+  vectors cover the combinations.
+
+## 5. Receipts
+
+The [receipt](/specification/receipts) is the artifact other parties
+will hold your host to: a compact JWS (EdDSA over Ed25519) whose payload is
+canonicalized with JCS (RFC 8785), chained to the room's previous receipt
+by hash, and verifiable by anyone against the JWKS in your discovery
+document — no authenticated room read is needed once the verifier holds the
+artifact. Signature and chain verification prove exactly what the host signed;
+when ballots are exposed, a semantic verifier can also replay the mechanism.
+
+Implementation notes that save days:
+
+- Sign the **canonicalized** bytes; a single key-order difference breaks
+  every external verifier.
+- Receipts chain in **seal order**, and the outcome and its receipt must
+  commit **atomically** — a crash must never leave a resolved decision
+  without its receipt.
+- Serve your JWKS forever. The issuer URL inside a receipt is a promise
+  that keys remain resolvable there.
+
+The open-source `audit` package and the SDK's receipt-chain verifier are the
+reference implementation of this cryptography — build with them or against
+them.
+
+## 6. Events
+
+Stored events receive per-room monotonic, unique sequence numbers. They are an
+activity side-channel, not the transaction log: GRP Server Cloud emits them
+after canonical room-state commits, so a failed best-effort event write may
+omit an entry. Consumers can use a cursor read (`/events?since_seq=`), the
+required `next-action` long-poll that parks an agent until the room needs it,
+or optional SSE and signed-webhook upgrades. The invariant that matters is:
+**the log is a mirror, never the
+truth**. A client resumes stored events by cursor, then re-reads canonical room
+state and receipts before acting. Implementers that require a complete event
+ledger need a transactional outbox rather than stronger wording around this
+v0.1 side-channel.
+
+## Transports
+
+REST and [MCP](/reference/mcp) are required. Adjacent-protocol bindings are
+optional and must delegate to the same operations as REST — same state, same
+auth, same errors — rather than become independent implementations. The
+currently documented [A2A-shaped endpoint](/reference/a2a) is legacy
+experimental work and is not a current A2A 1.0 implementation operators should
+copy. The [transport parity](/specification/transport) rules are normative; the
+conformance suite exercises them.
+
+## Certify
+
+```bash
+# after the first v0.1 npm publication
+npm install @grp-protocol/conformance
+npx grp-conformance --profile=core
+npx grp-conformance --target=https://your-host.example --profile=operator --allow-write
+```
+
+Before npm publication, run the same package from a repository checkout as
+shown in [Conformance](/conformance). Run `core` without a target, then use the
+write-authorized live profiles against a disposable or staging deployment
+before testing the intended public endpoint. The suite creates and deletes
+test rooms. It emits a report an operator can sign, with offline suite evidence
+separated from live-target evidence. A pass covers the checks in that profile;
+security, load, recovery, privacy, and external delivery still need separate
+operator gates. When you're green and running:
+write to [hosts@grp.dev](mailto:hosts@grp.dev). The public host directory opens after the
+beta, with the same listing criteria for every operator — including the
+one we run.

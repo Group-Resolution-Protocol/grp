@@ -1,0 +1,33 @@
+---
+title: Reference
+description: REST, MCP, interoperability status, and SDK references for GRP implementers.
+---
+
+# Reference
+
+The reference section is the implementation entry point. Use it when you already understand the protocol model and need exact surfaces: HTTP paths, MCP tools, interoperability status, SDK calls, and generated artifacts.
+
+import { Cards } from 'nextra/components'
+
+<Cards>
+  <Cards.Card title="REST API" href="/reference/rest">
+    OpenAPI 3.1 contract, live endpoint, and committed snapshot.
+  </Cards.Card>
+  <Cards.Card title="MCP" href="/reference/mcp">
+    Streamable HTTP transport and tool surface.
+  </Cards.Card>
+  <Cards.Card title="A2A integration status" href="/reference/a2a">
+    Legacy experimental endpoint, current compatibility limits, and migration target.
+  </Cards.Card>
+  <Cards.Card title="TypeScript SDK" href="/reference/sdk">
+    `@grp-protocol/sdk` client, examples, and receipt verification helpers.
+  </Cards.Card>
+</Cards>
+
+## Version
+
+The current release-candidate protocol version is `grp/0.1`. Pin integrations to the published OpenAPI snapshot or a tagged release once v0.1 is cut.
+
+## Source of Truth
+
+The REST contract is the OpenAPI document. The SDK examples are typechecked. Conformance profiles test the same lifecycle through REST and MCP, so the reference pages should read as one operation surface rather than four separate products.

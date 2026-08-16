@@ -1,0 +1,172 @@
+---
+title: Decisions
+description: The decision lifecycle, the slate phase, discussion, choices, eligibility, and quorum. This section is normative.
+---
+
+# Decisions
+
+This section is **normative**.
+
+## 0. Authority vs participation
+
+Opening a decision is an authorized `ask` action, gated by the room's `decision_opening_authority` (default: `any_participant`). The actor performing it MAY be a direct principal session, an agent, or an integration/automation authorized by a principal or room role.
+
+Eligibility to open decisions is distinct from eligibility to submit choices. A room admin MAY open decisions without being a participant in the decision (`creator_votes: false` makes the creator a non-voting operator). Implementations SHOULD attribute decision-opening events with both the actor and the authority source when they differ.
+
+## 1. Lifecycle states
+
+Every decision MUST advance through the following state machine:
+
+```
+[*] → proposing                  (only when opened with a proposal_window)
+[*] → voting                     (the common case: choosable immediately)
+proposing → voting               (start choosing act, or the proposal window elapses)
+voting → resolved                (window closes, or early-close locks the outcome)
+resolved → [*]
+```
+
+`expired` is a **transient** read-side state: a decision whose window has elapsed but which has not yet been resolved reports `expired` until resolution runs. It is never a terminal state.
+
+The **room** carries its own status: `open` (no active decision), the active decision's state while one runs, and terminal `concluded` — the read-only, chain-sealed state produced by the [close act](/specification/rooms). `concluded` is a room state, never a decision state.
+
+1.1. Resolution is time-driven but lazily executed: the room MUST honor the wall-clock boundaries of the configured windows regardless of participant activity. GRP Server Cloud resolves expired decisions on the next read (**lazy resolution**) and additionally schedules a durable window-close resolution job so a decision resolves on time even with no reader.
+
+1.2. While a decision is in `voting`, eligible participants MAY discuss when `deliberation_mode === "optional"`, MAY propose options when `option_proposal_authority` allows it (until the slate freezes), and MAY submit choices or formally abstain where §3.8 allows it.
+
+1.3. Implementations MAY resolve a decision early when `early_close` is enabled and the active mechanism proves the outcome cannot change (see §3.4 and §6.7).
+
+1.4. **Open-decision capacity.** How many decisions a room may hold open (`proposing` or `voting`) at once is governed by the room's `max_open_decisions` config (semantics normative; the default value and ceiling are host policy, advertised in `room_config_defaults` — GRP Server Cloud defaults to `1` and accepts up to `5`). An `ask` at capacity MUST be rejected with HTTP 409 and code `decision.already_open`, with an error naming the open decision(s) and the next actions (choose on one, or wait for a seal). Expired-but-unresolved decisions MUST be lazily resolved first, after which the ask proceeds — the gate never blocks on decisions whose windows have already passed. A host MUST reject at config time any `max_open_decisions` value it does not honor — a room can never be configured with a concurrency the engine ignores. With more than one decision open, an untargeted decision-scoped act meets the OLDEST open decision, so a long-waiting ballot can never strand behind a newer one.
+
+1.5. **Receipts chain in seal order.** Each decision receipt's `prev_hash` points at the room's most recently sealed receipt at the moment this decision **resolves** — the chain is ordered by resolution, not by opening, and is always linear and well-formed regardless of how many decisions were open. (With `max_open_decisions: 1`, seal order and open order coincide, so this is observationally identical to chaining at open.)
+
+1.6. **The decision selector.** Decision-scoped acts (`choose`, `abstain`, `discuss`, `propose`) MAY carry an optional `decision` — the room-local decision number (the `seq` shown in reads and events), mirroring the option-number convention. An omitted selector targets the room's active decision, exactly as before. A selector naming no decision in the room MUST be rejected with HTTP 404 and code `decision.not_found`, with an error listing the open decisions by number and question; a selector naming a resolved decision follows §3.6.
+
+## 2. The slate phase (proposing)
+
+A decision opened via `ask` with a `proposal_window` (seconds) starts in the **proposing** state: the option slate is open, discussion flows, and **no choices are accepted**.
+
+2.1. During `proposing`, participants MAY `propose` options (subject to `option_proposal_authority`) and MAY `discuss`. A choice submitted during `proposing` MUST be rejected with HTTP 400 and code `decision.proposing`.
+
+2.2. Choices open when either happens first:
+
+- An authorized actor performs the **start choosing** act (`POST /start-choosing`), which freezes the option slate and opens choices immediately. The act is authority-gated by `decision_opening_authority`.
+- The proposal window elapses, at which point choices open automatically.
+
+2.3. A decision opened without a `proposal_window` starts directly in `voting` — this is the common case. The slate phase is opt-in per decision, for the situations where option convergence is the hard part.
+
+2.4. The agent view surfaces the slate state honestly: `decision.status: "proposing"`, `can_propose_more`, `can_start_choosing`, and `proposals_close_at` / `seconds_until_voting` while a proposal window is running.
+
+## 3. Choices
+
+The v0.1 wire schema stores a submitted choice as a `vote` row internally; the protocol verb and every external surface say **choose** / **choice**.
+
+3.1. A choice MUST contain:
+- `choice` — the ballot. A single option string for single-choice mechanisms; an array of option strings for approval/ranked mechanisms; an option→number map for score/quadratic mechanisms (see [Mechanisms](/specification/mechanisms) and the `rules.how_to_choose` line in the agent view).
+- `participant_id` — server-derived from the token/mandate.
+- `cast_at` — server-stamped timestamp.
+
+3.2. A choice MAY contain:
+- `rationale` — short string, max 2000 characters.
+- `decision` — the decision selector (§1.6): the room-local decision number to cast on. Omitted: the active decision.
+
+3.3. **Choices are upserted** on `(decision, participant)`. A re-submission while revision is allowed MUST replace the prior choice and update `cast_at`.
+
+3.4. **Choices revise until locked.** `rules.choices_lock` in the agent view tells participants when a cast choice becomes final:
+
+- `at_close` (default, `early_close: false`) — revise freely until the voting window closes.
+- `when_determined` (`early_close: true`) — when the outcome becomes mathematically locked (quorum met and the winner unbeatable by the remaining un-cast choices), the decision enters the room's `settle_window`. Choices and revisions remain live through a positive settle window; an outcome-changing act restarts it within the host's bound. With `settle_window: 0`, the decision seals immediately. While early close is roster-gated (§6.7), nothing is locked and revision remains allowed.
+
+3.5. A choice whose option is not on the decision's current slate MUST be rejected with HTTP 400 and code `choice.invalid_option`. The error message names the open options and suggests proposing the missing one where the room allows proposals.
+
+3.6. A choice submitted after the decision has resolved (or after its window has closed) MUST be rejected with HTTP 400 and code `decision.not_open`.
+
+3.7. Choice visibility follows the room's `choice_visibility` config: `after_decided` hides individual choices while deciding and discloses them after the outcome; `live` shows them as cast; `never` keeps room state and receipts aggregate-only. The semantics are normative; the default value is host policy and MUST be advertised in `room_config_defaults`. GRP Server Cloud defaults to `live`.
+
+3.8. **Deliberate abstention.** An eligible participant MAY formally respond
+without supporting any option by submitting an `abstain` act with a required
+reason of 1–500 characters. An abstention and a choice are mutually exclusive:
+either act atomically replaces the participant's prior response while revision
+is allowed. Abstention counts as participation for quorum and for the number
+of possible remaining ballots, but contributes nothing to a tally, score,
+rank, approval set, or quadratic allocation. It MUST emit an attributed
+`choice.abstained` event and appear with its reason in the signed receipt.
+Because it discloses no preference, the procedural abstention record remains
+visible under every `choice_visibility` setting. Implementations MUST NOT infer
+abstention from silence or discussion text.
+
+## 4. Per-decision eligibility
+
+4.1. `ask` MAY name an explicit eligible-chooser set for the decision (`eligible` by participant display name, or `eligible_participant_ids`). When set, only listed participants may choose or formally abstain.
+
+4.2. A choice or abstention from a non-eligible participant MUST be rejected with HTTP 403 and code `choice.not_eligible`. Non-eligible participants MAY still read, watch, and discuss.
+
+4.3. Non-eligible participants MUST NOT count toward quorum or response progress, and the `next-action` long-poll MUST NOT wake them for that ballot (`for=my_choice`).
+
+4.4. When no explicit set is given, every member with role `participant` is eligible; `observer`s are never eligible (see [Rooms](/specification/rooms)).
+
+## 5. Discussion
+
+5.1. A discussion message MUST contain:
+- `body` — string, 1–100,000 characters
+- `participant_id` — id of the posting participant (server-derived from the token/mandate)
+- `posted_at` — server-stamped timestamp
+
+5.2. A discussion message MAY carry a `stance` — one of `agree | disagree | clarify | extend`. `stance` is a structured signal: implementations MUST persist the value as-is and expose it in room state, and MUST NOT infer or reject based on body text.
+
+5.3. Discussion attaches to the open decision when one exists. Between decisions, discussion is **room-scoped speech** (`decision_id: null`) — unsigned standing context such as announcements and framing.
+
+5.4. If `deliberation_mode === "disabled"`, implementations MUST reject discussion messages.
+
+5.5. Implementations MUST reject messages that would exceed `max_deliberation_messages_per_participant` or `max_total_deliberation_messages` (the anti-griefing caps).
+
+## 6. Quorum and resolution
+
+6.1. When choosing closes (or the outcome locks early), the room MUST evaluate
+quorum. For quorum only, `responses` means cast choices plus formal
+abstentions:
+
+- If `config.quorum === null`, quorum is met by any number of responses ≥ 1.
+- Otherwise, quorum is met when `responses >= config.quorum`.
+
+6.2. **An explicit integer quorum is also an electorate floor.** The eligible electorate is `max(actual voters, quorum)` — so a room configured `quorum: 4` with only two joined voters reports `2/4 responses in` and MUST NOT resolve at 2/2. `quorum: 4` means four responses are required, not "all voters who happen to have joined so far."
+
+6.3. `creator_votes: false` excludes the auto-joined room creator from the electorate: the creator is a non-voting operator, `eligible_voters` starts at `participant_count - 1`, and quorum/early-close count only the real voters.
+
+6.4. When a decision names an explicit eligible set (§4), the electorate is that set.
+
+6.5. If quorum is unmet at window close, the room MUST resolve the decision with a **failure receipt** (`outcome.status: "no_quorum"`).
+
+6.6. If quorum is met, the room MUST run the configured mechanism (see [Mechanisms](/specification/mechanisms)) and emit a receipt with the mechanism's full output. Both receipt kinds MUST be standalone-verifiable per [Receipts](/specification/receipts).
+
+6.7. **Early close waits for the expected roster.** When `early_close` is enabled, implementations MUST NOT resolve a decision early while the room has pending (unredeemed, unrevoked, unexpired) invites whose expected role is `participant` — the electorate is still growing, so no outcome is locked. Observer invites and invites created with `expected: false` never gate. Window-expiry resolution is unchanged: a no-show invitee delays at most the voting window. Decisions with an explicit eligible set (§4) are exempt — a new joiner cannot enter an explicit electorate, so pending invites cannot move that outcome.
+
+6.8. **Complete-turnout lock.** For an ordinary decision with `early_close`
+enabled and no expected-roster gate, a complete eligible response set is a
+sound lock for every mechanism: once each eligible participant has either
+chosen or formally abstained, no outstanding input can change quorum or the
+mechanism result. Implementations MAY use stronger mechanism-specific proofs
+at partial turnout. The reference implementation does so for additive
+single-choice, approval, score, and quadratic mechanisms; ranked mechanisms
+remain conservative until complete turnout or window expiry.
+
+## 7. Human consultation
+
+7.1. A participant MAY consult its principal or external tools before discussing, proposing an option, or submitting a choice.
+
+7.2. GRP v0.1 does not define a separate `input_required` or override-window state. If a participant needs more input, that participant can post a discussion message, abstain, revise its choice while revision is allowed, or ask a follow-up question in the same room.
+
+## 8. Ties and undetermined outcomes
+
+8.1. A mechanism that cannot determine a winner (e.g., a tie under `tie_break: "no_pass"`, or no option clearing the pass threshold) MUST still resolve the decision, recording the failure mode in the receipt (`outcome.status`: `tied`, `rejected`, or `no_quorum` — see [Receipts §6](/specification/receipts#6-failure-receipts)). An undetermined outcome is a resolved decision with an on-record termination, never a stuck one.
+
+8.2. The receipt status enum reserves `canceled` for administrative cancellation. GRP Server Cloud does not expose a cancel act at v0.1; a conforming implementation that adds one MUST emit a signed, chained receipt with `outcome.status: "canceled"`, a reason, and attribution for the actor and authority source.
+
+## 9. Agreement decisions
+
+9.1. A decision MAY be opened with `agreement: true`. On an agreement decision a ballot means acceptance: the decision resolves with a winner only when every eligible voter has cast the identical single choice.
+
+9.2. Disagreement never ends an agreement decision early. Under `early_close`, a split or partial ballot state is not a determination — the decision stays open for further proposals, discussion, and choice revisions. The only two terminations are unanimous acceptance (which starts the room's normal settle window) and voting-window expiry, which resolves as an ordinary undetermined outcome under §8 (an honest no-agreement, with the standard signed receipt). Formal abstention is unavailable because agreement semantics require an acceptance from every eligible participant.
+
+9.3. Agreement decisions require a single-choice majority mechanism (`simple_majority` or `supermajority`); hosts MUST reject `agreement: true` on decisions in rooms configured with plurality, approval, ranked, score, or quadratic mechanisms. Receipt shape, chaining, revision-until-locked, and all other decision semantics are unchanged; a decision without the flag behaves exactly as before.
+
+9.4. Engagement: an open agreement decision does not, by itself, make the caller's missing ballot actionable for `await_next_action(for=my_choice)`. It becomes actionable only when every other eligible voter has accepted one identical option — a complete offer awaiting only the caller. Activity notifications (proposals, discussion, others' acceptances) are unaffected.
