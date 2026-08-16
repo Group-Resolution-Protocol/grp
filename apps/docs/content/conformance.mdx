@@ -28,16 +28,17 @@ Use the smallest profile that matches the claim:
 
 ## Run
 
-From a repository checkout:
+Run the published package directly:
 
 ```bash
-npm run conformance --workspace=@grp-protocol/conformance -- --profile=core
-npm run conformance --workspace=@grp-protocol/conformance -- --profile=transport --target=http://localhost:3001 --allow-write
-npm run conformance --workspace=@grp-protocol/conformance -- --profile=operator --target=http://localhost:3001 --allow-write
+npx @grp-protocol/conformance --profile=core
+npx @grp-protocol/conformance --profile=transport --target=http://localhost:3001 --allow-write
+npx @grp-protocol/conformance --profile=operator --target=http://localhost:3001 --allow-write
 ```
 
-After the first npm publication, the equivalent commands use
-`npx @grp-protocol/conformance`.
+From a repository checkout, the equivalent contributor command is
+`npm run conformance --workspace=@grp-protocol/conformance --` followed by the
+same arguments.
 
 `core` is entirely offline. It rejects `--target` because it gathers no evidence
 about a server. The two live profiles create private test rooms, act in them,
@@ -56,7 +57,7 @@ short-lived mandate with join, discuss, choose, and propose authority for the
 synthetic test rooms; store the compact JWS alone in a mode-`0600` file; and run:
 
 ```bash
-npm run conformance --workspace=@grp-protocol/conformance -- \
+npx @grp-protocol/conformance \
   --profile=operator \
   --target=https://operator.example \
   --allow-write \
@@ -71,15 +72,15 @@ and shell history.
 ## Signed Reports
 
 ```bash
-npm run conformance --workspace=@grp-protocol/conformance -- --profile=operator --target=https://operator.example --allow-write --report=grp-conformance-report.json
+npx @grp-protocol/conformance --profile=operator --target=https://operator.example --allow-write --report=grp-conformance-report.json
 
-GRP_CONFORMANCE_SIGNING_KEY_BASE64=... npm run conformance --workspace=@grp-protocol/conformance -- sign \
+GRP_CONFORMANCE_SIGNING_KEY_BASE64=... npx @grp-protocol/conformance sign \
   --report=grp-conformance-report.json \
   --key-env=GRP_CONFORMANCE_SIGNING_KEY_BASE64 \
   --kid=operator-2026-05 \
   --out=grp-conformance-signed.json
 
-npm run conformance --workspace=@grp-protocol/conformance -- verify \
+npx @grp-protocol/conformance verify \
   --signed-report=grp-conformance-signed.json \
   --jwks=operator-jwks.json
 ```
