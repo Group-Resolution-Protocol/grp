@@ -808,7 +808,7 @@
             "type": "string"
           },
           "paste_block": {
-            "description": "Self-grounding invite artifact (newline-joined): what GRP is, the room's purpose, who operates the host, and the join command — in that order, credential last. Relay it to the recipient intact; do not trim the context lines.",
+            "description": "Self-grounding invite artifact (newline-joined): what GRP is, the room's purpose, the named seat and role, the configured room service and operator, npm-first CLI installation, and the join command — in that order, credential last. Relay it to the recipient intact; do not trim the context lines.",
             "type": "string"
           },
           "slug": {

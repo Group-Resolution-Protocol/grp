@@ -13,7 +13,8 @@
     "sharp": "0.35.3",
     "speech-rule-engine": {
       "@xmldom/xmldom": "0.9.11"
-    }
+    },
+    "yaml": "2.8.4"
   },
   "workspaces": ["packages/*", "apps/docs"],
   "scripts": {

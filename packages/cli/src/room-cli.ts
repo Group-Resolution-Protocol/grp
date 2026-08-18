@@ -4248,10 +4248,12 @@ function renderCreatedInvite(response: Record<string, unknown>, ref: RoomRef): s
     stringOrNull(response.join_command) ??
     `grp join ${ref.baseUrl}/r/${encodeURIComponent(slug)} --invite ${String(response.invite_token ?? "<invite_token>")}`;
   // Spec 111 (WR-2 + WR3-2) — prefer the server-built self-grounding paste
-  // block so every client relays the identical artifact; fall back to building
-  // the same block locally for older hosts.
+  // block so every current client relays the identical artifact. Older hosts
+  // do not return discovery identity here, so the local fallback names only
+  // the service URL rather than inventing an operator.
   const pasteBlock =
-    stringOrNull(response.paste_block) ?? buildInvitePasteBlock(about, ref.baseUrl, joinCommand);
+    stringOrNull(response.paste_block) ??
+    buildInvitePasteBlock(about, ref.baseUrl, joinCommand, label, role);
   const lines = [`Invite created for ${label}`, `Code: ${code}`, `Role: ${role} (${expected})`];
   // Spec 111 (WR3-1) — observer stays an operator-level concept: the one
   // prominence surface is right here, where the admin just picked a role.
@@ -4299,21 +4301,29 @@ function credentialFreeRoomUrl(raw: string | null): string | null {
 }
 
 /**
- * Spec 111 — client-side fallback for hosts that predate `paste_block`:
- * build the identical self-grounding artifact from the invite response.
+ * Spec 111/213 — client-side fallback for hosts that predate `paste_block`.
+ * Their invite response does not carry discovery identity, so ground the
+ * recipient with the service URL without claiming who operates it.
  */
-function buildInvitePasteBlock(about: string | null, baseUrl: string, joinCommand: string): string {
+function buildInvitePasteBlock(
+  about: string | null,
+  baseUrl: string,
+  joinCommand: string,
+  label: string,
+  role: string,
+): string {
   const lines = [
-    "You are invited to a GRP room. GRP (Group Resolution Protocol) is an open protocol where agents work together in shared rooms: they discuss, propose options, and make group decisions.",
+    "You’re invited to join a GRP room. GRP (Group Resolution Protocol) is an open protocol for shared deliberation and decisions.",
+    "",
   ];
-  if (about) lines.push(`Room purpose: ${inviteAboutLine(about)}`);
+  if (about) lines.push(`Room purpose: ${inviteAboutLine(about)}`, "");
+  lines.push(`This invite is for ${inviteAboutLine(label)} (${inviteAboutLine(role)}).`, "");
+  lines.push(`Room service: ${baseUrl.replace(/\/+$/, "")}.`, "");
   lines.push(
-    `The room runs on ${baseUrl.replace(/\/+$/, "")} — a GRP host operated by the person who sent you this invite.`,
-  );
-  lines.push(
-    "If `grp` is not installed, install the official CLI first:",
-    "curl -fsSL https://grp.app/grp/install.sh | sh",
-    "Run the join command below, then follow the exact `grp read` command it prints; stay with the room until its decisions resolve:",
+    "If needed, install the open-source GRP CLI:",
+    "npm install -g @grp-protocol/cli",
+    "",
+    "Join the room:",
     joinCommand,
   );
   return lines.join("\n");

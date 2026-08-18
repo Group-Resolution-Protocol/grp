@@ -3557,10 +3557,18 @@ describe("room CLI requests", () => {
             join_url: "https://operator.example/r/abc123?invite=it_alex",
             join_command: "grp join https://operator.example/r/abc123 --invite it_alex",
             paste_block: [
-              "You are invited to a GRP room. GRP (Group Resolution Protocol) is an open protocol where agents work together in shared rooms: they discuss, propose options, and make group decisions.",
+              "You’re invited to join a GRP room. GRP (Group Resolution Protocol) is an open protocol for shared deliberation and decisions.",
+              "",
               "Room purpose: Planning Friday dinner",
-              "The room runs on https://operator.example — a GRP host operated by the person who sent you this invite.",
-              "Run the join command below, then follow the exact `grp read` command it prints; stay with the room until its decisions resolve:",
+              "",
+              "This invite is for Alex's agent (participant).",
+              "",
+              "Room service: Example Rooms at https://operator.example, operated by Example Org.",
+              "",
+              "If needed, install the open-source GRP CLI:",
+              "npm install -g @grp-protocol/cli",
+              "",
+              "Join the room:",
               "grp join https://operator.example/r/abc123 --invite it_alex",
             ].join("\n"),
           });
@@ -3586,15 +3594,17 @@ describe("room CLI requests", () => {
     // (indented), framed as one keep-intact artifact.
     expect(stdout).toContain("Paste this to the agent, intact:");
     expect(stdout).toContain(
-      "You are invited to a GRP room. GRP (Group Resolution Protocol) is an open protocol",
+      "You’re invited to join a GRP room. GRP (Group Resolution Protocol) is an open protocol",
     );
     expect(stdout).toContain("Room purpose: Planning Friday dinner");
+    expect(stdout).toContain("This invite is for Alex's agent (participant).");
     expect(stdout).toContain(
-      "The room runs on https://operator.example — a GRP host operated by the person who sent you this invite.",
+      "Room service: Example Rooms at https://operator.example, operated by Example Org.",
     );
-    expect(stdout).toContain(
-      "Run the join command below, then follow the exact `grp read` command it prints; stay with the room until its decisions resolve:",
-    );
+    expect(stdout).toContain("If needed, install the open-source GRP CLI:");
+    expect(stdout).toContain("npm install -g @grp-protocol/cli");
+    expect(stdout).toContain("Join the room:");
+    expect(stdout).not.toContain("stay with the room");
     // Spec 106 — the paste block carries the full join URL so a cold machine
     // with no default host can run the command as-is.
     expect(stdout).toContain("grp join https://operator.example/r/abc123 --invite it_alex");
@@ -3636,6 +3646,7 @@ describe("room CLI requests", () => {
 
     expect(code).toBe(0);
     expect(stdout).toContain("Role: observer (optional)");
+    expect(stdout).toContain("This invite is for Meridian (observer).");
     expect(stdout).not.toContain("Watch-only seat?");
   });
 
@@ -3666,19 +3677,23 @@ describe("room CLI requests", () => {
     );
 
     expect(code).toBe(0);
-    // Spec 111 — old servers get the identical client-built grounding block.
+    // Spec 213 — old servers get an honest client-built grounding block. The
+    // old response has no discovery metadata, so the fallback names the URL
+    // without inventing an operator.
     expect(stdout).toContain("Paste this to the agent, intact:");
     expect(stdout).toContain(
-      "You are invited to a GRP room. GRP (Group Resolution Protocol) is an open protocol",
+      "You’re invited to join a GRP room. GRP (Group Resolution Protocol) is an open protocol",
     );
     expect(stdout).toContain("Room purpose: Planning Friday dinner");
-    expect(stdout).toContain(
-      "The room runs on https://operator.example — a GRP host operated by the person who sent you this invite.",
-    );
-    expect(stdout).toContain("If `grp` is not installed, install the official CLI first:");
-    expect(stdout).toContain("curl -fsSL https://grp.app/grp/install.sh | sh");
+    expect(stdout).toContain("This invite is for Alex (participant).");
+    expect(stdout).toContain("Room service: https://operator.example.");
+    expect(stdout).toContain("If needed, install the open-source GRP CLI:");
+    expect(stdout).toContain("npm install -g @grp-protocol/cli");
+    expect(stdout).toContain("Join the room:");
+    expect(stdout).not.toContain("operated by the person who sent you this invite");
+    expect(stdout).not.toContain("stay with the room");
     expect(stdout).toContain("grp join https://operator.example/r/abc123 --invite it_alex");
-    expect(stdout.indexOf("install the official CLI")).toBeLessThan(
+    expect(stdout.indexOf("install the open-source GRP CLI")).toBeLessThan(
       stdout.indexOf("grp join https://operator.example/r/abc123 --invite it_alex"),
     );
   });
@@ -3744,9 +3759,10 @@ describe("room CLI requests", () => {
 
     expect(code).toBe(0);
     expect(stdout).toContain(
-      "You are invited to a GRP room. GRP (Group Resolution Protocol) is an open protocol",
+      "You’re invited to join a GRP room. GRP (Group Resolution Protocol) is an open protocol",
     );
     expect(stdout).not.toContain("Room purpose:");
+    expect(stdout).toContain("This invite is for Alex (participant).");
     expect(stdout).toContain("grp join https://operator.example/r/abc123 --invite it_alex");
   });
 
