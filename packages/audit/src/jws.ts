@@ -159,8 +159,8 @@ export function computeJwsReceiptHash(compactJws: string): string {
 // --- base64url helpers (RFC 7515 §2: base64url with no padding) ---
 //
 // Pure JS over btoa/atob (global in Node ≥16, browsers, and edge runtimes) so
-// receipt/mandate verification runs anywhere — including the browser-side
-// receipt verifier in apps/web. No Buffer, no node:crypto.
+// receipt/mandate verification runs anywhere, including browser-based receipt
+// verifiers. No Buffer, no node:crypto.
 
 export function base64urlEncodeString(s: string): string {
   return base64urlEncodeBytes(new TextEncoder().encode(s));

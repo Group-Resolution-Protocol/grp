@@ -2,8 +2,8 @@ import type { ConformanceCase } from "../types.js";
 
 /**
  * Mechanism identifiers a v0.1 GRP room host may honestly advertise. This is
- * the public URL-room enum (apps/api/src/url-room/config.ts
- * SUPPORTED_MECHANISMS), not the engine's internal generic_vote helper.
+ * the public URL-room vocabulary, not the engine's internal generic_vote
+ * helper.
  */
 export const KNOWN_MECHANISMS = [
   "simple_majority",
