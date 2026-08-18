@@ -1,5 +1,6 @@
 {
   "built_from": "private monorepo working tree (no git history migrates)",
+  "source_selection": "Git-tracked or staged files within explicit include roots",
   "includes": [
     "apps/docs",
     "docs/reference/openapi",
@@ -29,8 +30,14 @@
     "biome.json",
     ".gitignore",
     ".github/workflows/ci.yml",
+    ".github/workflows/sync-integrity.yml",
     ".github/workflows/publish.yml",
+    ".github/CODEOWNERS",
+    "scripts/public-sync-policy.mjs",
+    "scripts/verify-public-sync.mjs",
     "scripts/verify-npm-packages.mjs",
+    "scripts/stage-npm-release.mjs",
+    "scripts/regenerate-public-lockfile.mjs",
     "scripts/check-npm-release-metadata.mjs",
     "scripts/check-public-docs.mjs",
     ".github/pull_request_template.md",
@@ -39,7 +46,7 @@
     ".github/ISSUE_TEMPLATE/question.yml"
   ],
   "repository_metadata": "https://github.com/Group-Resolution-Protocol/grp",
-  "file_count": 378,
+  "file_count": 384,
   "errors": [],
   "warnings": [],
   "note": "engine is included as conformance's hard dependency and is one of the approved five v0.1 packages"

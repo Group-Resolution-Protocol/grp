@@ -35,10 +35,13 @@ npm test
 node scripts/verify-npm-packages.mjs --artifact-dir=.release-packages
 ```
 
-The last command packs all five packages, checks their contents, installs the
-exact tarballs into an empty project, imports every public library, runs both
-installed executables, and retains those verified archives with a checksum
-manifest. It does not publish.
+With no package selector, the last command packs all five packages, checks
+their contents, installs the exact tarballs into an empty project, imports
+every public library, runs both installed executables, and retains those
+verified archives with checksum and release manifests. It does not publish.
+For a package-specific patch, use `--packages=cli` (or a comma-separated list
+of `audit,engine,sdk,conformance,cli`) and bump only the selected package
+manifests. Packages that did not change do not need synthetic version bumps.
 
 ## First publication
 
@@ -57,13 +60,14 @@ After all five packages exist:
 3. Restrict that publisher to `npm stage publish` only.
 4. Use the GitHub environment `npm-release` and require maintainer approval.
 5. Disallow traditional publishing tokens once the trusted path is confirmed.
-6. Bump and test the package versions, then manually run **Stage npm packages**
-   with the confirmation `STAGE`.
-7. Inspect every staged tarball on npm and approve each one with 2FA.
+6. Bump and test only the changed package versions, then manually run **Stage
+   npm packages** with the exact package IDs and confirmation `STAGE`.
+7. Inspect every selected staged tarball on npm and approve each one with 2FA.
 
 The workflow's preparation job has no npm publishing identity. It builds,
-tests, consumer-installs, and uploads the exact five tarballs. Only the second
-job receives an OIDC identity, verifies the downloaded checksums, and submits
-those already-tested tarballs with lifecycle scripts disabled. The workflow
-can only stage packages. Nothing becomes public until a maintainer separately
-approves it on npm.
+tests, consumer-installs, and uploads only the selected exact tarballs plus a
+machine-readable release manifest. Only the second job receives an OIDC
+identity, verifies the downloaded hashes and manifest, and submits those
+already-tested tarballs with lifecycle scripts disabled. The workflow can only
+stage packages. Nothing becomes public until a maintainer separately approves
+it on npm.

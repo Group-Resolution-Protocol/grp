@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Spec 196/209 — pack the five v0.1 packages exactly as npm would, reject archive
-// drift, install those tarballs in an empty consumer, and exercise only their
-// public package names and binaries. This script never publishes.
+// Specs 196/209/214 — pack the selected public packages exactly as npm would,
+// reject archive drift, install those tarballs in an empty consumer, and
+// exercise their public package names and binaries. This script never
+// publishes. With no --packages flag it verifies all five packages.
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -21,7 +22,6 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 
 const repoRoot = join(fileURLToPath(import.meta.url), "..", "..");
-const expectedVersion = "0.1.0";
 const artifactDirFlag = process.argv.find((arg) => arg.startsWith("--artifact-dir="));
 const artifactDirValue = artifactDirFlag?.slice("--artifact-dir=".length);
 if (artifactDirFlag && !artifactDirValue) {
@@ -37,13 +37,38 @@ if (artifactDir && existsSync(artifactDir) && readdirSync(artifactDir).length > 
 // explicit packer everywhere so the hosted installer digest proves the same
 // source artifact on developer machines, CI runners, and the release host.
 const canonicalPackNpmVersion = "11.11.0";
-const packages = [
-  { name: "@grp-protocol/audit", dir: "packages/audit" },
-  { name: "@grp-protocol/engine", dir: "packages/engine" },
-  { name: "@grp-protocol/sdk", dir: "packages/agent-sdk" },
-  { name: "@grp-protocol/conformance", dir: "packages/conformance" },
-  { name: "@grp-protocol/cli", dir: "packages/cli" },
+const packageCatalog = [
+  { id: "audit", name: "@grp-protocol/audit", dir: "packages/audit" },
+  { id: "engine", name: "@grp-protocol/engine", dir: "packages/engine" },
+  { id: "sdk", name: "@grp-protocol/sdk", dir: "packages/agent-sdk" },
+  { id: "conformance", name: "@grp-protocol/conformance", dir: "packages/conformance" },
+  { id: "cli", name: "@grp-protocol/cli", dir: "packages/cli" },
 ];
+for (const pkg of packageCatalog) {
+  pkg.version = JSON.parse(readFileSync(join(repoRoot, pkg.dir, "package.json"), "utf8")).version;
+}
+const packagesFlag = process.argv.find((arg) => arg.startsWith("--packages="));
+const requestedPackageIds = packagesFlag
+  ? packagesFlag
+      .slice("--packages=".length)
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+  : packageCatalog.map((pkg) => pkg.id);
+const unknownPackageIds = requestedPackageIds.filter(
+  (id) => !packageCatalog.some((pkg) => pkg.id === id || pkg.name === id),
+);
+if (requestedPackageIds.length === 0 || unknownPackageIds.length > 0) {
+  console.error(
+    `[npm-release] --packages must select one or more of ${packageCatalog
+      .map((pkg) => pkg.id)
+      .join(", ")}; unknown: ${unknownPackageIds.join(", ") || "empty selection"}`,
+  );
+  process.exit(2);
+}
+const packages = packageCatalog.filter((pkg) =>
+  requestedPackageIds.some((id) => id === pkg.id || id === pkg.name),
+);
 
 const scratch = mkdtempSync(join(tmpdir(), "grp-npm-release-"));
 const tarballDir = join(scratch, "tarballs");
@@ -77,7 +102,8 @@ try {
   }
 
   const tarballs = [];
-  let packedCliTarball;
+  const releaseEntries = [];
+  let packedCli;
   for (const pkg of packages) {
     console.log(`[npm-release] packing ${pkg.name} with npm@${canonicalPackNpmVersion}`);
     const output = run(
@@ -87,19 +113,27 @@ try {
       "pipe",
     );
     const packed = parsePackJson(output);
-    if (packed.name !== pkg.name || packed.version !== expectedVersion) {
+    if (packed.name !== pkg.name || packed.version !== pkg.version) {
       throw new Error(
-        `${pkg.name}: npm pack reported ${packed.name}@${packed.version}, expected ${pkg.name}@${expectedVersion}`,
+        `${pkg.name}: npm pack reported ${packed.name}@${packed.version}, expected ${pkg.name}@${pkg.version}`,
       );
     }
     const tarball = join(tarballDir, packed.filename);
-    inspectTarball(pkg.name, tarball);
-    console.log(`[npm-release] tarball ${pkg.name}: sha256:${sha256File(tarball)}`);
+    inspectTarball(pkg.name, pkg.version, tarball);
+    const tarballSha256 = sha256File(tarball);
+    console.log(`[npm-release] tarball ${pkg.name}: sha256:${tarballSha256}`);
     tarballs.push(tarball);
-    if (pkg.name === "@grp-protocol/cli") packedCliTarball = tarball;
+    releaseEntries.push({
+      id: pkg.id,
+      name: pkg.name,
+      version: pkg.version,
+      filename: basename(tarball),
+      sha256: tarballSha256,
+    });
+    if (pkg.name === "@grp-protocol/cli") packedCli = { tarball, version: pkg.version };
   }
 
-  verifyServedCliArtifact(packedCliTarball);
+  if (packedCli) verifyServedCliArtifact(packedCli.tarball, packedCli.version);
 
   writeFileSync(
     join(consumerDir, "package.json"),
@@ -123,28 +157,35 @@ try {
     "inherit",
   );
 
-  const smokePath = join(consumerDir, "smoke.mjs");
-  writeFileSync(smokePath, consumerSmokeSource());
-  run("node", [smokePath], consumerDir, "inherit");
-
-  const grpOutput = run(installedBin("grp"), ["--version"], consumerDir, "pipe").trim();
-  if (!grpOutput.includes(`grp ${expectedVersion}`)) {
-    throw new Error(`installed grp --version returned ${JSON.stringify(grpOutput)}`);
+  const smokeSource = consumerSmokeSource(new Set(packages.map((pkg) => pkg.id)));
+  if (smokeSource) {
+    const smokePath = join(consumerDir, "smoke.mjs");
+    writeFileSync(smokePath, smokeSource);
+    run("node", [smokePath], consumerDir, "inherit");
   }
 
-  const conformanceOutput = run(
-    installedBin("grp-conformance"),
-    ["--profile=core"],
-    consumerDir,
-    "pipe",
-  );
-  const conformance = JSON.parse(conformanceOutput);
-  if (
-    conformance.protocol_version !== "grp/0.1" ||
-    conformance.summary?.fail !== 0 ||
-    !(conformance.summary?.pass > 0)
-  ) {
-    throw new Error("installed grp-conformance did not pass the offline core profile");
+  if (packedCli) {
+    const grpOutput = run(installedBin("grp"), ["--version"], consumerDir, "pipe").trim();
+    if (!grpOutput.includes(`grp ${packedCli.version}`)) {
+      throw new Error(`installed grp --version returned ${JSON.stringify(grpOutput)}`);
+    }
+  }
+
+  if (packages.some((pkg) => pkg.id === "conformance")) {
+    const conformanceOutput = run(
+      installedBin("grp-conformance"),
+      ["--profile=core"],
+      consumerDir,
+      "pipe",
+    );
+    const conformance = JSON.parse(conformanceOutput);
+    if (
+      conformance.protocol_version !== "grp/0.1" ||
+      conformance.summary?.fail !== 0 ||
+      !(conformance.summary?.pass > 0)
+    ) {
+      throw new Error("installed grp-conformance did not pass the offline core profile");
+    }
   }
 
   if (artifactDir) {
@@ -156,10 +197,16 @@ try {
       checksums.push(`${sha256File(tarball)}  ${filename}`);
     }
     writeFileSync(join(artifactDir, "SHA256SUMS"), `${checksums.sort().join("\n")}\n`);
+    writeFileSync(
+      join(artifactDir, "RELEASE-MANIFEST.json"),
+      `${JSON.stringify({ schema_version: 1, packages: releaseEntries }, null, 2)}\n`,
+    );
     console.log(`[npm-release] retained verified artifacts in ${artifactDir}`);
   }
 
-  console.log(`[npm-release] PASS — ${packages.length} v0.1.0 tarballs install and run cleanly`);
+  console.log(
+    `[npm-release] PASS — ${packages.map((pkg) => `${pkg.name}@${pkg.version}`).join(", ")} install and run cleanly`,
+  );
 } catch (error) {
   failed = true;
   console.error(`[npm-release] FAIL — ${error instanceof Error ? error.message : String(error)}`);
@@ -170,7 +217,7 @@ try {
 
 process.exit(failed ? 1 : 0);
 
-function inspectTarball(expectedName, tarball) {
+function inspectTarball(expectedName, expectedVersion, tarball) {
   if (!existsSync(tarball)) throw new Error(`${expectedName}: tarball was not created`);
   const entries = run("tar", ["-tzf", tarball], repoRoot, "pipe")
     .split("\n")
@@ -248,7 +295,7 @@ function inspectTarball(expectedName, tarball) {
   console.log(`[npm-release] inspected ${expectedName}: ${entries.length} entries`);
 }
 
-function verifyServedCliArtifact(packedCliTarball) {
+function verifyServedCliArtifact(packedCliTarball, expectedVersion) {
   if (!packedCliTarball) throw new Error("fresh CLI tarball was not created");
   const hostedWebRoot = join(repoRoot, "apps", "web");
   if (!existsSync(hostedWebRoot)) {
@@ -266,8 +313,10 @@ function verifyServedCliArtifact(packedCliTarball) {
     `grp-protocol-cli-${expectedVersion}.tgz`,
   );
   const installer = join(repoRoot, "apps", "web", "public", "grp", "install.sh");
-  if (!existsSync(servedTarball)) throw new Error("served v0.1.0 CLI tarball is missing");
-  inspectTarball("@grp-protocol/cli", servedTarball);
+  if (!existsSync(servedTarball)) {
+    throw new Error(`served CLI tarball is missing for @grp-protocol/cli@${expectedVersion}`);
+  }
+  inspectTarball("@grp-protocol/cli", expectedVersion, servedTarball);
 
   const freshSha = sha256File(packedCliTarball);
   const servedSha = sha256File(servedTarball);
@@ -280,7 +329,7 @@ function verifyServedCliArtifact(packedCliTarball) {
   }
   const installerSource = readFileSync(installer, "utf8");
   if (!installerSource.includes(`grp-protocol-cli-${expectedVersion}.tgz`)) {
-    throw new Error("installer does not select the v0.1.0 CLI artifact");
+    throw new Error(`installer does not select the ${expectedVersion} CLI artifact`);
   }
   if (!installerSource.includes(servedSha)) {
     throw new Error("installer does not pin the served CLI SHA-256");
@@ -337,21 +386,20 @@ function run(command, args, cwd, stdio) {
   });
 }
 
-function consumerSmokeSource() {
-  return `
-import assert from "node:assert/strict";
-import { AUDIT_VERSION, canonicalize } from "@grp-protocol/audit";
-import { DEFAULT_PARAMETERS, ENGINE_VERSION, runGenericVote } from "@grp-protocol/engine";
-import { GrpClient, SDK_VERSION } from "@grp-protocol/sdk";
-import { GRP_CONFORMANCE_VERSION, runConformance } from "@grp-protocol/conformance";
-
-assert.equal(AUDIT_VERSION, "0.1.0");
-assert.equal(canonicalize({ b: 2, a: 1 }), '{"a":1,"b":2}');
-assert.equal(ENGINE_VERSION, "0.2.0");
-assert.equal(SDK_VERSION, "0.1.0");
-assert.equal(typeof GrpClient, "function");
-assert.equal(GRP_CONFORMANCE_VERSION, "grp/0.1");
-
+function consumerSmokeSource(selectedIds) {
+  const imports = ['import assert from "node:assert/strict";'];
+  const checks = [];
+  if (selectedIds.has("audit")) {
+    imports.push('import { AUDIT_VERSION, canonicalize } from "@grp-protocol/audit";');
+    checks.push('assert.equal(AUDIT_VERSION, "0.1.0");');
+    checks.push(`assert.equal(canonicalize({ b: 2, a: 1 }), '{"a":1,"b":2}');`);
+  }
+  if (selectedIds.has("engine")) {
+    imports.push(
+      'import { DEFAULT_PARAMETERS, ENGINE_VERSION, runGenericVote } from "@grp-protocol/engine";',
+    );
+    checks.push('assert.equal(ENGINE_VERSION, "0.2.0");');
+    checks.push(`
 const result = runGenericVote({
   parameters: DEFAULT_PARAMETERS,
   eligible_voters: 3,
@@ -362,11 +410,23 @@ const result = runGenericVote({
   ],
   deterministic_seed: "deadbeef".repeat(8),
 });
-assert.equal(result.winner, "yes");
-
+assert.equal(result.winner, "yes");`);
+  }
+  if (selectedIds.has("sdk")) {
+    imports.push('import { GrpClient, SDK_VERSION } from "@grp-protocol/sdk";');
+    checks.push('assert.equal(SDK_VERSION, "0.1.0");');
+    checks.push('assert.equal(typeof GrpClient, "function");');
+  }
+  if (selectedIds.has("conformance")) {
+    imports.push(
+      'import { GRP_CONFORMANCE_VERSION, runConformance } from "@grp-protocol/conformance";',
+    );
+    checks.push('assert.equal(GRP_CONFORMANCE_VERSION, "grp/0.1");');
+    checks.push(`
 const conformance = await runConformance({ profile: "core" });
 assert.equal(conformance.summary.fail, 0);
-assert.ok(conformance.summary.pass > 0);
-console.log("[consumer] public package imports and representative behavior passed");
-`;
+assert.ok(conformance.summary.pass > 0);`);
+  }
+  if (checks.length === 0) return "";
+  return `${imports.join("\n")}\n\n${checks.join("\n")}\nconsole.log("[consumer] selected public package imports and representative behavior passed");\n`;
 }

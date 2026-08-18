@@ -1,6 +1,6 @@
 {
   "name": "@grp-protocol/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Command-line client for Group Resolution Protocol rooms, decisions, and signed outcomes.",
   "license": "Apache-2.0",
   "type": "module",
@@ -28,8 +28,8 @@
     "build": "node scripts/clean-dist.mjs && tsc --incremental false"
   },
   "dependencies": {
-    "@noble/ed25519": "^3.1.0",
-    "yaml": "^2.8.4"
+    "@noble/ed25519": "3.1.0",
+    "yaml": "2.8.4"
   },
   "bundledDependencies": [
     "@noble/ed25519",
