@@ -19,11 +19,13 @@
   "workspaces": ["packages/*", "apps/docs"],
   "scripts": {
     "build": "npm run docs:check && npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test:repository-boundary && npm run test --workspaces --if-present",
+    "test:repository-boundary": "node --test scripts/check-repository-boundary.test.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "biome check --diagnostic-level=error .",
     "release:verify-packages": "node scripts/verify-npm-packages.mjs",
-    "docs:check": "node scripts/check-public-docs.mjs"
+    "docs:check": "node scripts/check-public-docs.mjs",
+    "repository:check": "node scripts/check-repository-boundary.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4"

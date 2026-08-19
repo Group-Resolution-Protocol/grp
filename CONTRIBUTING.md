@@ -30,18 +30,30 @@ locally with `npm run dev --workspace=@grp-protocol/docs`.
    the conformance suite against your branch.
 5. **Credit yourself** in the PR description.
 
-GRP currently uses a separate canonical development repository and publishes
-reviewed open-source changes here through verified synchronization PRs. A
-community pull request is therefore a proposal: after accepting it, a
-maintainer integrates the change into the canonical source and returns an
-exact, manifest-backed synchronization. The original pull request may be
-closed rather than merged directly even though its change is accepted. The
-`sync-integrity` check deliberately distinguishes proposal PRs from mergeable
-maintainer syncs; ordinary build and test results remain useful during review.
+Pull requests are reviewed and merged in this repository. Before opening one,
+run the same repository checks used by CI:
 
-Protocol-affecting proposals (normative requirements, receipt format,
+```bash
+npm run build
+npm test
+npm run release:verify-packages
+npm run repository:check
+```
+
+Protocol-affecting changes (normative requirements, receipt format,
 mechanism behavior, mandatory transports) follow the change process in
 [GOVERNANCE.md](GOVERNANCE.md), including a public discussion phase.
+
+## Maintainer commit identity
+
+Maintainers should use a repository-local GitHub noreply identity so public
+commits do not expose a personal email address:
+
+```bash
+git config --local user.name "ctrl-malacan"
+git config --local user.email "270225746+ctrl-malacan@users.noreply.github.com"
+git config --local --get-regexp '^user\.(name|email)$'
+```
 
 ## What we won't merge
 
