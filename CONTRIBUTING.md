@@ -30,6 +30,8 @@ locally with `npm run dev --workspace=@grp-protocol/docs`.
    the conformance suite against your branch.
 5. **Credit yourself** in the PR description.
 
+Small documentation corrections do not need a prior issue or discussion.
+
 Pull requests are reviewed and merged in this repository. Before opening one,
 run the same repository checks used by CI:
 
