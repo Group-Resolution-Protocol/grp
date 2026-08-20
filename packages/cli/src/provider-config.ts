@@ -338,6 +338,27 @@ export function clearCurrentRoom(config: ProviderConfig): ProviderConfig {
   return rest;
 }
 
+/** Remove one exact host+slug room from local memory, including current. */
+export function forgetRoom(config: ProviderConfig, slug: string, baseUrl: string): ProviderConfig {
+  const next = normalizeProviderConfig(config);
+  const targetBase = normalizeBaseUrl(baseUrl);
+  const rooms = Object.fromEntries(
+    Object.entries(next.rooms ?? {}).filter(
+      ([, room]) => !roomMatches(next, room, slug, targetBase),
+    ),
+  );
+  const currentRoom =
+    next.currentRoom && roomMatches(next, next.currentRoom, slug, targetBase)
+      ? undefined
+      : next.currentRoom;
+  const { currentRoom: _currentRoom, rooms: _rooms, ...rest } = next;
+  return {
+    ...rest,
+    ...(currentRoom ? { currentRoom } : {}),
+    ...(Object.keys(rooms).length > 0 ? { rooms } : {}),
+  };
+}
+
 export function findRememberedRoom(
   config: ProviderConfig,
   slug: string,

@@ -987,6 +987,18 @@ function buildStatus(config: ProviderConfig, env: Record<string, string | undefi
   if (!defaultProvider && setupMode !== "join_only" && !config.currentRoom) {
     issues.push("No default host configured. Run `grp init`.");
   }
+  const providersByBaseUrl = new Map<string, string[]>();
+  for (const provider of Object.values(config.providers)) {
+    const names = providersByBaseUrl.get(provider.baseUrl) ?? [];
+    names.push(provider.name);
+    providersByBaseUrl.set(provider.baseUrl, names);
+  }
+  for (const [baseUrl, names] of providersByBaseUrl) {
+    if (names.length < 2) continue;
+    issues.push(
+      `Duplicate host URL ${baseUrl} is configured as: ${names.sort().join(", ")}. Remove the obsolete alias after checking which name your rooms use.`,
+    );
+  }
   return {
     initialized: Boolean(defaultProvider) || setupMode === "join_only",
     setupMode,

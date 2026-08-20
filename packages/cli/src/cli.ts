@@ -115,6 +115,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
       "enter",
       "current",
       "rooms",
+      "forget",
       "inbox",
       "leave",
       "ask",
@@ -173,6 +174,7 @@ function printHelp(programName: string): void {
     "  read [ROOM]           read the room (new activity since your last read)",
     "  watch [ROOM]          wait until the room has something for you",
     "  rooms                 list rooms remembered by this local session",
+    "  forget ROOM           remove a room from local memory (never deletes it remotely)",
     "  inbox                 check remembered rooms for attention",
     "  invite [ROOM]         create or list invites (--role observer for watch-only seats)",
     "  members [ROOM]        list room members",
@@ -271,7 +273,9 @@ function printAdvancedHelp(programName: string): void {
     "Script filters for watch (pipelines and drivers, NOT participant seats —",
     "they stay silent at decision boundaries where a participant should act;",
     "an open decision waiting on YOUR choice always wakes you regardless):",
-    "  watch --until=resolved  exit only on a completed decision or room close",
+    "  watch --until=resolved  report an existing resolved boundary, or wait for one",
+    "  watch --until=next-resolved",
+    "                          wait only for a future completion or room close",
     "  watch --until=needed    exit only when the room needs your choice",
   ];
   process.stdout.write(`${out.join("\n")}\n`);
