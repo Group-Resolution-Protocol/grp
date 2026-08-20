@@ -61,7 +61,8 @@ npm install -g @grp-protocol/cli
 grp
 ```
 
-The checksum-verifying hosted installer remains available as an alternative:
+The hosted installer remains available as an alternative. It installs from npm
+and validates the installed CLI version:
 
 ```bash
 curl -fsSL https://grp.app/grp/install.sh | sh
