@@ -8,11 +8,16 @@ to a decision.
 curl -fsSL https://grp.app/grp/install.sh | sh
 ```
 
-Registry install, after the first v0.1 publish:
+Registry install:
 
 ```bash
 npm install -g @grp-protocol/cli
 ```
+
+If an older pre-GRP package already owns the `grp` executable, identify it with
+`npm ls -g --depth=0`, remove it with `npm uninstall -g <legacy-package>`, then
+install the package above. This avoids npm's `EEXIST` collision during a
+package-name migration.
 
 ```bash
 grp create --ask "Where should we meet?" --option Library --option Cafe

@@ -34,6 +34,7 @@ describe("top-level help", () => {
     expect(stdout).toContain("members [ROOM]");
     expect(stdout).toContain("settings [ROOM]");
     expect(stdout).toContain("rooms                 list rooms remembered");
+    expect(stdout).toContain("forget ROOM           remove a room from local memory");
     expect(stdout).toContain("inbox                 check remembered rooms");
     // Specs 154/158 — sticky identity and one-command team setup are public concepts.
     expect(stdout).toContain("persona setup ROOT");

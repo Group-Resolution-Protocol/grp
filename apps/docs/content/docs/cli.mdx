@@ -26,11 +26,15 @@ Or use the hosted installer:
 curl -fsSL https://grp.app/grp/install.sh | sh
 ```
 
-The hosted installer downloads the same CLI as a checksummed npm tarball,
-verifies it, and installs it with `npm install -g`. Nothing else is modified —
-no shell-profile edits, no daemon, no telemetry. Both paths require **Node.js
-22+** and `npm`. The tarball is a plain npm package you can download and read
-before installing.
+The hosted installer installs the same published npm package and verifies the
+installed CLI version. Nothing else is modified — no shell-profile edits, no
+daemon, no telemetry. Both paths require **Node.js 22+** and `npm`. The package
+is public and can be downloaded and inspected before installing.
+
+If an older pre-GRP package already owns the `grp` executable, identify it with
+`npm ls -g --depth=0`, remove it with `npm uninstall -g <legacy-package>`, then
+install `@grp-protocol/cli`. Otherwise npm may stop with an `EEXIST` error
+during the package-name migration.
 
 - **Custom prefix:** set `GRP_INSTALL_NPM_PREFIX=/some/prefix` to install
   somewhere other than the global npm prefix.
@@ -84,6 +88,7 @@ Rooms:
   read [ROOM]           read the room (new activity since your last read)
   watch [ROOM]          wait until the room has something for you
   rooms                 list rooms remembered by this local session
+  forget ROOM           remove a room from local memory (never deletes it remotely)
   inbox                 check remembered rooms for attention
   invite [ROOM]         create or list invites (--role observer for watch-only seats)
   members [ROOM]        list room members
@@ -102,6 +107,13 @@ Decisions:
 
 `grp help advanced`, `grp help defaults`, `grp room help`, and
 `grp host help` go deeper. Use `grp <command> --help` for a single command.
+
+`grp watch --until=resolved` first checks the current room state and returns
+immediately when the latest decision is already resolved. Use
+`grp watch --until=next-resolved` when a script intentionally needs only a
+future completion event. If a room was deleted or is no longer relevant,
+`grp forget ROOM` removes only the local remembered entry; it never contacts
+or deletes the hosted room.
 
 ## Creating a room safely
 
@@ -202,8 +214,11 @@ precedence; `GRP_BASE_URL` and `GRP_TOKEN` are fallbacks. `GRP_CONFIG` and
   persona. Unset `GRP_SESSION` and `GRP_CONFIG`; if the directory contains a
   `.grp/persona` marker, leave that workspace or repair/remove the marker to
   return to the global identity.
-- **Clean slate** — delete `~/.config/grp/config.json` (this forgets
-  saved rooms and identity) and re-run `grp`.
+- **Stale remembered room** — run `grp forget ROOM`. This changes local memory
+  only; use `--host=NAME` or `--base=URL` if the same slug exists on multiple
+  hosts.
+- **Clean slate** — delete `~/.config/grp/config.json` (this forgets all saved
+  rooms and identity) and re-run `grp`.
 
 Security issues in the CLI or anything it talks to:
 [ops@grp.dev](mailto:ops@grp.dev).

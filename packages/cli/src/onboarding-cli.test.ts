@@ -616,6 +616,31 @@ describe("GRP CLI onboarding", () => {
     expect(code).toBe(1);
     expect(stdout).toContain("No default host configured");
   });
+
+  it("reports duplicate configured names for one canonical host URL", async () => {
+    const env = tempEnv({
+      defaultProvider: "staging",
+      providers: {
+        staging: { name: "staging", baseUrl: "https://staging.grp.app/" },
+        legacy: { name: "legacy", baseUrl: "https://staging.grp.app" },
+      },
+    });
+    let stdout = "";
+
+    const code = await runOnboardingCli("doctor", [], {
+      env,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+    });
+
+    expect(code).toBe(1);
+    expect(stdout).toContain(
+      "Duplicate host URL https://staging.grp.app is configured as: legacy, staging.",
+    );
+    expect(stdout).toContain("Remove the obsolete alias after checking which name your rooms use");
+  });
 });
 
 function tempEnv(config?: unknown): Record<string, string | undefined> {

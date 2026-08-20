@@ -703,6 +703,7 @@ describe("room CLI requests", () => {
   it("creates a room with repeatable options without splitting internal commas", async () => {
     const bodies: unknown[] = [];
     const env = { ...providerEnv({ providers: {} }), GRP_BASE_URL: "https://operator.example" };
+    let stdout = "";
     const code = await runRoomCli(
       [
         "create",
@@ -711,7 +712,9 @@ describe("room CLI requests", () => {
         "--option=Slow, safe, and dry",
       ],
       {
-        stdout: () => {},
+        stdout: (text) => {
+          stdout += text;
+        },
         stderr: () => {},
         fetch: async (_input, init) => {
           bodies.push(await new Request(_input, init).json());
@@ -726,6 +729,9 @@ describe("room CLI requests", () => {
       question: "Pick a route",
       options: ["Fast, but exposed", "Slow, safe, and dry"],
     });
+    expect(stdout).toContain('Question opened: "Pick a route" (2 options)');
+    expect(stdout).not.toContain('grp ask "..."');
+    expect(stdout).toContain("grp read");
   });
 
   it("creates a room with about and no first question", async () => {
@@ -920,6 +926,62 @@ describe("room CLI requests", () => {
     expect(requests[0]?.url).toBe("https://operator.example/api/rooms/abc123");
     expect(requests[0]?.headers.get("authorization")).toBe("Bearer t_1");
     expect(stdout).toContain('"slug": "abc123"');
+  });
+
+  it("keeps follow-up hints inside an explicit grp as persona", async () => {
+    const previousSession = process.env.GRP_SESSION;
+    const previousAsActive = process.env.GRP_AS_ACTIVE;
+    process.env.GRP_SESSION = "reviewer";
+    process.env.GRP_AS_ACTIVE = "1";
+    try {
+      const env = {
+        ...providerEnv({
+          providers: {},
+          sessions: { reviewer: { profile: { displayName: "Risk reviewer" } } },
+        }),
+        GRP_SESSION: "reviewer",
+        GRP_AS_ACTIVE: "1",
+      };
+      let joined = "";
+      const joinCode = await runRoomCli(["join", "https://operator.example/r/abc123?token=t_1"], {
+        stdout: (text) => {
+          joined += text;
+        },
+        stderr: () => {},
+        fetch: async () => jsonResponse({ participant_token: "t_joined", role: "participant" }),
+        env,
+      });
+      expect(joinCode).toBe(0);
+      expect(joined).toContain("Run:\n  grp as reviewer read");
+      expect(joined).not.toContain("Run:\n  grp read");
+
+      let invite = "";
+      const inviteCode = await runRoomCli(["invite", "--name=Alex"], {
+        stdout: (text) => {
+          invite += text;
+        },
+        stderr: () => {},
+        fetch: async () =>
+          jsonResponse({
+            slug: "abc123",
+            invite: { code: "inv_alex", label: "Alex", role: "participant" },
+            paste_block: [
+              "Join the room:",
+              "grp join https://operator.example/r/abc123 --invite it_secret",
+            ].join("\n"),
+          }),
+        env,
+      });
+      expect(inviteCode).toBe(0);
+      expect(invite).toContain("grp as reviewer invite revoke inv_alex");
+      expect(invite).toContain("grp join https://operator.example/r/abc123 --invite it_secret");
+      expect(invite).not.toContain("grp as reviewer join");
+    } finally {
+      if (previousSession === undefined) Reflect.deleteProperty(process.env, "GRP_SESSION");
+      else process.env.GRP_SESSION = previousSession;
+      if (previousAsActive === undefined) Reflect.deleteProperty(process.env, "GRP_AS_ACTIVE");
+      else process.env.GRP_AS_ACTIVE = previousAsActive;
+    }
   });
 
   it("reads an explicit current-room slug using saved current-room credentials", async () => {
@@ -1394,7 +1456,7 @@ describe("room CLI requests", () => {
     );
     expect(stdout).not.toContain("every participant has chosen");
     expect(stdout).toContain("choices can be revised until the outcome locks");
-    expect(stdout).toContain("If you have not responded yet: grp choose 2 abc123");
+    expect(stdout).toContain("If you have not responded yet: grp choose N abc123");
     expect(stdout).toContain(
       "If context or options are drifting, add to the discussion or propose another option:",
     );
@@ -2576,7 +2638,7 @@ describe("room CLI requests", () => {
 
   it("renders neutral mechanism-correct commands for every supported ballot shape", async () => {
     const cases = [
-      ["choose with a single option (string) from the options list", "grp choose 2 abc123"],
+      ["choose with a single option (string) from the options list", "grp choose N abc123"],
       [
         "choose with an array of every option you find acceptable",
         "grp choose --choices=1,3 abc123",
@@ -2671,7 +2733,7 @@ describe("room CLI requests", () => {
     expect(stdout).toContain("Phase: Choosing");
     expect(stdout).toContain("Proposal status: open");
     expect(stdout).toContain('grp propose "..."');
-    expect(stdout).toContain("grp choose 2");
+    expect(stdout).toContain("grp choose N");
     expect(stdout).not.toContain("grp start choosing");
   });
 
@@ -3058,6 +3120,124 @@ describe("room CLI requests", () => {
     expect(stdout).toContain("grp read abc123");
   });
 
+  it("returns immediately when --until=resolved starts after the latest decision resolved", async () => {
+    const requests: Request[] = [];
+    let stdout = "";
+    const code = await runRoomCli(
+      ["watch", "https://operator.example/r/abc123?token=t_1", "--until=resolved"],
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          requests.push(request);
+          if (request.url.includes("/events")) throw new Error("watch should not open a stream");
+          return jsonResponse({
+            slug: "abc123",
+            status: "open",
+            decisions: [
+              {
+                seq: 1,
+                question: "Ship it?",
+                status: "resolved",
+                resolved_winner: "approve",
+              },
+            ],
+          });
+        },
+        env: providerEnv({ providers: {} }),
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe("https://operator.example/api/rooms/abc123?include=full");
+    expect(stdout).toContain('Decision already resolved: "approve"');
+    expect(stdout).toContain("grp outcome abc123");
+  });
+
+  it("keeps waiting when an older decision is resolved but another decision is open", async () => {
+    const requests: Request[] = [];
+    let stdout = "";
+    const code = await runRoomCli(
+      ["watch", "https://operator.example/r/abc123?token=t_1", "--until=resolved"],
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          requests.push(request);
+          if (request.url.endsWith("/events/stream?since_seq=4")) {
+            return new Response(
+              sseStream([
+                'id: e5\ndata: {"id":"e5","seq":5,"event_type":"decision.completed","occurred_at":"2026-06-14T00:00:03.000Z","decision_id":"d2","data":{"winner":"ship it"}}\n\n',
+              ]),
+              { headers: { "content-type": "text/event-stream" } },
+            );
+          }
+          if (request.url.endsWith("/events")) {
+            return jsonResponse({
+              slug: "abc123",
+              events: [
+                {
+                  id: "e4",
+                  seq: 4,
+                  event_type: "discussion.posted",
+                  occurred_at: "2026-06-14T00:00:02.000Z",
+                  decision_id: "d2",
+                  data: {},
+                },
+              ],
+            });
+          }
+          return jsonResponse({
+            slug: "abc123",
+            status: "open",
+            decisions: [
+              { seq: 1, status: "resolved", resolved_winner: "old" },
+              { seq: 2, status: "voting", question: "New question" },
+            ],
+            decisions_open: [{ seq: 2, status: "voting", question: "New question" }],
+          });
+        },
+        env: providerEnv({ providers: {} }),
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(requests.some((request) => request.url.includes("/events/stream"))).toBe(true);
+    expect(stdout).not.toContain("Decision already resolved");
+    expect(stdout).toContain('Decision resolved: "ship it"');
+  });
+
+  it("returns immediately when --until=resolved starts after room conclusion", async () => {
+    let streamed = false;
+    let stdout = "";
+    const code = await runRoomCli(
+      ["watch", "https://operator.example/r/abc123?token=t_1", "--until=resolved"],
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input) => {
+          if (String(input).includes("/events")) streamed = true;
+          return jsonResponse({ slug: "abc123", status: "concluded" });
+        },
+        env: providerEnv({ providers: {} }),
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(streamed).toBe(false);
+    expect(stdout).toContain("Room already concluded.");
+    expect(stdout).toContain("grp outcome abc123");
+  });
+
   it("keeps the concluded-room watch epilogue outcome-only", async () => {
     let stdout = "";
     const code = await runRoomCli(
@@ -3256,12 +3436,12 @@ describe("room CLI requests", () => {
   // Spec 109 (WR2-11) — the stream backfills history; a replayed
   // decision.completed (seq <= head at watch start) must NOT satisfy --until,
   // while a live one (seq > head) must.
-  it("does not stop --until=resolved on replayed history, only on live events", async () => {
+  it("does not stop --until=next-resolved on replayed history, only on live events", async () => {
     const requests: Request[] = [];
     let stdout = "";
 
     const code = await runRoomCli(
-      ["watch", "https://operator.example/r/abc123?token=t_1", "--until=resolved"],
+      ["watch", "https://operator.example/r/abc123?token=t_1", "--until=next-resolved"],
       {
         stdout: (text) => {
           stdout += text;
@@ -3581,6 +3761,9 @@ describe("room CLI requests", () => {
     expect(requests[0]?.method).toBe("POST");
     expect(requests[0]?.url).toBe("https://operator.example/api/rooms/abc123/invites");
     expect(stdout).toContain("Invite created for Alex's agent");
+    expect(stdout).toContain("Management code (list/revoke): inv_alex");
+    expect(stdout).toContain("Secret join credential: included only in the paste block below.");
+    expect(stdout).not.toContain("\nCode: inv_alex");
     expect(stdout).toContain("Binding: token invite");
     expect(stdout).toContain(
       "Credential warning: this invite can recover its named seat even after acceptance.",
@@ -4588,8 +4771,8 @@ describe("room CLI requests", () => {
     });
 
     expect(code).toBe(0);
-    expect(stdout).toContain("If you have not responded yet: grp choose 2");
-    expect(stdout).toContain("grp choose 2");
+    expect(stdout).toContain("If you have not responded yet: grp choose N");
+    expect(stdout).toContain("grp choose N");
     expect(stdout).not.toContain("You are an observer");
   });
 
@@ -7244,6 +7427,56 @@ describe("spec 131 — multi-room attention and routing", () => {
         lastSeenSeq: 10,
       },
     },
+  });
+
+  it("labels remembered rooms as local state and does not invent an unknown role", async () => {
+    let stdout = "";
+    const code = await runRoomCli(["rooms"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      env: providerEnv({
+        providers: {},
+        currentRoom: { baseUrl: "https://operator.example", slug: "room-without-role" },
+      }),
+    });
+
+    expect(code).toBe(0);
+    expect(stdout).toContain("CURRENT  ROOM");
+    expect(stdout).toContain("ROLE");
+    expect(stdout).toContain("—");
+    expect(stdout).not.toContain("unknown");
+    expect(stdout).toContain("Local memory only");
+    expect(stdout).toContain("grp inbox");
+    expect(stdout).toContain("grp forget ROOM");
+  });
+
+  it("forgets one room locally without contacting or changing the hosted room", async () => {
+    const env = providerEnv(multiRoomConfig());
+    let stdout = "";
+    let fetched = false;
+    const code = await runRoomCli(["forget", "dayroom01"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: async () => {
+        fetched = true;
+        throw new Error("forget must stay local");
+      },
+      env,
+    });
+
+    expect(code).toBe(0);
+    expect(fetched).toBe(false);
+    expect(stdout).toContain("Forgot dayroom01 on operator.example locally");
+    expect(stdout).toContain("The hosted room was not changed");
+    const config = readProviderConfig(env);
+    expect(config.currentRoom).toBeUndefined();
+    expect(config.rooms && Object.values(config.rooms).map((room) => room.slug)).toEqual([
+      "nightroom2",
+    ]);
   });
 
   it("uses the documented text-first trailing-room destination", async () => {

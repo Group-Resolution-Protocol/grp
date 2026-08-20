@@ -6,9 +6,11 @@ import {
   verifyCompactReceipt,
 } from "../../agent-sdk/src/index.js";
 import type { GrpAuth, RoomEvent } from "../../agent-sdk/src/index.js";
+import { grpCommand } from "./command-hints.js";
 import {
   clearCurrentRoom,
   findRememberedRoom,
+  forgetRoom,
   listRememberedRooms,
   readProviderConfig,
   rememberRoom,
@@ -496,6 +498,9 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
       case "rooms":
         await roomRooms(parsed.flags, resolvedIo);
         return 0;
+      case "forget":
+        await roomForget(requiredTarget(maybeTarget), parsed.flags, resolvedIo);
+        return 0;
       case "inbox":
         await roomInbox(parsed.flags, resolvedIo);
         return 0;
@@ -758,6 +763,7 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
   enter: roomFlagSet(ROOM_REFERENCE_FLAG_KEYS, ["json"]),
   current: roomFlagSet(["json"]),
   rooms: roomFlagSet(["json"]),
+  forget: roomFlagSet(ROOM_REFERENCE_FLAG_KEYS, ["json"]),
   inbox: roomFlagSet(["json"]),
   leave: roomFlagSet(["json"]),
   create: roomFlagSet(
@@ -949,7 +955,7 @@ async function roomUse(
 
 async function roomCurrent(flags: Record<string, string>, io: RoomCliIo): Promise<void> {
   const current = readProviderConfig(io.env).currentRoom;
-  if (!current) throw new Error("no current room; run `grp enter <room-url|slug>`");
+  if (!current) throw new Error(`no current room; run \`${grpCommand("enter <room-url|slug>")}\``);
   writeCurrentRoom(current, flags, io);
 }
 
@@ -1038,14 +1044,60 @@ async function roomRooms(flags: Record<string, string>, io: RoomCliIo): Promise<
     return;
   }
   if (rows.length === 0) {
-    io.stdout("No remembered rooms. Join one with: grp join <room>\n");
+    io.stdout(`No remembered rooms. Join one with: ${grpCommand("join <room>")}\n`);
     return;
   }
-  const lines = rows.map((row) => {
-    const marker = row.current ? "CURRENT" : "       ";
-    return `${marker}  ${row.slug.padEnd(14)}  ${row.host.padEnd(26)}  ${row.role ?? "unknown"}`;
-  });
+  const lines = ["CURRENT  ROOM            HOST                        ROLE"];
+  lines.push(
+    ...rows.map((row) => {
+      const marker = row.current ? "CURRENT" : "       ";
+      return `${marker}  ${row.slug.padEnd(14)}  ${row.host.padEnd(26)}  ${row.role ?? "—"}`;
+    }),
+  );
+  lines.push(
+    "",
+    `Local memory only. Run \`${grpCommand("inbox")}\` to check live room status; use \`${grpCommand("forget ROOM")}\` to remove a stale entry.`,
+  );
   io.stdout(`${lines.join("\n")}\n`);
+}
+
+/** Remove one remembered room locally. This never contacts or deletes the hosted room. */
+async function roomForget(
+  slug: string,
+  flags: Record<string, string>,
+  io: RoomCliIo,
+): Promise<void> {
+  const config = readProviderConfig(io.env);
+  const explicitBase =
+    flags.base ??
+    (flags.host || flags.provider
+      ? resolveProviderBaseUrl(flags.host ?? flags.provider, io.env)
+      : undefined);
+  const matches = listRememberedRooms(config).filter((room) => {
+    if (room.slug !== slug) return false;
+    if (!explicitBase) return true;
+    const candidateBase = roomContextBaseUrl(room, io.env);
+    return (
+      !!candidateBase &&
+      normalizeUrlForCompare(candidateBase) === normalizeUrlForCompare(explicitBase)
+    );
+  });
+  if (matches.length === 0) throw new Error(`room is not remembered locally: ${slug}`);
+  if (matches.length > 1) {
+    throw new Error(
+      `more than one remembered host has room ${slug}; select one with --host=NAME or --base=URL`,
+    );
+  }
+  const baseUrl = roomContextBaseUrl(matches[0], io.env);
+  if (!baseUrl) throw new Error(`cannot resolve the remembered host for room ${slug}`);
+  updateProviderConfig((current) => forgetRoom(current, slug, baseUrl), io.env);
+  if (isJson(flags)) {
+    io.stdout(renderJson({ forgotten: true, slug, base_url: baseUrl, hosted_room_deleted: false }));
+    return;
+  }
+  io.stdout(
+    `Forgot ${slug} on ${roomHostLabel(baseUrl)} locally. The hosted room was not changed.\n`,
+  );
 }
 
 /**
@@ -1058,7 +1110,7 @@ async function roomInbox(flags: Record<string, string>, io: RoomCliIo): Promise<
     if (isJson(flags)) {
       io.stdout(renderJson({ rooms: [] }));
     } else {
-      io.stdout("No remembered rooms. Join one with: grp join <room>\n");
+      io.stdout(`No remembered rooms. Join one with: ${grpCommand("join <room>")}\n`);
     }
     return;
   }
@@ -1104,9 +1156,11 @@ async function roomInbox(flags: Record<string, string>, io: RoomCliIo): Promise<
   if (visible.length === 0) {
     const lines = [`No remembered rooms need attention (${rows.length} checked).`];
     if (rows.some((row) => row.current)) {
-      lines.push("Stay present now: grp watch");
+      lines.push(`Stay present now: ${grpCommand("watch")}`);
     }
-    lines.push("Or return later using your agent runtime's scheduling tools, then run grp inbox.");
+    lines.push(
+      `Or return later using your agent runtime's scheduling tools, then run ${grpCommand("inbox")}.`,
+    );
     io.stdout(`${lines.join("\n")}\n`);
     return;
   }
@@ -1145,7 +1199,7 @@ async function roomInbox(flags: Record<string, string>, io: RoomCliIo): Promise<
   const first = visible.find((row) => row.status !== "unavailable");
   if (first) {
     const target = first.current ? "" : ` ${first.baseUrl}/r/${encodeURIComponent(first.slug)}`;
-    lines.push("", "Open one:", `  grp read${target}`);
+    lines.push("", "Open one:", `  ${grpCommand(`read${target}`)}`);
   }
   io.stdout(`${lines.join("\n")}\n`);
 }
@@ -1364,7 +1418,15 @@ async function roomCreate(
     return;
   }
   io.stdout(
-    renderRoomCreated(response, baseUrl, access, about ?? null, creatorDisplayName ?? null),
+    renderRoomCreated(
+      response,
+      baseUrl,
+      access,
+      about ?? null,
+      creatorDisplayName ?? null,
+      question ?? null,
+      options.length,
+    ),
   );
 }
 
@@ -1450,6 +1512,8 @@ function renderRoomCreated(
   access: CliCreateAccess,
   requestedAbout: string | null,
   creatorName: string | null = null,
+  requestedQuestion: string | null = null,
+  requestedOptionCount = 0,
 ): string {
   const room = isRecord(response) ? response : {};
   const slug = stringOrNull(room.slug) ?? "unknown";
@@ -1480,14 +1544,19 @@ function renderRoomCreated(
       : []),
     ...(auth === "mandate_required" ? ["Identity: Signed mandate required to join and act"] : []),
     ...(about ? [`About: ${about}`] : []),
+    ...(requestedQuestion
+      ? [
+          `Question opened: "${requestedQuestion}" (${requestedOptionCount} option${requestedOptionCount === 1 ? "" : "s"})`,
+        ]
+      : []),
     // Spec 109 (WR2-2) — name the identity the room roster will show.
     ...(creatorName ? [`You: ${creatorName} (creator)`] : []),
     "Current room: set",
     "",
     "Room commands:",
-    "  grp invite --name NAME",
-    '  grp ask "..."',
-    "  grp read",
+    `  ${grpCommand("invite --name NAME")}`,
+    ...(!requestedQuestion ? [`  ${grpCommand('ask "..."')}`] : []),
+    `  ${grpCommand("read")}`,
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -1622,7 +1691,7 @@ function resolveReadSince(
     if (raw === "last" || raw === "true") {
       if (stored === undefined) {
         throw new Error(
-          "no stored position for this room — run `grp watch` once, or `grp read --full`",
+          `no stored position for this room — run \`${grpCommand("watch")}\` once, or \`${grpCommand("read --full")}\``,
         );
       }
       return stored;
@@ -1721,7 +1790,7 @@ function renderFocusedDecision(
     }
   }
   if (status !== "resolved") {
-    lines.push("", `Act on it: grp choose <option> --decision=${seq}`);
+    lines.push("", `Act on it: ${grpCommand(`choose <option> --decision=${seq}`)}`);
   }
   lines.push("", "(focused read — your room position did not move)");
   return `${lines.join("\n")}\n`;
@@ -1753,8 +1822,8 @@ function hasRoomAction(response: Record<string, unknown>, action: string): boole
 }
 
 function appendDiscussGuidance(lines: string[], suffix: string): void {
-  const shortCommand = `grp discuss "..."${suffix}`;
-  const fileCommand = `grp discuss --file=PATH${suffix}`;
+  const shortCommand = grpCommand(`discuss "..."${suffix}`);
+  const fileCommand = grpCommand(`discuss --file=PATH${suffix}`);
   const commandWidth = Math.max(shortCommand.length, fileCommand.length) + 2;
   lines.push(
     `  ${shortCommand.padEnd(commandWidth)}short, shell-safe message`,
@@ -1767,10 +1836,10 @@ function appendIdleGuidance(
   response: Record<string, unknown>,
   room: string,
 ): void {
-  lines.push(`  Wait for what's next: grp watch${room}`);
+  lines.push(`  Wait for what's next: ${grpCommand(`watch${room}`)}`);
   appendDiscussGuidance(lines, room);
   if (hasRoomAction(response, "ask")) {
-    lines.push(`  Or ask the next question: grp ask "..."${room}`);
+    lines.push(`  Or ask the next question: ${grpCommand(`ask "..."${room}`)}`);
   }
 }
 
@@ -1802,7 +1871,7 @@ function renderRoomDelta(
   if (entries.length === 0) {
     lines.push(
       "",
-      `Nothing new since seq ${currentThrough ?? "?"}. Full picture: grp read --full${room}`,
+      `Nothing new since seq ${currentThrough ?? "?"}. Full picture: ${grpCommand(`read --full${room}`)}`,
     );
   } else {
     lines.push("", "New since your last read:");
@@ -1811,17 +1880,17 @@ function renderRoomDelta(
 
   lines.push("", "Next:");
   if (options.moreUnread) {
-    lines.push(`  More unread activity remains: grp read${room}`);
+    lines.push(`  More unread activity remains: ${grpCommand(`read${room}`)}`);
     lines.push("", `Current through seq ${currentThrough ?? "?"}.`);
     return `${lines.join("\n")}\n`;
   }
   const roomStatus = String(response.status ?? "open");
   const isObserver = callerRole(response, ref, env) === "observer";
   if (roomStatus === "concluded" || roomStatus === "expired") {
-    lines.push(`  Final record: grp outcome${room}`);
+    lines.push(`  Final record: ${grpCommand(`outcome${room}`)}`);
   } else if (isObserver) {
     lines.push("  You are an observer in this room: follow along; choosing is for participants.");
-    lines.push(`  Wait for what's next: grp watch${room}`);
+    lines.push(`  Wait for what's next: ${grpCommand(`watch${room}`)}`);
   } else if (yourStatus?.startsWith("you have not chosen")) {
     // Spec 112 (WR4-4b) — engagement, not speed: deliberate, then choose.
     lines.push(...choosingGuidance());
@@ -1830,18 +1899,18 @@ function renderRoomDelta(
       // your_status is the feature-detection signal. Teach the focused read
       // and selector loop instead of silently pointing at the oldest ballot.
       lines.push(
-        `  Review each owed thread: grp read --decision=N${room}`,
-        `  See a slate: grp options --decision=N${room}`,
-        `  Choose: grp choose "<option>" --decision=N${room}`,
+        `  Review each owed thread: ${grpCommand(`read --decision=N${room}`)}`,
+        `  See a slate: ${grpCommand(`options --decision=N${room}`)}`,
+        `  Choose: ${grpCommand(`choose "<option>" --decision=N${room}`)}`,
       );
     } else {
-      lines.push(`  Choose: grp choose "<option>"${room}`);
+      lines.push(`  Choose: ${grpCommand(`choose "<option>"${room}`)}`);
     }
-    lines.push(`  Then wait for what's next: grp watch${room}`);
+    lines.push(`  Then wait for what's next: ${grpCommand(`watch${room}`)}`);
   } else if (state === "no question open") {
     appendIdleGuidance(lines, response, room);
   } else {
-    lines.push(`  Wait for what's next: grp watch${room}`);
+    lines.push(`  Wait for what's next: ${grpCommand(`watch${room}`)}`);
   }
 
   if (entries.length > 0) {
@@ -1917,7 +1986,9 @@ function renderDeltaEntry(entry: Record<string, unknown>, room = ""): string[] {
     case "option_proposed": {
       const text = String(entry.option ?? "");
       const shown =
-        text.length > 300 ? `${text.slice(0, 300)}… (full: grp options --full${room})` : text;
+        text.length > 300
+          ? `${text.slice(0, 300)}… (full: ${grpCommand(`options --full${room}`)})`
+          : text;
       return [`  ${who} proposed: ${JSON.stringify(shown)}`];
     }
     case "decision_opened": {
@@ -1976,7 +2047,9 @@ function renderDeltaEntry(entry: Record<string, unknown>, room = ""): string[] {
         return [`  Decision resolved: ${JSON.stringify(question)} → ${label}`];
       }
       const winner =
-        rawWinner.length > 300 ? `${rawWinner.slice(0, 300)}… (full: grp outcome)` : rawWinner;
+        rawWinner.length > 300
+          ? `${rawWinner.slice(0, 300)}… (full: ${grpCommand("outcome")})`
+          : rawWinner;
       return [`  Decision resolved: ${JSON.stringify(question)} → ${winner}`];
     }
     case "joined":
@@ -2033,7 +2106,7 @@ async function roomJoin(
 function assertJoinTokenFlags(ref: RoomRef): void {
   if (!ref.invite && ref.token && looksLikeInviteToken(ref.token)) {
     throw new Error(
-      "That looks like an invite token. Join with `grp join <room-id> --invite <invite-token>`.",
+      `That looks like an invite token. Join with \`${grpCommand("join <room-id> --invite <invite-token>")}\`.`,
     );
   }
 }
@@ -2057,13 +2130,13 @@ function renderRoomJoined(ref: RoomRef, response: unknown, state: JoinedRoomStat
   else {
     lines.push(
       `Current room kept: ${state.currentSlug}.`,
-      `To switch: grp enter ${ref.baseUrl}/r/${encodeURIComponent(ref.slug)}`,
+      `To switch: ${grpCommand(`enter ${ref.baseUrl}/r/${encodeURIComponent(ref.slug)}`)}`,
     );
   }
   if (role) lines.push(`Role: ${role}.`);
   const readTarget =
     state.mode === "kept" ? ` ${ref.baseUrl}/r/${encodeURIComponent(ref.slug)}` : "";
-  lines.push("", "Run:", `  grp read${readTarget}`);
+  lines.push("", "Run:", `  ${grpCommand(`read${readTarget}`)}`);
   return `${lines.join("\n")}\n`;
 }
 
@@ -2192,7 +2265,7 @@ async function roomChoose(
     // Spec 152 W4 — when the server wants a map ballot, name the CLI form
     // here instead of sending the caller to help/trial-and-error.
     if (error instanceof Error && /requires a score\/allocation map ballot/.test(error.message)) {
-      throw new Error(`${error.message}\nTry: grp choose --scores="1=5,2=0" [room]`);
+      throw new Error(`${error.message}\nTry: ${grpCommand('choose --scores="1=5,2=0" [room]')}`);
     }
     throw error;
   }
@@ -2328,12 +2401,12 @@ async function roomOutcome(
         "",
         "Next:",
         "  Keep monitoring until the decision resolves.",
-        `  Wait for what's next: grp watch${room}`,
-        `  Check again: grp outcome${room}`,
+        `  Wait for what's next: ${grpCommand(`watch${room}`)}`,
+        `  Check again: ${grpCommand(`outcome${room}`)}`,
         "",
         "Available actions:",
-        `  grp read${room}`,
-        `  grp options${room}`,
+        `  ${grpCommand(`read${room}`)}`,
+        `  ${grpCommand(`options${room}`)}`,
       ].join("\n")}\n`,
     );
     return;
@@ -2367,7 +2440,7 @@ async function roomOutcome(
   if (receiptVerification?.status === "failed") {
     lines.push(
       `Verification: failed — ${receiptVerification.reason ?? "the signed record does not match this outcome"}`,
-      `Details: grp outcome --json — standalone verifier: ${ref.baseUrl}/receipt`,
+      `Details: ${grpCommand("outcome --json")} — standalone verifier: ${ref.baseUrl}/receipt`,
     );
   }
   // Spec 112 (WR4-6) — while the room stays open, the loop continues past
@@ -2376,7 +2449,7 @@ async function roomOutcome(
     const room = roomHintArg(String(response.slug ?? ref.slug), ref, io.env);
     lines.push(
       "",
-      `Room is still open. Next: grp read${room} — a new question may follow; stay with the room.`,
+      `Room is still open. Next: ${grpCommand(`read${room}`)} — a new question may follow; stay with the room.`,
     );
   }
   io.stdout(`${lines.join("\n")}\n`);
@@ -2714,7 +2787,7 @@ async function roomInvite(
     io.stdout(renderJson(response));
     return;
   }
-  io.stdout(renderCreatedInvite(response, ref));
+  io.stdout(renderCreatedInvite(response, ref, io.env));
 }
 
 async function roomInviteList(
@@ -2891,6 +2964,13 @@ async function fetchAllRoomEvents(
  * my-turn spellings stay as silent, undocumented aliases.
  */
 const NEEDED_UNTIL_VALUES = new Set(["needed", "my-turn", "my_turn"]);
+const FUTURE_RESOLVED_UNTIL_VALUES = new Set([
+  "next-resolved",
+  "complete",
+  "decision.completed",
+  "closed",
+  "room.concluded",
+]);
 
 /** Spec 113 — the substantive event types that wake a bare `grp watch`.
  * decision.voting_phase_started folds into the decision-opened wake. */
@@ -2946,6 +3026,13 @@ async function roomWatch(
     // floor). It never advances the mark: no event seq is involved.
     await watchUntilNeeded(ref, flags, io);
     return;
+  }
+  if (flags.until === "resolved") {
+    const resolved = await watchResolutionAtStart(ref, flags, io);
+    if (resolved) {
+      io.stdout(resolved);
+      return;
+    }
   }
 
   // Spec 113 item 2 — unified watch. Bare `grp watch` blocks until the first
@@ -3017,13 +3104,13 @@ async function roomWatch(
     const tail = watchTimeoutTail(room, watchPhase.closesInSeconds);
     if (watchPhase.phase === "no_question") {
       io.stdout(
-        `Nothing new after ${wake.seconds}s \u2014 no question is open; anyone may grp ask "..."${room} \u2014 or ${tail}.\n`,
+        `Nothing new after ${wake.seconds}s \u2014 no question is open; anyone may ${grpCommand(`ask "..."${room}`)} \u2014 or ${tail}.\n`,
       );
       return;
     }
     if (watchPhase.phase === "agreement") {
       io.stdout(
-        `Nothing new after ${wake.seconds}s \u2014 an agreement question is open: grp accept N${room} when an option works, or propose/discuss to move it \u2014 ${tail}.\n`,
+        `Nothing new after ${wake.seconds}s \u2014 an agreement question is open: ${grpCommand(`accept N${room}`)} when an option works, or propose/discuss to move it \u2014 ${tail}.\n`,
       );
       return;
     }
@@ -3055,6 +3142,69 @@ async function roomWatch(
     persistLastSeenSeq(ref, fullContentWake ? wake.event.seq : wake.event.seq - 1, io.env);
   }
   io.stdout(await renderEventWake(wake, ref, flags, io, room));
+}
+
+/**
+ * `--until=resolved` is state-aware: if the room is already at a resolved
+ * boundary, report that boundary immediately. A room with any open decision
+ * keeps waiting even when an older decision is resolved. `next-resolved`
+ * deliberately skips this preflight and retains the future-event behavior.
+ */
+async function watchResolutionAtStart(
+  ref: RoomRef,
+  flags: Record<string, string>,
+  io: RoomCliIo,
+): Promise<string | null> {
+  const options = readRequestOptions(ref, flags, io.env);
+  options.query = { ...(options.query ?? {}), include: "full" };
+  const response = await requestJson<Record<string, unknown>>(
+    ref.baseUrl,
+    `/api/rooms/${encodeURIComponent(ref.slug)}`,
+    io,
+    options,
+  );
+  const status = stringOrNull(response.status);
+  const room = roomHintArg(String(response.slug ?? ref.slug), ref, io.env);
+  if (
+    status === "concluded" ||
+    status === "closed" ||
+    status === "expired" ||
+    stringOrNull(response.concluded_at) !== null
+  ) {
+    return `Room already concluded.\n\nNext:\n  ${grpCommand(`outcome${room}`)}\n`;
+  }
+
+  const decisions: Record<string, unknown>[] = [];
+  const addDecision = (value: unknown) => {
+    if (isRecord(value) && !decisions.includes(value)) decisions.push(value);
+  };
+  addDecision(response.decision);
+  addDecision(response.active_decision);
+  if (Array.isArray(response.decisions_open)) response.decisions_open.forEach(addDecision);
+  if (Array.isArray(response.decisions)) response.decisions.forEach(addDecision);
+  const isResolved = (decision: Record<string, unknown>) =>
+    stringOrNull(decision.status) === "resolved" ||
+    stringOrNull(decision.resolved_at) !== null ||
+    stringOrNull(decision.receipt_hash) !== null;
+  if (decisions.some((decision) => !isResolved(decision))) return null;
+
+  const hasResolvedDecision =
+    decisions.some(isResolved) ||
+    (Array.isArray(response.decided) && response.decided.some(isRecord)) ||
+    status === "resolved";
+  if (!hasResolvedDecision) return null;
+  const latest = latestOutcome(response);
+  const projected = decisions.filter(isResolved).at(-1);
+  const winner =
+    latest?.winner ??
+    latest?.outcome ??
+    (projected
+      ? (stringOrNull(projected.resolved_winner) ??
+        stringOrNull(projected.winner) ??
+        stringOrNull(projected.resolved_outcome) ??
+        stringOrNull(projected.outcome))
+      : null);
+  return `${winner ? `Decision already resolved: "${winner}"` : "Decision already resolved."}\n\nNext:\n  ${grpCommand(`outcome${room}`)}\n`;
 }
 
 /**
@@ -3228,8 +3378,8 @@ function renderNeedsYouWake(
       `Your question resolved: "${question ?? "the decision you opened"}"`,
       "",
       "Next:",
-      `  grp read${room}`,
-      `  grp ask "..."${room} — or grp outcome${room}`,
+      `  ${grpCommand(`read${room}`)}`,
+      `  ${grpCommand(`ask "..."${room}`)} — or ${grpCommand(`outcome${room}`)}`,
       "",
     ].join("\n");
   }
@@ -3240,8 +3390,8 @@ function renderNeedsYouWake(
     `The room needs you: "${question ?? "a decision needs your choice"}"${deadline ? ` — ${deadline}` : ""}`,
     "",
     "Next:",
-    `  grp read${room}`,
-    `  grp choose "<option>"${room}`,
+    `  ${grpCommand(`read${room}`)}`,
+    `  ${grpCommand(`choose "<option>"${room}`)}`,
     "",
   ].join("\n");
 }
@@ -3260,7 +3410,7 @@ async function renderEventWake(
   const event = wake.event;
   const type = event?.event_type ?? wake.stopEvent ?? "";
   if (type === "room.concluded") {
-    return `Room concluded.\n\nNext:\n  grp outcome${room}\n`;
+    return `Room concluded.\n\nNext:\n  ${grpCommand(`outcome${room}`)}\n`;
   }
   let reason = "The room has new activity.";
   if (type === "decision.completed") {
@@ -3294,7 +3444,7 @@ async function renderEventWake(
     const who = entry ? stringOrNull(entry.who) : null;
     reason = who ? `${who} posted discussion.` : "New discussion posted.";
   }
-  return `${reason}\n\nNext:\n  grp read${room}\n`;
+  return `${reason}\n\nNext:\n  ${grpCommand(`read${room}`)}\n`;
 }
 
 /** Best-effort lookup of the wake event's delta entry (for names/questions
@@ -3360,7 +3510,7 @@ async function watchUntilNeeded(
   const auth = authFromFlags(flags, ref, io.env);
   if (!auth) {
     throw new Error(
-      "Waiting for the room needs your room credentials. Join first: grp join <room-id>",
+      `Waiting for the room needs your room credentials. Join first: ${grpCommand("join <room-id>")}`,
     );
   }
   // Spec 125 — --timeout was silently IGNORED on this branch (it lived only
@@ -3377,9 +3527,9 @@ async function watchUntilNeeded(
       const tail = watchTimeoutTail(room, info.closesInSeconds);
       io.stdout(
         info.phase === "no_question"
-          ? `Nothing new after ${timeoutSeconds}s — no question is open; anyone may grp ask "..."${room} — or ${tail}.\n`
+          ? `Nothing new after ${timeoutSeconds}s — no question is open; anyone may ${grpCommand(`ask "..."${room}`)} — or ${tail}.\n`
           : info.phase === "agreement"
-            ? `Nothing new after ${timeoutSeconds}s — an agreement question is open: grp accept N${room} when an option works, or propose/discuss to move it — ${tail}.\n`
+            ? `Nothing new after ${timeoutSeconds}s — an agreement question is open: ${grpCommand(`accept N${room}`)} when an option works, or propose/discuss to move it — ${tail}.\n`
             : `Nothing new after ${timeoutSeconds}s — ${tail}.\n`,
       );
       return;
@@ -3608,8 +3758,7 @@ function soonestOpenDeadlineSeconds(response: Record<string, unknown>): number |
  * anchoring value (a static 1800 was rejected as overfit to one trial's
  * cadence). */
 function watchTimeoutTail(room: string, closesInSeconds: number | null): string {
-  const returnLater =
-    "or return later using your agent runtime's scheduling tools, then run grp inbox";
+  const returnLater = `or return later using your agent runtime's scheduling tools, then run ${grpCommand("inbox")}`;
   if (closesInSeconds !== null) {
     const timeout = Math.max(60, Math.ceil(closesInSeconds / 60) * 60);
     const human =
@@ -3618,9 +3767,9 @@ function watchTimeoutTail(room: string, closesInSeconds: number | null): string 
         : closesInSeconds < 7200
           ? `${Math.round(closesInSeconds / 60)}m`
           : `${Math.round(closesInSeconds / 3600)}h`;
-    return `the open question closes in ~${human} — grp watch --timeout=${timeout}${room} covers it; ${returnLater}`;
+    return `the open question closes in ~${human} — ${grpCommand(`watch --timeout=${timeout}${room}`)} covers it; ${returnLater}`;
   }
-  return `stay armed through quiet stretches with grp watch --timeout=N${room} (seconds), or run grp watch${room} again; ${returnLater}`;
+  return `stay armed through quiet stretches with ${grpCommand(`watch --timeout=N${room}`)} (seconds), or run ${grpCommand(`watch${room}`)} again; ${returnLater}`;
 }
 
 async function fetchWatchHeadSeq(
@@ -3943,12 +4092,7 @@ function shouldStopWatching(
   const until = flags.until;
   if (!until) return false;
   if (!isRoomEvent(payload)) return false;
-  const stopOnResolved =
-    until === "resolved" ||
-    until === "complete" ||
-    until === "decision.completed" ||
-    until === "closed" ||
-    until === "room.concluded";
+  const stopOnResolved = until === "resolved" || FUTURE_RESOLVED_UNTIL_VALUES.has(until);
   if (!stopOnResolved) return false;
   const isStopEvent =
     payload.event_type === "decision.completed" || payload.event_type === "room.concluded";
@@ -4103,33 +4247,37 @@ function renderOptions(
     }
   }
   if (clipped) {
-    lines.push("", `Long options clipped — full text: grp options --full${decision}${room}`);
+    lines.push(
+      "",
+      `Long options clipped — full text: ${grpCommand(`options --full${decision}${room}`)}`,
+    );
   }
   lines.push("", "Available actions:");
   const phase = String(state.phase ?? "unknown");
   if (phase === "resolved") {
-    lines.push(`  grp read${decision}${room}`, `  grp outcome${room}`);
+    lines.push(`  ${grpCommand(`read${decision}${room}`)}`, `  ${grpCommand(`outcome${room}`)}`);
     return `${lines.join("\n")}\n`;
   }
-  if (state.proposal_status === "open") lines.push(`  grp propose "..."${decision}${room}`);
+  if (state.proposal_status === "open")
+    lines.push(`  ${grpCommand(`propose "..."${decision}${room}`)}`);
   // start-choosing still selects by decision UUID on the wire. Do not emit a
   // targetless command from a seq-focused slate; the proposal timer remains
   // the safe backstop until that separate selector surface is ruled.
   if (state.can_start_choosing === true && focusedSeq === undefined) {
-    lines.push(`  grp start choosing${room}`);
+    lines.push(`  ${grpCommand(`start choosing${room}`)}`);
   }
   if (phase !== "proposing") {
     lines.push(`  ${choiceCommand(state.choice_mode, decision, room)}`);
     const focused = isRecord(response.decision) ? response.decision : activeDecision(response);
     if (focused?.agreement !== true) {
-      lines.push(`  grp abstain --reason="..."${decision}${room}`);
+      lines.push(`  ${grpCommand(`abstain --reason="..."${decision}${room}`)}`);
     }
   }
   appendDiscussGuidance(lines, `${decision}${room}`);
   if (state.proposal_status === "open") {
     lines.push(
       "",
-      `Note: propose an option's full text; commentary goes in grp discuss "..."${decision}${room}.`,
+      `Note: propose an option's full text; commentary goes in ${grpCommand(`discuss "..."${decision}${room}`)}.`,
     );
   }
   return `${lines.join("\n")}\n`;
@@ -4179,7 +4327,7 @@ function renderMemberRoleUpdated(
     "member";
   const role = stringOrNull(participant.role) ?? "unknown";
   const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
-  return `Updated ${name}: ${role}.\n\nRun:\n  grp members${room}\n`;
+  return `Updated ${name}: ${role}.\n\nRun:\n  ${grpCommand(`members${room}`)}\n`;
 }
 
 function renderSettings(response: Record<string, unknown>, ref: RoomRef): string {
@@ -4194,7 +4342,7 @@ function renderSettings(response: Record<string, unknown>, ref: RoomRef): string
   // in any transcript.
   if (config.mechanism === "simple_majority" || config.mechanism === "supermajority") {
     lines.push(
-      'Agreement questions: supported — grp ask --agreement "..." resolves only when every eligible voter accepts the same option (grp accept N to accept).',
+      `Agreement questions: supported — ${grpCommand('ask --agreement "..."')} resolves only when every eligible voter accepts the same option (${grpCommand("accept N")} to accept).`,
     );
   }
   lines.push(
@@ -4232,7 +4380,11 @@ function renderSettingsUpdated(response: Record<string, unknown>, ref: RoomRef):
   return `${lines.join("\n")}\n`;
 }
 
-function renderCreatedInvite(response: Record<string, unknown>, ref: RoomRef): string {
+function renderCreatedInvite(
+  response: Record<string, unknown>,
+  ref: RoomRef,
+  env: Record<string, string | undefined>,
+): string {
   const invite = isRecord(response.invite) ? response.invite : {};
   const about = stringOrNull(response.about);
   const label = stringOrNull(invite.label) ?? "unnamed";
@@ -4254,7 +4406,11 @@ function renderCreatedInvite(response: Record<string, unknown>, ref: RoomRef): s
   const pasteBlock =
     stringOrNull(response.paste_block) ??
     buildInvitePasteBlock(about, ref.baseUrl, joinCommand, label, role);
-  const lines = [`Invite created for ${label}`, `Code: ${code}`, `Role: ${role} (${expected})`];
+  const lines = [
+    `Invite created for ${label}`,
+    `Management code (list/revoke): ${code}`,
+    `Role: ${role} (${expected})`,
+  ];
   // Spec 111 (WR3-1) — observer stays an operator-level concept: the one
   // prominence surface is right here, where the admin just picked a role.
   if (role === "participant") {
@@ -4262,9 +4418,10 @@ function renderCreatedInvite(response: Record<string, unknown>, ref: RoomRef): s
   }
   lines.push(`Binding: ${binding}`);
   lines.push(
+    "Secret join credential: included only in the paste block below.",
     "Credential warning: this invite can recover its named seat even after acceptance.",
     "Keep it out of recordings, screenshots, transcripts, logs, and browser URLs.",
-    `If exposed, revoke it with: grp invite revoke ${code}`,
+    `If exposed, revoke it with: ${grpCommand(`invite revoke ${code}${roomHintArg(ref.slug, ref, env)}`)}`,
   );
   const joinUrl = credentialFreeRoomUrl(stringOrNull(response.join_url));
   if (joinUrl) {
@@ -4345,7 +4502,7 @@ function renderInviteList(
   if (invites.length === 0) {
     const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
     lines.push("No named invites yet.", "", "Create one:");
-    lines.push(`  grp invite --name <name>${room}`);
+    lines.push(`  ${grpCommand(`invite --name <name>${room}`)}`);
     return `${lines.join("\n")}\n`;
   }
   for (const invite of invites) {
@@ -4424,7 +4581,7 @@ function renderRoomRead(
     lines.push("", "No active question yet.", "", "Next:");
     const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
     if (isObserver) {
-      lines.push(`  Watch for the next question: grp watch${room}`);
+      lines.push(`  Watch for the next question: ${grpCommand(`watch${room}`)}`);
     } else {
       appendIdleGuidance(lines, response, room);
     }
@@ -4435,37 +4592,42 @@ function renderRoomRead(
   const roomStatus = String(response.status ?? "open");
   const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
   if (roomStatus === "concluded" || roomStatus === "expired") {
-    lines.push(`  grp outcome${room}`, `  grp members${room}`);
+    lines.push(`  ${grpCommand(`outcome${room}`)}`, `  ${grpCommand(`members${room}`)}`);
   } else if (isObserver) {
     lines.push(
-      `  grp read${room}`,
-      `  grp watch${room}`,
-      `  grp outcome${room}`,
-      `  grp members${room}`,
+      `  ${grpCommand(`read${room}`)}`,
+      `  ${grpCommand(`watch${room}`)}`,
+      `  ${grpCommand(`outcome${room}`)}`,
+      `  ${grpCommand(`members${room}`)}`,
     );
   } else {
-    lines.push(`  grp invite${room}`, `  grp members${room}`, `  grp settings${room}`);
+    lines.push(
+      `  ${grpCommand(`invite${room}`)}`,
+      `  ${grpCommand(`members${room}`)}`,
+      `  ${grpCommand(`settings${room}`)}`,
+    );
     if (state.question) {
       const phase = String(state.phase ?? "unknown");
       const multiOpen =
         Array.isArray(response.decisions_open) && response.decisions_open.length > 1;
       const decisionArg = multiOpen ? " --decision=N" : "";
-      if (multiOpen) lines.push(`  grp read --decision=N${room}`);
-      if (state.proposal_status === "open") lines.push(`  grp propose "..."${decisionArg}${room}`);
+      if (multiOpen) lines.push(`  ${grpCommand(`read --decision=N${room}`)}`);
+      if (state.proposal_status === "open")
+        lines.push(`  ${grpCommand(`propose "..."${decisionArg}${room}`)}`);
       if (state.can_start_choosing === true && !multiOpen)
-        lines.push(`  grp start choosing${room}`);
+        lines.push(`  ${grpCommand(`start choosing${room}`)}`);
       if (phase !== "proposing") {
         lines.push(`  ${choiceCommand(state.choice_mode, decisionArg, room)}`);
         if (decision?.agreement !== true) {
-          lines.push(`  grp abstain --reason="..."${decisionArg}${room}`);
+          lines.push(`  ${grpCommand(`abstain --reason="..."${decisionArg}${room}`)}`);
         }
       }
-      lines.push(`  grp options${decisionArg}${room}`);
+      lines.push(`  ${grpCommand(`options${decisionArg}${room}`)}`);
       appendDiscussGuidance(lines, `${decisionArg}${room}`);
     } else {
-      lines.push(`  grp watch${room}`);
+      lines.push(`  ${grpCommand(`watch${room}`)}`);
       appendDiscussGuidance(lines, room);
-      if (hasRoomAction(response, "ask")) lines.push(`  grp ask "..."${room}`);
+      if (hasRoomAction(response, "ask")) lines.push(`  ${grpCommand(`ask "..."${room}`)}`);
     }
   }
   return `${lines.join("\n")}\n`;
@@ -4492,7 +4654,8 @@ function appendDiscussion(lines: string[], response: Record<string, unknown>): v
     for (const restLine of restLines) lines.push(`    ${restLine}`);
   }
   const earlier = numberOrNull(response.discussion_earlier);
-  if (earlier !== null && earlier > 0) lines.push(`  (+${earlier} earlier — grp timeline)`);
+  if (earlier !== null && earlier > 0)
+    lines.push(`  (+${earlier} earlier — ${grpCommand("timeline")})`);
 }
 
 /**
@@ -4509,8 +4672,8 @@ function appendObserverGuidance(
   lines.push("", "Next:");
   lines.push("  You are an observer in this room: follow along; choosing is for participants.");
   // Spec 113 — watch wakes observers too (any activity by others).
-  lines.push(`  Wait for what's next: grp watch${room}`);
-  lines.push(`  Check the result: grp outcome${room}`);
+  lines.push(`  Wait for what's next: ${grpCommand(`watch${room}`)}`);
+  lines.push(`  Check the result: ${grpCommand(`outcome${room}`)}`);
 }
 
 /**
@@ -4556,20 +4719,20 @@ function appendOpenDecisionGuidance(
     // Spec 145 (F144-S2) — the projection is the oldest open decision, but
     // the obligations are plural. Keep every act explicitly thread-scoped.
     lines.push(
-      `  Review each open thread: grp read --decision=N${room}`,
-      `  See its slate: grp options --decision=N${room}`,
-      `  Act in that thread using the ballot form shown by grp options --decision=N${room}; discussion and proposals stay thread-scoped too.`,
-      `  Then wait for what's next: grp watch${room}`,
+      `  Review each open thread: ${grpCommand(`read --decision=N${room}`)}`,
+      `  See its slate: ${grpCommand(`options --decision=N${room}`)}`,
+      `  Act in that thread using the ballot form shown by ${grpCommand(`options --decision=N${room}`)}; discussion and proposals stay thread-scoped too.`,
+      `  Then wait for what's next: ${grpCommand(`watch${room}`)}`,
     );
     return;
   }
   if (phase === "proposing") {
     lines.push("  Build the option slate through the room.");
     lines.push("  Propose the full option text; keep commentary in the room discussion.");
-    lines.push(`  Propose next: grp propose "..."${room}`);
+    lines.push(`  Propose next: ${grpCommand(`propose "..."${room}`)}`);
     appendDiscussGuidance(lines, room);
     if (state.can_start_choosing === true) {
-      lines.push(`  When the slate is ready: grp start choosing${room}`);
+      lines.push(`  When the slate is ready: ${grpCommand(`start choosing${room}`)}`);
     }
     return;
   }
@@ -4581,7 +4744,7 @@ function appendOpenDecisionGuidance(
       lines.push(`  If you have not responded yet: ${choiceCommand(state.choice_mode, "", room)}`);
       const active = activeDecision(response);
       if (active?.agreement !== true) {
-        lines.push(`  Or formally abstain: grp abstain --reason="..."${room}`);
+        lines.push(`  Or formally abstain: ${grpCommand(`abstain --reason="..."${room}`)}`);
       }
     }
     if (state.proposal_status === "open") {
@@ -4589,22 +4752,22 @@ function appendOpenDecisionGuidance(
         "  If context or options are drifting, add to the discussion or propose another option:",
       );
       appendDiscussGuidance(lines, room);
-      lines.push(`  grp propose "..."${room}`);
+      lines.push(`  ${grpCommand(`propose "..."${room}`)}`);
     }
     // Spec 113 — ONE wait: watch wakes on any activity by others, and always
     // when the room needs your choice. No resolved/needed split to pick.
-    lines.push(`  Wait for what's next: grp watch${room}`);
+    lines.push(`  Wait for what's next: ${grpCommand(`watch${room}`)}`);
     return;
   }
   if (!progress.hasProgress) {
     lines.push("  Continue through the room until an outcome exists.");
-    lines.push(`  Wait for what's next: grp watch${room}`);
-    lines.push(`  Check the result: grp outcome${room}`);
+    lines.push(`  Wait for what's next: ${grpCommand(`watch${room}`)}`);
+    lines.push(`  Check the result: ${grpCommand(`outcome${room}`)}`);
     return;
   }
   lines.push("  Choices are in or the room is still updating.");
-  lines.push(`  Wait for what's next: grp watch${room}`);
-  lines.push(`  Check the result: grp outcome${room}`);
+  lines.push(`  Wait for what's next: ${grpCommand(`watch${room}`)}`);
+  lines.push(`  Check the result: ${grpCommand(`outcome${room}`)}`);
 }
 
 /** Spec 147 (F146-S2) — mechanism-neutral and honest under early close. */
@@ -4761,9 +4924,9 @@ function choiceMode(response: Record<string, unknown>): string | null {
     case "ranked_pairwise":
       return "ranked (best first)";
     case "score_vote":
-      return "score map (grp choose --scores=1=5,2=0)";
+      return `score map (${grpCommand("choose --scores=1=5,2=0")})`;
     case "quadratic_vote":
-      return "quadratic credits (grp choose --scores=1=4,2=1)";
+      return `quadratic credits (${grpCommand("choose --scores=1=4,2=1")})`;
     case "simple_majority":
     case "supermajority":
     case "plurality":
@@ -4776,21 +4939,21 @@ function choiceMode(response: Record<string, unknown>): string | null {
 function choiceCommand(mode: unknown, decision = "", room = ""): string {
   const label = typeof mode === "string" ? mode : "";
   if (label.startsWith("score map")) {
-    return `grp choose --scores=1=5,2=0${decision}${room}`;
+    return grpCommand(`choose --scores=1=5,2=0${decision}${room}`);
   }
   if (label.startsWith("quadratic credits")) {
-    return `grp choose --scores=1=4,2=1${decision}${room}`;
+    return grpCommand(`choose --scores=1=4,2=1${decision}${room}`);
   }
   if (label.startsWith("approval")) {
-    return `grp choose --choices=1,3${decision}${room}`;
+    return grpCommand(`choose --choices=1,3${decision}${room}`);
   }
   if (label.startsWith("ranked")) {
-    return `grp choose --choices=2,1,3${decision}${room}`;
+    return grpCommand(`choose --choices=2,1,3${decision}${room}`);
   }
   if (label === "single choice") {
-    return `grp choose 2${decision}${room}`;
+    return grpCommand(`choose N${decision}${room}`);
   }
-  return `grp options --full${decision}${room}  # host did not report the ballot shape`;
+  return `${grpCommand(`options --full${decision}${room}`)}  # host did not report the ballot shape`;
 }
 
 function proposalStatus(decision: Record<string, unknown>): "open" | "closed" | "unknown" {
@@ -4914,7 +5077,7 @@ function renderQuestionOpened(
   ];
   if (agreement) {
     lines.push(
-      `It resolves only when every voter accepts the same option — disagreement never ends it early. Propose, discuss, revise; grp accept N${room} when an option works.`,
+      `It resolves only when every voter accepts the same option — disagreement never ends it early. Propose, discuss, revise; ${grpCommand(`accept N${room}`)} when an option works.`,
     );
   }
   if (stringOrNull(decision.status) === "proposing") {
@@ -4923,8 +5086,8 @@ function renderQuestionOpened(
   lines.push(
     "",
     "Next:",
-    `  Read the room: grp read${room}`,
-    `  Wait for what's next: grp watch${room}`,
+    `  Read the room: ${grpCommand(`read${room}`)}`,
+    `  Wait for what's next: ${grpCommand(`watch${room}`)}`,
   );
   return `${lines.join("\n")}\n`;
 }
@@ -4955,8 +5118,8 @@ function renderOptionProposed(
     lines.push(
       "",
       "Next:",
-      `  See the slate: grp options${room}`,
-      `  Choices are open — cast or revise yours: grp choose N${room}`,
+      `  See the slate: ${grpCommand(`options${room}`)}`,
+      `  Choices are open — cast or revise yours: ${grpCommand(`choose N${room}`)}`,
     );
   } else {
     // Spec 116 (WR8-5) — during the slate phase the gate is start choosing,
@@ -4965,8 +5128,8 @@ function renderOptionProposed(
     lines.push(
       "",
       "Next:",
-      `  See the slate: grp options${room}`,
-      `  When the slate is ready: grp start choosing${room}`,
+      `  See the slate: ${grpCommand(`options${room}`)}`,
+      `  When the slate is ready: ${grpCommand(`start choosing${room}`)}`,
     );
   }
   return `${lines.join("\n")}\n`;
@@ -4975,7 +5138,7 @@ function renderOptionProposed(
 function renderDiscussionPosted(ref: RoomRef, env: Record<string, string | undefined>): string {
   const room = roomHintArg(ref.slug, ref, env);
   const destination = room ? ` Room: ${ref.slug}.` : "";
-  return `Discussion posted.${destination}\n\nNext:\n  Read the room: grp read${room}\n  If more work may follow: grp watch${room}\n`;
+  return `Discussion posted.${destination}\n\nNext:\n  Read the room: ${grpCommand(`read${room}`)}\n  If more work may follow: ${grpCommand(`watch${room}`)}\n`;
 }
 
 function renderChoosingStarted(
@@ -4998,8 +5161,8 @@ function renderChoosingStarted(
   lines.push(
     "",
     "Next:",
-    `  Submit your choice: grp choose "<option>"${room}`,
-    `  See the options: grp options${room}`,
+    `  Submit your choice: ${grpCommand(`choose "<option>"${room}`)}`,
+    `  See the options: ${grpCommand(`options${room}`)}`,
   );
   return `${lines.join("\n")}\n`;
 }
@@ -5033,7 +5196,7 @@ function renderChoiceRecorded(
   ];
   if (agreement && !resolved) {
     lines.push(
-      "The question resolves when every voter accepts the same option; grp read shows where others stand. You can revise until it seals.",
+      `The question resolves when every voter accepts the same option; ${grpCommand("read")} shows where others stand. You can revise until it seals.`,
     );
   }
   // Spec 115 — the settle window at the moment it matters.
@@ -5051,12 +5214,12 @@ function renderChoiceRecorded(
     lines.push(
       "",
       "Next:",
-      `  See the outcome: grp outcome${room}`,
-      `  Then wait for what's next: grp watch${room}`,
+      `  See the outcome: ${grpCommand(`outcome${room}`)}`,
+      `  Then wait for what's next: ${grpCommand(`watch${room}`)}`,
     );
   } else {
     // Spec 113 — the loop is watch → read → act → watch: one wait, no modes.
-    lines.push("", "Next:", `  Wait for what's next: grp watch${room}`);
+    lines.push("", "Next:", `  Wait for what's next: ${grpCommand(`watch${room}`)}`);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -5069,7 +5232,7 @@ function renderRoomClosed(
   const record = isRecord(response) ? response : {};
   const room = roomHintArg(String(record.slug ?? ref.slug), ref, env);
   const destination = roomHintArg(ref.slug, ref, env) ? ` Room: ${ref.slug}.` : "";
-  return `Room closed.${destination}\n\nNext:\n  Final record: grp outcome${room}\n`;
+  return `Room closed.${destination}\n\nNext:\n  Final record: ${grpCommand(`outcome${room}`)}\n`;
 }
 
 function writeDestinationNote(ref: RoomRef, env: Record<string, string | undefined>): string {
@@ -5213,7 +5376,7 @@ function parseScoresFlag(raw: string): Record<string, number> {
     const m = /^#?(\d{1,4})\s*=\s*(\d+(?:\.\d+)?)$/.exec(pair);
     if (!m) {
       throw new Error(
-        `--scores entry "${pair}" must be option-number=score (numbers only, e.g. 1=5); run grp options to see the numbered slate`,
+        `--scores entry "${pair}" must be option-number=score (numbers only, e.g. 1=5); run ${grpCommand("options")} to see the numbered slate`,
       );
     }
     const key = String(Number(m[1]));
@@ -5457,7 +5620,7 @@ function targetAndTextArg(
     throw new Error(
       [
         "No current room.",
-        "Run `grp enter <room-id>` first, or pass a room URL/slug and the required text flag.",
+        `Run \`${grpCommand("enter <room-id>")}\` first, or pass a room URL/slug and the required text flag.`,
       ].join(" "),
     );
   }
@@ -5548,7 +5711,10 @@ function targetOrCurrent(
 ): string {
   if (target) return target;
   const current = resolveCurrentRoomRef(flags, io.env);
-  if (!current) throw new Error("room URL or slug is required; or run `grp enter <room-url|slug>`");
+  if (!current)
+    throw new Error(
+      `room URL or slug is required; or run \`${grpCommand("enter <room-url|slug>")}\``,
+    );
   return `${current.baseUrl}/r/${encodeURIComponent(current.slug)}`;
 }
 
@@ -5603,7 +5769,7 @@ function formatJsonError(
     (status === 403 && /^join required\b/i.test(err.message));
   if (joinRequired) {
     const slug = roomSlugFromApiUrl(requestUrl);
-    const join = slug ? `grp join ${slug}` : "grp join <room-id>";
+    const join = grpCommand(slug ? `join ${slug}` : "join <room-id>");
     return [
       `${message} (HTTP ${status})`,
       "This room needs you to join before reading or acting.",
@@ -5616,9 +5782,11 @@ function formatJsonError(
   // the CLI maps stable codes back to grp commands.
   const slug = roomSlugFromApiUrl(requestUrl);
   if (err.code === "decision.proposing") {
-    lines.push(`When the option list is ready: grp start choosing${slug ? ` ${slug}` : ""}`);
+    lines.push(
+      `When the option list is ready: ${grpCommand(`start choosing${slug ? ` ${slug}` : ""}`)}`,
+    );
   } else if (err.code === "room.concluded") {
-    lines.push(`Final record: grp outcome${slug ? ` ${slug}` : ""}`);
+    lines.push(`Final record: ${grpCommand(`outcome${slug ? ` ${slug}` : ""}`)}`);
   } else if (err.code === "participant.token_superseded") {
     // Spec 139 (C3) — seats are single-session (spec 119): a rotated
     // credential means another session of the same principal holds the seat
@@ -5626,7 +5794,7 @@ function formatJsonError(
     // how two sessions of one principal end up in a credential war.
     lines.push(
       "Another session of your principal holds this seat now. Stand down — do not re-join automatically; treat this room as handled elsewhere.",
-      `To deliberately take the seat back: grp join${slug ? ` ${slug}` : " <room-id>"} --invite <invite-token>`,
+      `To deliberately take the seat back: ${grpCommand(`join${slug ? ` ${slug}` : " <room-id>"} --invite <invite-token>`)}`,
     );
   }
   return lines.join("\n");
@@ -5826,6 +5994,11 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
     usage: "grp rooms [--json]",
     summary: "List rooms remembered by this local session without printing credentials or content.",
   },
+  forget: {
+    usage: "grp forget <room> [--host=NAME|--base=URL]",
+    summary:
+      "Remove one room from this local session's memory. This never contacts or deletes the hosted room.",
+  },
   inbox: {
     usage: "grp inbox [--json]",
     summary:
@@ -5894,7 +6067,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "--scores=1=5,2=0 score map for score/quadratic rooms (option number = score)",
       "--decision=N     target decision N (the seq in grp read); default: the open decision",
     ],
-    example: 'grp choose 2 --why="Best fit"',
+    example: 'grp choose "Tamarind Table at 7:30" --why="Best fit"',
   },
   abstain: {
     usage: 'grp abstain --reason="..." [room]',
@@ -5930,7 +6103,9 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "Block until something happens: any activity by others, or the room needing your choice — then exit with the reason. An open decision waiting on YOUR choice always wakes you, whatever filter is set.",
     flags: [
       "--timeout=N      quiet-time bound in seconds (default 110; 0 waits indefinitely)",
-
+      "--until=resolved report immediately if already resolved; otherwise wait for resolution",
+      "--until=next-resolved wait only for a future decision resolution or room conclusion",
+      "--until=needed   wait until the room needs your choice",
       "--jsonl          raw event stream (never moves your read position)",
     ],
     example: "grp watch",
@@ -5998,6 +6173,7 @@ function printRoomHelp(write: (text: string) => void): void {
       "  enter          set the current room context",
       "  current        print the current room context",
       "  rooms          list locally remembered rooms",
+      "  forget         remove a room from local memory (never deletes it remotely)",
       "  inbox          check remembered rooms for attention",
       "  leave          clear the current room context",
       "  read           read the room (new activity since your last read)",
