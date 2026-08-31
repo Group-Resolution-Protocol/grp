@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   publicKeyFromJwks,
@@ -24,6 +25,7 @@ import {
   setRoomCoordinationStateCapability,
   setRoomLastSeenSeq,
   setRoomObservedStateRevision,
+  setRoomStaleWriteRecovery,
   updateProviderConfig,
 } from "./provider-config.js";
 import { type CliCreateAccess, resolveCliCreateAccess } from "./room-access.js";
@@ -49,6 +51,9 @@ export interface RoomCliIo {
   stderr: (text: string) => void;
   stdin: NodeJS.ReadableStream;
   isInteractive: boolean;
+  /** Whether the real stdout is a terminal. Test/embed callers that provide a
+   * custom writer default to true unless they override this explicitly. */
+  stdoutIsTTY?: boolean;
   fetch: typeof fetch;
   env: Record<string, string | undefined>;
   /** Test/embedding override; normal CLI use resolves from process.cwd(). */
@@ -81,6 +86,13 @@ class RoomStateChangedError extends Error {
   readonly code = "state.precondition_failed";
   readonly status = 412;
   readonly posted = false;
+  forceAvailable = false;
+  catchUp?: {
+    response?: Record<string, unknown>;
+    rendered?: string;
+    complete: boolean;
+    error?: string;
+  };
 
   constructor(
     readonly expectedRevision: string,
@@ -240,8 +252,8 @@ const MUTABLE_SETTING_KEYS = [
 ];
 
 // Spec 147 (F146-S1) — these flags have a meaningful bare form. They must
-// never consume a following room slug as their value: `grp read --full ROOM`
-// and `grp read ROOM --full` are the same command. Explicit boolean literals
+// never consume a following room slug as their value: `grp read --snapshot ROOM`
+// and `grp read ROOM --snapshot` are the same command. Explicit boolean literals
 // remain supported and are normalized because the downstream presentation
 // flags intentionally use the simple string `"true"` contract.
 const BOOLEAN_CLI_FLAG_KEYS = new Set([
@@ -263,9 +275,10 @@ const BOOLEAN_CLI_FLAG_KEYS = new Set([
   "json",
   "jsonl",
   "private",
-  "post-anyway",
+  "force-stale-post",
   "public",
   "quiet",
+  "snapshot",
   "rewrite",
   "override",
   "unlisted",
@@ -528,6 +541,7 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
       ![
         "start",
         "read",
+        "reviews",
         "take",
         "handoff",
         "request-review",
@@ -540,14 +554,16 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
       ].includes(subcommand)
     ) {
       resolvedIo.stderr(
-        "usage: grp act start|read|take|handoff|request-review|review|complete|resume|fail|cancel|takeover ...\n",
+        "usage: grp act start|read|reviews|take|handoff|request-review|review|complete|resume|fail|cancel|takeover ...\n",
       );
       return 1;
     }
     const helpCommand =
-      (command === "artifact" && subcommand === "patch") ||
+      (command === "artifact" && ["diff", "patch"].includes(subcommand ?? "")) ||
       ((command === "act" || command === "action") &&
-        ["request-review", "review", "complete", "resume"].includes(subcommand ?? ""))
+        ["request-review", "review", "reviews", "complete", "resume"].includes(
+          subcommand ?? "",
+        ))
         ? `${command === "act" ? "action" : command}:${subcommand}`
         : command;
     printCommandHelp(helpCommand, resolvedIo.stdout);
@@ -802,13 +818,13 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
     }
   } catch (err) {
     if (err instanceof RoomStateChangedError) {
-      const canBypass = roomCommandAllowsFlag(parsed, "post-anyway");
+      const canForce = roomCommandAllowsFlag(parsed, "force-stale-post");
       if (isJson(parsed.flags)) {
         resolvedIo.stdout(
           renderJson({
             error: {
               code: err.code,
-              message: roomStateChangedMessage(err, canBypass).split("\n", 1)[0],
+              message: roomStateChangedMessage(err, canForce).split("\n", 1)[0],
               details: {
                 expected_state_revision: err.expectedRevision,
                 current_state_revision: err.currentRevision,
@@ -816,11 +832,22 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
               },
             },
             suggested_command: grpCommand("read"),
-            ...(canBypass ? { bypass_flag: "--post-anyway" } : {}),
+            recovery:
+              canForce && err.forceAvailable ? "force_exact_payload_available" : "read_then_retry",
+            ...(canForce && err.forceAvailable ? { bypass_flag: "--force-stale-post" } : {}),
+            ...(err.catchUp
+              ? {
+                  catch_up: {
+                    complete: err.catchUp.complete,
+                    ...(err.catchUp.response ? { room: err.catchUp.response } : {}),
+                    ...(err.catchUp.error ? { error: err.catchUp.error } : {}),
+                  },
+                }
+              : {}),
           }),
         );
       } else {
-        resolvedIo.stderr(`${roomStateChangedMessage(err, canBypass)}\n`);
+        resolvedIo.stderr(`${roomStateChangedMessage(err, canForce)}\n`);
       }
       return 1;
     }
@@ -829,25 +856,47 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
   }
 }
 
-function roomStateChangedMessage(_error: RoomStateChangedError, canBypass: boolean): string {
-  if (canBypass) {
+function roomStateChangedMessage(error: RoomStateChangedError, canForce: boolean): string {
+  const catchUp = error.catchUp;
+  const catchUpBlock = catchUp?.rendered
+    ? catchUp.rendered.trimEnd()
+    : catchUp?.error
+      ? `CATCH-UP FAILED — ${catchUp.error}\nRun: ${grpCommand("read")}`
+      : `CATCH-UP NOT RUN — run: ${grpCommand("read")}`;
+  const recovery =
+    canForce && error.forceAvailable
+      ? [
+          "The room changed again after a prior complete catch-up.",
+          `Retry normally, or intentionally bypass the room-state guard once for this exact payload with --force-stale-post.`,
+          "The bypass is payload-bound, short-lived, and consumed once.",
+        ]
+      : canForce
+        ? catchUp?.complete
+          ? ["Review the catch-up above, then retry your original command."]
+          : [`Finish catching up first: ${grpCommand("read")}`]
+        : [
+            catchUp?.complete
+              ? "Review the catch-up above, then retry the intended transition."
+              : `Finish catching up first: ${grpCommand("read")}`,
+          ];
+  if (!canForce) {
     return [
       "The room changed since your last read.",
-      "Your message was not posted.",
+      "Nothing was changed.",
       "",
       `Next: ${grpCommand("read")}`,
-      "",
-      "If, after reading, the original message is still appropriate, add",
-      "--post-anyway to your original command.",
+      "Reading does not cancel your intended action.",
+      "If the changed state does not affect the intended transition, rerun your original command.",
     ].join("\n");
   }
   return [
-    "The room changed since your last read.",
-    "Nothing was changed.",
+    "NOT POSTED — the room changed since your last read.",
     "",
-    `Next: ${grpCommand("read")}`,
-    "Reading does not cancel your intended action.",
-    "If the changed state does not affect the intended transition, rerun your original command.",
+    catchUpBlock,
+    "",
+    ...recovery,
+    "",
+    "NOT POSTED — no automatic retry was attempted.",
   ].join("\n");
 }
 
@@ -908,6 +957,7 @@ function resolveIo(io: Partial<RoomCliIo>): RoomCliIo {
     stderr: io.stderr ?? ((text) => process.stderr.write(text)),
     stdin,
     isInteractive: io.isInteractive ?? (stdinIsTty && stdoutIsTty && env.GRP_NO_INPUT !== "1"),
+    stdoutIsTTY: io.stdoutIsTTY ?? (io.stdout ? true : stdoutIsTty),
     fetch: io.fetch ?? fetch,
     env,
     ...(io.cwd ? { cwd: io.cwd } : {}),
@@ -922,6 +972,7 @@ const ROOM_REFERENCE_FLAG_KEYS = ["base", "host", "provider", "token", "password
 const ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS = [...ROOM_REFERENCE_FLAG_KEYS, "bearer", "mandate"];
 const ROOM_ACTION_OUTPUT_FLAG_KEYS = ["json", "quiet"];
 const SUBSTANTIAL_DISCUSSION_CHARACTERS = 10_000;
+const REVIEW_BODY_MAX_CHARACTERS = 32_000;
 
 function roomFlagSet(...groups: string[][]): ReadonlySet<string> {
   return new Set(groups.flat());
@@ -976,7 +1027,7 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
   read: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, [
     "json",
     "quiet",
-    "full",
+    "snapshot",
     "decision",
     "since",
   ]),
@@ -998,7 +1049,7 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
     "proposal-window",
     "collect-options",
     "agreement",
-    "post-anyway",
+    "force-stale-post",
   ]),
   cancel: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, ROOM_ACTION_OUTPUT_FLAG_KEYS, [
     "reason",
@@ -1007,7 +1058,7 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
     "option",
     "file",
     "decision",
-    "post-anyway",
+    "force-stale-post",
   ]),
   discuss: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, ROOM_ACTION_OUTPUT_FLAG_KEYS, [
     "body",
@@ -1017,7 +1068,7 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
     "composing",
     "ttl",
     "as-discussion",
-    "post-anyway",
+    "force-stale-post",
   ]),
   "action:start": roomFlagSet(
     ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS,
@@ -1038,6 +1089,11 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
     ],
   ),
   "action:read": roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, ["json"]),
+  "action:reviews": roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, [
+    "json",
+    "version",
+    "reviewer",
+  ]),
   "action:take": roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, ROOM_ACTION_OUTPUT_FLAG_KEYS, [
     "ttl",
     "idempotency-key",
@@ -1103,6 +1159,13 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
     "json",
     "version",
     "revision-id",
+  ]),
+  "artifact:diff": roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, [
+    "json",
+    "from-version",
+    "to-version",
+    "from-revision",
+    "to-revision",
   ]),
   "artifact:wait": roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, [
     "json",
@@ -1194,7 +1257,8 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
     "json",
     "jsonl",
     "limit",
-    "since-seq",
+    "since",
+    "event",
     "since-event-id",
   ]),
   watch: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, [
@@ -2004,7 +2068,7 @@ async function roomRead(
   }
   // Spec 113 — delta by default: with a stored high-water mark (or an
   // explicit --since) the read asks the host for everything after that seq.
-  // --full always takes the snapshot.
+  // --snapshot always takes the snapshot.
   const since = resolveReadSince(flags, ref, io.env);
   const options = readRequestOptions(ref, flags, io.env);
   if (since !== undefined) options.query = { ...(options.query ?? {}), since };
@@ -2041,6 +2105,11 @@ async function roomRead(
     } else {
       persistCoordinationCapabilityFromRead(ref, response, io.env);
     }
+    if (io.stdoutIsTTY === false) {
+      io.stderr(
+        "Warning: grp read is already paginated. Shell filters can hide displayed content after the read cursor advances.\n",
+      );
+    }
     io.stdout(
       withPersonaReadHeader(
         renderRoomDelta(page.response, ref, io.env, { moreUnread: page.moreUnread }),
@@ -2050,7 +2119,7 @@ async function roomRead(
     return;
   }
   // Spec 119 (WR11-1) — fresh working-set snapshots still advance the mark. The old
-  // rule ("--full never touches the mark") left it parked at a pointer wake's
+  // rule ("snapshot never touches the mark") left it parked at a pointer wake's
   // seq-1 and made the next watch re-fire. Spec 193 changes only paged human
   // deltas; working-set snapshots and old-host fallbacks keep this contract.
   const currentThrough = numberOrNull(response.current_through);
@@ -2095,9 +2164,9 @@ function withPersonaReadHeader(rendered: string, env: Record<string, string | un
 }
 
 /**
- * Spec 113 — which event seq this read should start from. Undefined = full
- * snapshot. Explicit `--since=N` wins; `--since=last` requires a stored mark;
- * a bare read uses the stored mark when one exists. `--full` bypasses the
+ * Spec 113 — which event this read should start from. Undefined = snapshot.
+ * Explicit `--since=N` wins; `--since=last` requires a stored mark;
+ * a bare read uses the stored mark when one exists. `--snapshot` bypasses the
  * mark for the REQUEST (always the snapshot) but — spec 119 (WR11-1) — the
  * rendered picture advances it. Deviation from the spec sketch: `--last=N`
  * is not implemented — the wire supports `since` only.
@@ -2107,21 +2176,21 @@ function resolveReadSince(
   ref: RoomRef,
   env: Record<string, string | undefined>,
 ): number | undefined {
-  if (flags.full === "true") return undefined;
+  if (flags.snapshot === "true") return undefined;
   const stored = rememberedLastSeenSeq(ref, env);
   const raw = flags.since;
   if (raw !== undefined) {
     if (raw === "last" || raw === "true") {
       if (stored === undefined) {
         throw new Error(
-          `no stored position for this room — run \`${grpCommand("watch")}\` once, or \`${grpCommand("read --full")}\``,
+          `no stored position for this room — run \`${grpCommand("watch")}\` once, or \`${grpCommand("read --snapshot")}\``,
         );
       }
       return stored;
     }
     const n = Number(raw);
     if (!Number.isInteger(n) || n < 0) {
-      throw new Error("--since must be a non-negative event seq, or `last`");
+      throw new Error("--since must be a non-negative event number, or `last`");
     }
     return n;
   }
@@ -2156,6 +2225,27 @@ function persistObservedStateRevisionFromRead(
   persistCoordinationCapability(ref, revision ? "experimental" : "absent", env);
   if (!revision) return;
   persistObservedStateRevision(ref, revision, env);
+  const recovery = findRememberedRoom(
+    readProviderConfig(env),
+    ref.slug,
+    ref.baseUrl,
+  )?.staleWriteRecovery;
+  if (!recovery) return;
+  if (Date.parse(recovery.expiresAt) <= Date.now()) {
+    updateProviderConfig(
+      (current) => setRoomStaleWriteRecovery(current, ref.slug, ref.baseUrl, undefined),
+      env,
+    );
+    return;
+  }
+  updateProviderConfig(
+    (current) =>
+      setRoomStaleWriteRecovery(current, ref.slug, ref.baseUrl, {
+        ...recovery,
+        readStateRevision: revision,
+      }),
+    env,
+  );
 }
 
 /** A partial human page may discover capability support but cannot adopt the
@@ -2195,20 +2285,62 @@ async function guardedExpectedRoomRevision(
   ref: RoomRef,
   flags: Record<string, string>,
   io: RoomCliIo,
+  operation: string,
+  requestBodySha256: string,
 ): Promise<string | undefined> {
-  if (flags["post-anyway"] === "true") return undefined;
-  const discovery = await requestJson<Record<string, unknown>>(
-    ref.baseUrl,
-    "/.well-known/grp.json",
-    io,
-    {},
-  );
-  const metadata = isRecord(discovery.metadata) ? discovery.metadata : {};
-  const candidate = isRecord(metadata.experimental_coordination_state)
-    ? metadata.experimental_coordination_state
-    : null;
-  const capability = candidate?.status === "experimental" ? "experimental" : "absent";
-  persistCoordinationCapability(ref, capability, io.env);
+  if (flags["force-stale-post"] === "true") {
+    const recovery = findRememberedRoom(
+      readProviderConfig(io.env),
+      ref.slug,
+      ref.baseUrl,
+    )?.staleWriteRecovery;
+    if (!recovery) {
+      throw new Error(
+        "--force-stale-post is available only after this exact payload was rejected stale and you ran grp read",
+      );
+    }
+    if (Date.parse(recovery.expiresAt) <= Date.now()) {
+      updateProviderConfig(
+        (current) => setRoomStaleWriteRecovery(current, ref.slug, ref.baseUrl, undefined),
+        io.env,
+      );
+      throw new Error("the stale-post recovery expired; retry normally and read if state changed");
+    }
+    if (!recovery.readStateRevision) {
+      throw new Error(`read the room before using --force-stale-post: ${grpCommand("read")}`);
+    }
+    if (recovery.forceAvailable !== true) {
+      throw new Error(
+        "--force-stale-post becomes available only if the exact command is rejected stale again after a complete catch-up",
+      );
+    }
+    if (recovery.operation !== operation || recovery.requestBodySha256 !== requestBodySha256) {
+      throw new Error(
+        "--force-stale-post applies only to the exact rejected command payload; retry this command normally",
+      );
+    }
+    updateProviderConfig(
+      (current) => setRoomStaleWriteRecovery(current, ref.slug, ref.baseUrl, undefined),
+      io.env,
+    );
+    return undefined;
+  }
+  const remembered = findRememberedRoom(readProviderConfig(io.env), ref.slug, ref.baseUrl);
+  let capability = remembered?.coordinationStateCapability;
+  if (!capability) {
+    const discovery = await requestJson<Record<string, unknown>>(
+      ref.baseUrl,
+      "/.well-known/grp.json",
+      io,
+      {},
+    );
+    const metadata = isRecord(discovery.metadata) ? discovery.metadata : {};
+    const candidate = isRecord(metadata.experimental_coordination_state)
+      ? metadata.experimental_coordination_state
+      : null;
+    capability = candidate?.status === "experimental" ? "experimental" : "absent";
+    persistCoordinationCapability(ref, capability, io.env);
+  }
   if (capability === "absent") return undefined;
   const revision = rememberedObservedStateRevision(ref, io.env);
   if (!revision) {
@@ -2217,6 +2349,108 @@ async function guardedExpectedRoomRevision(
     );
   }
   return revision;
+}
+
+const STALE_WRITE_RECOVERY_TTL_MS = 10 * 60 * 1000;
+
+function guardedWriteOperation(path: string): string {
+  return `room.${path.replace(/^\/+/, "").replaceAll("/", ".")}`;
+}
+
+function requestBodySha256(body: Record<string, unknown>): string {
+  return createHash("sha256")
+    .update(JSON.stringify(withoutUndefined(body)))
+    .digest("hex");
+}
+
+function rememberStaleWriteRecovery(
+  ref: RoomRef,
+  operation: string,
+  bodySha256: string,
+  error: RoomStateChangedError,
+  env: Record<string, string | undefined>,
+): boolean {
+  const existing = findRememberedRoom(
+    readProviderConfig(env),
+    ref.slug,
+    ref.baseUrl,
+  )?.staleWriteRecovery;
+  const forceAvailable = Boolean(
+    existing?.readStateRevision &&
+      existing.operation === operation &&
+      existing.requestBodySha256 === bodySha256 &&
+      Date.parse(existing.expiresAt) > Date.now(),
+  );
+  updateProviderConfig(
+    (current) =>
+      setRoomStaleWriteRecovery(current, ref.slug, ref.baseUrl, {
+        operation,
+        requestBodySha256: bodySha256,
+        rejectedExpectedRevision: error.expectedRevision,
+        rejectedCurrentRevision: error.currentRevision,
+        expiresAt: new Date(Date.now() + STALE_WRITE_RECOVERY_TTL_MS).toISOString(),
+        ...(forceAvailable ? { forceAvailable: true } : {}),
+      }),
+    env,
+  );
+  return forceAvailable;
+}
+
+function clearStaleWriteRecovery(ref: RoomRef, env: Record<string, string | undefined>): void {
+  if (!findRememberedRoom(readProviderConfig(env), ref.slug, ref.baseUrl)?.staleWriteRecovery)
+    return;
+  updateProviderConfig(
+    (current) => setRoomStaleWriteRecovery(current, ref.slug, ref.baseUrl, undefined),
+    env,
+  );
+}
+
+async function catchUpAfterStaleWrite(
+  ref: RoomRef,
+  flags: Record<string, string>,
+  io: RoomCliIo,
+): Promise<NonNullable<RoomStateChangedError["catchUp"]>> {
+  try {
+    const since = rememberedLastSeenSeq(ref, io.env);
+    const options = readRequestOptions(ref, flags, io.env);
+    if (since !== undefined) options.query = { ...(options.query ?? {}), since };
+    const response = await requestJson<Record<string, unknown>>(
+      ref.baseUrl,
+      `/api/rooms/${encodeURIComponent(ref.slug)}`,
+      io,
+      options,
+    );
+    if (since !== undefined && Array.isArray(response.new)) {
+      const page = humanDeltaPage(response, ref, io.env);
+      const through = numberOrNull(page.response.current_through);
+      if (through !== null) persistLastSeenSeq(ref, through, io.env);
+      if (page.moreUnread) {
+        persistCoordinationCapabilityFromRead(ref, response, io.env);
+      } else {
+        persistObservedStateRevisionFromRead(ref, response, io.env);
+      }
+      return {
+        response: page.response,
+        rendered: renderRoomDelta(page.response, ref, io.env, {
+          moreUnread: page.moreUnread,
+        }),
+        complete: !page.moreUnread,
+      };
+    }
+    const through = numberOrNull(response.current_through);
+    if (through !== null) persistLastSeenSeq(ref, through, io.env);
+    persistObservedStateRevisionFromRead(ref, response, io.env);
+    return {
+      response,
+      rendered: renderRoomRead(response, ref, io.env),
+      complete: true,
+    };
+  } catch (error) {
+    return {
+      complete: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function persistObservedStateRevision(
@@ -2388,20 +2622,25 @@ function renderRoomDelta(
   const slug = String(response.slug ?? ref.slug);
   // Spec 117 (the delta diet) — one thin header, the new events, Next.
   // No premise, no restated question, no roster: an agent in its own thread
-  // was never disoriented; the full picture is one reach away (--full).
+  // was never disoriented; the fresh working-state picture is one reach away (--snapshot).
   // Old hosts still send `brief`; fall back to it.
   const state = stringOrNull(response.state) ?? stringOrNull(response.brief);
-  const lines = [state ? `${slug} — ${state}` : `Room ${slug}`];
+  const entries = Array.isArray(response.new) ? response.new.filter(isRecord) : [];
+  const currentThrough = numberOrNull(response.current_through);
+  const page = isRecord(response.page) ? response.page : {};
+  const throughEvent = numberOrNull(page.through_event) ?? currentThrough ?? 0;
+  const roomEvent = numberOrNull(page.room_event) ?? throughEvent;
+  const complete = !options.moreUnread && page.complete !== false;
+  const catchUpLabel = `${complete ? "COMPLETE" : "PARTIAL"} CATCH-UP — ${entries.length} update${entries.length === 1 ? "" : "s"} shown, through event ${throughEvent} of ${roomEvent}.`;
+  const lines = [catchUpLabel, state ? `${slug} — ${state}` : `Room ${slug}`];
   const yourStatus = stringOrNull(response.your_status);
   if (yourStatus) lines.push(`You: ${yourStatus}`);
 
-  const entries = Array.isArray(response.new) ? response.new.filter(isRecord) : [];
-  const currentThrough = numberOrNull(response.current_through);
   const room = roomHintArg(slug, ref, env);
   if (entries.length === 0) {
     lines.push(
       "",
-      `Nothing new since seq ${currentThrough ?? "?"}. Fresh working-set snapshot: ${grpCommand(`read --full${room}`)}`,
+      `Nothing new through event ${throughEvent}. Fresh working-set snapshot: ${grpCommand(`read --snapshot${room}`)}`,
     );
   } else {
     lines.push("", "New since your last read:");
@@ -2414,7 +2653,7 @@ function renderRoomDelta(
   lines.push("", "Next:");
   if (options.moreUnread) {
     lines.push(`  More unread activity remains: ${grpCommand(`read${room}`)}`);
-    lines.push("", `Current through seq ${currentThrough ?? "?"}.`);
+    lines.push("", catchUpLabel);
     return `${lines.join("\n")}\n`;
   }
   const decision = activeDecision(response);
@@ -2466,9 +2705,7 @@ function renderRoomDelta(
     lines.push(`  Wait for what's next: ${grpCommand(`watch${room}`)}`);
   }
 
-  if (entries.length > 0) {
-    lines.push("", `Current through seq ${currentThrough ?? "?"}.`);
-  }
+  lines.push("", catchUpLabel);
   return `${lines.join("\n")}\n`;
 }
 
@@ -2484,7 +2721,9 @@ function humanDeltaPage(
   env: Record<string, string | undefined>,
 ): { response: Record<string, unknown>; moreUnread: boolean } {
   const entries = Array.isArray(response.new) ? response.new.filter(isRecord) : [];
-  if (entries.length <= 1) return { response, moreUnread: false };
+  const hostPage = isRecord(response.page) ? response.page : {};
+  const hostIncomplete = hostPage.complete === false;
+  if (entries.length <= 1) return { response, moreUnread: hostIncomplete };
 
   const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
   const selected: Record<string, unknown>[] = [];
@@ -2505,13 +2744,27 @@ function humanDeltaPage(
     renderedCharacters += entryCharacters;
   }
 
-  if (selected.length === entries.length) return { response, moreUnread: false };
+  if (selected.length === entries.length) return { response, moreUnread: hostIncomplete };
   const safeThrough = numberOrNull(selected.at(-1)?.seq);
   // Delta entries from current hosts always carry seq. If an old or malformed
   // host omits it, do not invent a partial acknowledgement boundary.
   if (safeThrough === null) return { response, moreUnread: false };
   return {
-    response: { ...response, new: selected, current_through: safeThrough },
+    response: {
+      ...response,
+      new: selected,
+      current_through: safeThrough,
+      page: {
+        ...hostPage,
+        through_event: safeThrough,
+        room_event:
+          numberOrNull(hostPage.room_event) ??
+          numberOrNull(response.current_through) ??
+          safeThrough,
+        complete: false,
+        next_since: safeThrough,
+      },
+    },
     moreUnread: true,
   };
 }
@@ -2631,6 +2884,41 @@ function renderDeltaEntry(entry: Record<string, unknown>, room = ""): string[] {
       if (entry.to_group === true) return [`  ${from} handed action ${actionId} to the group.`];
       const to = stringOrNull(entry.to) ?? "another participant";
       return [`  ${from} handed action ${actionId} to ${to}.`];
+    }
+    case "action_review_requested": {
+      const actionId = stringOrNull(entry.action_id) ?? "ACTION_ID";
+      const revisionId = stringOrNull(entry.revision_id);
+      return [
+        `  Exact review requested for action ${actionId}${revisionId ? ` on artifact revision ${revisionId}` : ""}.`,
+        `    Review: ${grpCommand(`act review ${actionId}${room}`)}`,
+        `    History: ${grpCommand(`act reviews ${actionId}${room}`)}`,
+      ];
+    }
+    case "action_review_changes_requested": {
+      const actionId = stringOrNull(entry.action_id) ?? "ACTION_ID";
+      return [
+        `  Changes requested for action ${actionId}.`,
+        `    Formal history: ${grpCommand(`act reviews ${actionId}${room}`)}`,
+      ];
+    }
+    case "artifact_reviewed": {
+      const actionId = stringOrNull(entry.action_id);
+      const artifactId = stringOrNull(entry.artifact_id) ?? "ARTIFACT_ID";
+      const disposition = stringOrNull(entry.disposition)?.replaceAll("_", " ") ?? "reviewed";
+      return actionId
+        ? [
+            `  Artifact ${artifactId} ${disposition} for action ${actionId}.`,
+            `    Formal history: ${grpCommand(`act reviews ${actionId}${room}`)}`,
+          ]
+        : [`  Artifact ${artifactId} ${disposition}.`];
+    }
+    case "artifact_revision_published": {
+      const artifactId = stringOrNull(entry.artifact_id) ?? "ARTIFACT_ID";
+      const revisionId = stringOrNull(entry.revision_id);
+      return [
+        `  Artifact ${artifactId} published${revisionId ? ` revision ${revisionId}` : " a new revision"}.`,
+        `    Read: ${grpCommand(`artifact read ${artifactId}${revisionId ? ` --revision-id=${revisionId}` : ""}${room}`)}`,
+      ];
     }
     default:
       // Forward compatibility: unknown entry types still show up as activity.
@@ -2869,7 +3157,7 @@ async function roomDiscuss(
       flags.stance ||
       flags.decision ||
       flags["as-discussion"] ||
-      flags["post-anyway"]
+      flags["force-stale-post"]
     ) {
       throw new Error(
         "--composing only signals that you are preparing a message; post the message with a separate grp discuss command",
@@ -3038,6 +3326,7 @@ async function roomAction(
   if (
     ![
       "read",
+      "reviews",
       "take",
       "handoff",
       "request-review",
@@ -3051,7 +3340,7 @@ async function roomAction(
     !id
   ) {
     throw new Error(
-      "usage: grp act start|read|take|handoff|request-review|review|complete|resume|fail|cancel|takeover ...",
+      "usage: grp act start|read|reviews|take|handoff|request-review|review|complete|resume|fail|cancel|takeover ...",
     );
   }
   const ref = resolveRoomRef(targetOrCurrent(room, flags, io), flags, io.env);
@@ -3064,6 +3353,22 @@ async function roomAction(
   );
   if (operation === "read") {
     await writeActionResponse(current, ref, flags, io, "read");
+    return;
+  }
+  if (operation === "reviews") {
+    const history = await experimentalResourceRequest(
+      ref,
+      `/actions/${encodeURIComponent(id)}`,
+      flags,
+      io,
+      "GET",
+      undefined,
+      false,
+      { reviews: 1 },
+    );
+    const filtered = filterActionReviewHistory(history, flags);
+    if (isJson(flags)) io.stdout(renderJson(filtered));
+    else io.stdout(renderActionReviewHistory(filtered, id, ref, io.env, flags.version !== undefined));
     return;
   }
   const currentAction = actionFromResponse(current);
@@ -3124,11 +3429,21 @@ async function roomAction(
       throw new Error("choose either --approve or --request-changes");
     }
     if (!approve && !requestChanges) {
+      const history = await experimentalResourceRequest(
+        ref,
+        `/actions/${encodeURIComponent(id)}`,
+        flags,
+        io,
+        "GET",
+        undefined,
+        false,
+        { reviews: 1 },
+      );
       if (isJson(flags)) {
-        io.stdout(renderJson({ action: currentAction, exact_artifact: exact }));
+        io.stdout(renderJson({ action: currentAction, exact_artifact: exact, review_history: history }));
       } else {
         io.stdout(
-          `${renderArtifactRead(exact, ref, io.env).trimEnd()}\n\n${renderActionReviewChoice(currentAction, ref, io.env)}`,
+          `${renderArtifactRead(exact, ref, io.env).trimEnd()}\n\n${renderActionReviewChoice(currentAction, exact, ref, io.env, history)}`,
         );
       }
       return;
@@ -3143,8 +3458,13 @@ async function roomAction(
     if (requestChanges && !body?.trim()) {
       throw new Error("--request-changes requires --body=TEXT or --file=PATH");
     }
-    if (approve && body !== undefined) {
-      throw new Error("approval records the exact revision; omit --body and --file");
+    if (body !== undefined && body.length > REVIEW_BODY_MAX_CHARACTERS) {
+      throw new Error(
+        `review body must be between 1 and ${REVIEW_BODY_MAX_CHARACTERS.toLocaleString("en-US")} characters; this one is ${body.length.toLocaleString("en-US")}`,
+      );
+    }
+    if (approve && body !== undefined && !body.trim()) {
+      throw new Error("approval commentary must be non-empty when --body or --file is supplied");
     }
     const exactRecord = isRecord(exact) ? exact : {};
     const reviews = Array.isArray(exactRecord.reviews) ? exactRecord.reviews.filter(isRecord) : [];
@@ -3161,7 +3481,7 @@ async function roomAction(
       {
         expected_action_revision: expectedRevision,
         disposition: approve ? "approve" : "changes_requested",
-        body: requestChanges ? body : undefined,
+        body,
         expected_review_revision: ownReview
           ? (stringOrNull(ownReview.revision) ?? undefined)
           : undefined,
@@ -3551,20 +3871,150 @@ function completionActionGuidance(
 
 function renderActionReviewChoice(
   action: Record<string, unknown>,
+  exactArtifact: unknown,
   ref: RoomRef,
   env: Record<string, string | undefined>,
+  history: unknown = null,
 ): string {
   const id = stringOrNull(action.id) ?? "ACTION_ID";
   const review = isRecord(action.review) ? action.review : {};
   const revisionId = stringOrNull(review.artifact_revision_id) ?? "unknown";
   const room = roomHintArg(ref.slug, ref, env);
-  return `${[
-    `Action review ${id} targets exact artifact revision ${revisionId}.`,
-    "Required: record one review response for these exact bytes.",
+  const callerId = callerIdentity(ref, env).participantId;
+  const respondedIds = Array.isArray(review.responded_participant_ids)
+    ? review.responded_participant_ids.filter((value): value is string => typeof value === "string")
+    : [];
+  const exact = isRecord(exactArtifact) ? exactArtifact : {};
+  const responses = Array.isArray(exact.reviews) ? exact.reviews.filter(isRecord) : [];
+  const lines = [`Action review ${id} targets exact artifact revision ${revisionId}.`];
+  if (responses.length > 0) {
+    lines.push("Formal responses already recorded:");
+    for (const response of responses) {
+      const reviewer = stringOrNull(response.reviewer_id) ?? "unknown reviewer";
+      const disposition = stringOrNull(response.disposition)?.replaceAll("_", " ") ?? "reviewed";
+      lines.push(`  ${reviewer} — ${disposition}`);
+      const body = stringOrNull(response.body);
+      if (body) for (const bodyLine of body.split("\n")) lines.push(`    ${bodyLine}`);
+    }
+  }
+  const historyRecord = isRecord(history) ? history : {};
+  const rounds = Array.isArray(historyRecord.rounds) ? historyRecord.rounds.filter(isRecord) : [];
+  const currentIndex = rounds.findIndex((round) => {
+    const revision = isRecord(round.revision) ? round.revision : {};
+    return stringOrNull(revision.id) === revisionId;
+  });
+  const previous = currentIndex > 0 ? rounds[currentIndex - 1] : undefined;
+  if (previous) {
+    const previousRevision = isRecord(previous.revision) ? previous.revision : {};
+    const previousId = stringOrNull(previousRevision.id);
+    const previousVersion = numberOrNull(previousRevision.ordinal);
+    const artifact = isRecord(previous.artifact) ? previous.artifact : {};
+    const artifactId = stringOrNull(artifact.id);
+    if (previousVersion !== null) {
+      lines.push(
+        `Previous formal round: ${grpCommand(`act reviews ${id} --version=${previousVersion}${room}`)}`,
+      );
+    }
+    if (artifactId && previousId) {
+      lines.push(
+        `Compare with that round: ${grpCommand(`artifact diff ${artifactId} --from-revision=${previousId} --to-revision=${revisionId}${room}`)}`,
+      );
+    }
+  }
+  if (callerId && respondedIds.includes(callerId)) {
+    lines.push("Your response is already recorded. Available: update it while the round is open.");
+  } else {
+    lines.push("Required: record one review response for these exact bytes.");
+  }
+  lines.push(
     `Approve these exact bytes: ${grpCommand(`act review ${id} --approve${room}`)}`,
+    `Approve with commentary: ${grpCommand(`act review ${id} --approve --file=review.md${room}`)}`,
     `Request changes: ${grpCommand(`act review ${id} --request-changes --file=review.md${room}`)}`,
+    `Review body limit: ${REVIEW_BODY_MAX_CHARACTERS.toLocaleString("en-US")} characters.`,
     "A response may be updated while this review round remains open.",
-  ].join("\n")}\n`;
+  );
+  return `${lines.join("\n")}\n`;
+}
+
+function filterActionReviewHistory(
+  history: unknown,
+  flags: Record<string, string>,
+): Record<string, unknown> {
+  const record = isRecord(history) ? history : {};
+  let rounds = Array.isArray(record.rounds) ? record.rounds.filter(isRecord) : [];
+  if (flags.version !== undefined) {
+    const version = Number(flags.version);
+    if (!Number.isInteger(version) || version < 1) {
+      throw new Error("--version must be a positive integer");
+    }
+    rounds = rounds.filter((round) => {
+      const revision = isRecord(round.revision) ? round.revision : {};
+      return numberOrNull(revision.ordinal) === version;
+    });
+  }
+  if (flags.reviewer !== undefined) {
+    const selector = flags.reviewer.trim().toLocaleLowerCase();
+    if (!selector) throw new Error("--reviewer requires a name or participant ID");
+    rounds = rounds
+      .map((round) => {
+        const reviews = Array.isArray(round.reviews) ? round.reviews.filter(isRecord) : [];
+        return {
+          ...round,
+          reviews: reviews.filter((review) =>
+            [stringOrNull(review.reviewer_name), stringOrNull(review.reviewer_id)].some(
+              (value) => value?.trim().toLocaleLowerCase() === selector,
+            ),
+          ),
+        };
+      })
+      .filter((round) => Array.isArray(round.reviews) && round.reviews.length > 0);
+  }
+  return { ...record, rounds };
+}
+
+function renderActionReviewHistory(
+  history: Record<string, unknown>,
+  actionId: string,
+  ref: RoomRef,
+  env: Record<string, string | undefined>,
+  detailed: boolean,
+): string {
+  const rounds = Array.isArray(history.rounds) ? history.rounds.filter(isRecord) : [];
+  const room = roomHintArg(ref.slug, ref, env);
+  const lines = [`Review history for action ${actionId}`];
+  if (rounds.length === 0) {
+    lines.push("No matching formal review rounds.");
+    return `${lines.join("\n")}\n`;
+  }
+  for (const round of rounds) {
+    const revision = isRecord(round.revision) ? round.revision : {};
+    const version = numberOrNull(revision.ordinal);
+    const revisionId = stringOrNull(revision.id) ?? "unknown";
+    const sha256 = stringOrNull(revision.sha256);
+    const event = numberOrNull(round.event);
+    const reviews = Array.isArray(round.reviews) ? round.reviews.filter(isRecord) : [];
+    lines.push(
+      "",
+      `Artifact version ${version ?? "?"} — revision ${revisionId}${event === null ? "" : `; requested at event ${event}`}${sha256 ? `; SHA-256 ${sha256}` : ""}`,
+      `Formal responses: ${reviews.length}`,
+    );
+    for (const review of reviews) {
+      const reviewer =
+        stringOrNull(review.reviewer_name) ??
+        stringOrNull(review.reviewer_id) ??
+        "unknown reviewer";
+      const disposition = stringOrNull(review.disposition)?.replaceAll("_", " ") ?? "reviewed";
+      lines.push(`  ${reviewer} — ${disposition}`);
+      if (detailed) {
+        const body = stringOrNull(review.body);
+        if (body) for (const line of body.split("\n")) lines.push(`    ${line}`);
+      }
+    }
+    if (!detailed && version !== null) {
+      lines.push(`  Full bodies: ${grpCommand(`act reviews ${actionId} --version=${version}${room}`)}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function renderActionState(
@@ -3608,7 +4058,12 @@ function renderActionState(
   const note = stringOrNull(action.handoff_note);
   if (note) lines.push(`Handoff note: ${note}`);
   const target = stringOrNull(action.target_artifact_id);
-  if (target) lines.push(`Artifact target: ${target}.`);
+  if (target) {
+    lines.push(
+      `Artifact target: ${target}.`,
+      `Review history: ${grpCommand(`act reviews ${id}${room}`)}`,
+    );
+  }
   const completionResultFlag = target ? "" : ' --result-text="What happened"';
   const result = isRecord(action.result) ? action.result : null;
   if (result && status !== "awaiting_completion") lines.push(`Result: ${JSON.stringify(result)}.`);
@@ -3637,6 +4092,15 @@ function renderActionState(
       }
     }
     lines.push("These responses are pinned to the exact revision above.");
+    const currentArtifact = Array.isArray(full.artifacts)
+      ? full.artifacts.filter(isRecord).find((candidate) => stringOrNull(candidate.id) === target)
+      : undefined;
+    const currentRevisionId = stringOrNull(currentArtifact?.current_revision_id);
+    if (target && revisionId && currentRevisionId && currentRevisionId !== revisionId) {
+      lines.push(
+        `Compare the reviewed revision with the current revision: ${grpCommand(`artifact diff ${target} --from-revision=${revisionId} --to-revision=${currentRevisionId}${room}`)}`,
+      );
+    }
   }
   if (status === "in_review") {
     const revisionId = review ? stringOrNull(review.artifact_revision_id) : null;
@@ -3945,7 +4409,7 @@ async function roomArtifact(
     writeArtifactResponse(response, ref, flags, io, "created");
     return;
   }
-  if (!id) throw new Error("usage: grp artifact create|read|patch|publish ...");
+  if (!id) throw new Error("usage: grp artifact create|read|diff|patch|publish ...");
   if (["wait", "claim", "renew", "release", "review"].includes(operation ?? "")) {
     throw new Error(
       `grp artifact ${operation} is not part of the action-centered surface; use grp act and grp watch`,
@@ -3986,7 +4450,7 @@ async function roomArtifact(
       const block = blocks.find((candidate) => numberOrNull(candidate.number) === edit.block);
       if (!block) {
         throw new Error(
-          `block ¶${edit.block} is not present in exact base revision ${descriptor.revisionId}`,
+          `block ${edit.block} is not present in exact base revision ${descriptor.revisionId}`,
         );
       }
       const blockId = stringOrNull(block.id);
@@ -4125,7 +4589,7 @@ async function roomArtifact(
     const block = blocks.find((candidate) => numberOrNull(candidate.number) === blockNumber);
     if (!block) {
       throw new Error(
-        `block ¶${blockNumber} is not present in exact base revision ${baseRevisionId}`,
+        `block ${blockNumber} is not present in exact base revision ${baseRevisionId}`,
       );
     }
     const blockId = stringOrNull(block.id);
@@ -4177,6 +4641,34 @@ async function roomArtifact(
     return;
   }
   const ref = resolveRoomRef(targetOrCurrent(revisionIdOrRoom, flags, io), flags, io.env);
+  if (operation === "diff") {
+    const fromQuery = artifactRevisionSelector(flags, "from");
+    const toQuery = artifactRevisionSelector(flags, "to");
+    const [from, to] = await Promise.all([
+      experimentalResourceRequest(
+        ref,
+        `/artifacts/${encodeURIComponent(id)}`,
+        flags,
+        io,
+        "GET",
+        undefined,
+        false,
+        fromQuery,
+      ),
+      experimentalResourceRequest(
+        ref,
+        `/artifacts/${encodeURIComponent(id)}`,
+        flags,
+        io,
+        "GET",
+        undefined,
+        false,
+        toQuery,
+      ),
+    ]);
+    io.stdout(isJson(flags) ? renderJson({ from, to }) : renderArtifactDiff(from, to));
+    return;
+  }
   if (operation === "read") {
     const response = await experimentalResourceRequest(
       ref,
@@ -4245,7 +4737,7 @@ async function roomArtifact(
     writeArtifactResponse(response, ref, flags, io, "updated", actionAfterEdit);
     return;
   }
-  throw new Error("usage: grp artifact create|read|patch|publish ...");
+  throw new Error("usage: grp artifact create|read|diff|patch|publish ...");
 }
 
 function writeArtifactResponse(
@@ -4281,7 +4773,7 @@ function writeArtifactResponse(
         `Revision: rev_${ordinal}`,
         "",
         "Only the current action holder may edit this native artifact.",
-        "Reads label the current revision ¶1, ¶2, ¶3, ...",
+        "Reads number the blocks in the current revision 1, 2, 3, ...",
         "",
         "Next:",
         `  Read it:       ${grpCommand(`artifact read ${descriptor.artifactId}${room}`)}`,
@@ -4333,9 +4825,9 @@ function renderArtifactRead(
     for (const block of blocks) {
       const number = numberOrNull(block.number) ?? "?";
       const kind = stringOrNull(block.kind) ?? "block";
-      lines.push(`¶${number} [${kind}]`);
+      lines.push(`${number}  ${kind}`);
       const content = stringOrNull(block.content) ?? "";
-      for (const line of content.split("\n")) lines.push(`  ${line}`);
+      for (const line of content.split("\n")) lines.push(`   ${line}`);
       lines.push("");
     }
     lines.push(
@@ -4347,6 +4839,121 @@ function renderArtifactRead(
     lines.push("", `External reference: ${JSON.stringify(revision.external)}`);
   }
   return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function artifactRevisionSelector(
+  flags: Record<string, string>,
+  side: "from" | "to",
+): Record<string, string> {
+  const version = flags[`${side}-version`];
+  const revision = flags[`${side}-revision`];
+  if ((version ? 1 : 0) + (revision ? 1 : 0) !== 1) {
+    throw new Error(
+      `artifact diff requires exactly one --${side}-version=N or --${side}-revision=REVISION_ID`,
+    );
+  }
+  return version ? { version } : { revision: revision as string };
+}
+
+interface DiffBlock {
+  id: string;
+  number: number;
+  kind: string;
+  content: string;
+  digest: string;
+}
+
+function artifactDiffBlocks(response: unknown): DiffBlock[] {
+  const record = isRecord(response) ? response : {};
+  const revision = isRecord(record.revision) ? record.revision : {};
+  const blocks = Array.isArray(revision.blocks) ? revision.blocks.filter(isRecord) : [];
+  return blocks.map((block, index) => ({
+    id: stringOrNull(block.id) ?? `position:${index + 1}`,
+    number: numberOrNull(block.number) ?? index + 1,
+    kind: stringOrNull(block.kind) ?? "block",
+    content: stringOrNull(block.content) ?? "",
+    digest: stringOrNull(block.content_sha256) ?? "",
+  }));
+}
+
+function artifactDiffLabel(response: unknown): string {
+  const record = isRecord(response) ? response : {};
+  const revision = isRecord(record.revision) ? record.revision : {};
+  const ordinal = numberOrNull(revision.ordinal);
+  return ordinal === null ? (stringOrNull(revision.id) ?? "unknown") : `v${ordinal}`;
+}
+
+function prefixedDiffLines(prefix: " " | "+" | "-", content: string): string[] {
+  return content.split("\n").map((line) => `${prefix}${line}`);
+}
+
+function renderArtifactDiff(fromResponse: unknown, toResponse: unknown): string {
+  const from = artifactDiffBlocks(fromResponse);
+  const to = artifactDiffBlocks(toResponse);
+  const lines = [
+    `--- artifact ${artifactDiffLabel(fromResponse)}`,
+    `+++ artifact ${artifactDiffLabel(toResponse)}`,
+  ];
+  const dp = Array.from({ length: from.length + 1 }, () => Array<number>(to.length + 1).fill(0));
+  for (let left = from.length - 1; left >= 0; left -= 1) {
+    const row = dp[left];
+    if (!row) continue;
+    for (let right = to.length - 1; right >= 0; right -= 1) {
+      row[right] =
+        from[left]?.id === to[right]?.id
+          ? 1 + (dp[left + 1]?.[right + 1] ?? 0)
+          : Math.max(dp[left + 1]?.[right] ?? 0, dp[left]?.[right + 1] ?? 0);
+    }
+  }
+  let left = 0;
+  let right = 0;
+  let changed = false;
+  let removed: DiffBlock[] = [];
+  let added: DiffBlock[] = [];
+  const flushChangedRun = () => {
+    if (removed.length === 0 && added.length === 0) return;
+    changed = true;
+    const fromNumber = removed[0]?.number ?? from[left]?.number ?? from.length + 1;
+    const toNumber = added[0]?.number ?? to[right]?.number ?? to.length + 1;
+    const kind = added[0]?.kind ?? removed[0]?.kind ?? "block";
+    lines.push(
+      `@@ -${fromNumber},${removed.length} +${toNumber},${added.length} @@ ${kind}`,
+      ...removed.flatMap((block) => prefixedDiffLines("-", block.content)),
+      ...added.flatMap((block) => prefixedDiffLines("+", block.content)),
+    );
+    removed = [];
+    added = [];
+  };
+  while (left < from.length || right < to.length) {
+    const before = from[left];
+    const after = to[right];
+    if (before && after && before.id === after.id) {
+      flushChangedRun();
+      if (before.digest !== after.digest || before.content !== after.content) {
+        changed = true;
+        lines.push(
+          `@@ -${before.number},1 +${after.number},1 @@ ${after.kind}`,
+          ...prefixedDiffLines("-", before.content),
+          ...prefixedDiffLines("+", after.content),
+        );
+      }
+      left += 1;
+      right += 1;
+      continue;
+    }
+    if (after && (!before || (dp[left]?.[right + 1] ?? 0) > (dp[left + 1]?.[right] ?? 0))) {
+      added.push(after);
+      right += 1;
+      continue;
+    }
+    if (before) {
+      removed.push(before);
+      left += 1;
+    }
+  }
+  flushChangedRun();
+  if (!changed) lines.push("(no changes)");
+  return `${lines.join("\n")}\n`;
 }
 
 interface ArtifactResponseDescriptor {
@@ -4397,11 +5004,14 @@ async function experimentalResourceRequest(
   guardRoomState = false,
   query?: Record<string, string | number | undefined>,
 ): Promise<unknown> {
+  const normalizedBody = body ? withoutUndefined(body) : undefined;
+  const operation = guardedWriteOperation(path);
+  const bodySha256 = requestBodySha256(normalizedBody ?? {});
   const options: RequestOptions = {
     method,
-    ...(body ? { body: withoutUndefined(body) } : {}),
+    ...(normalizedBody ? { body: normalizedBody } : {}),
     ...(query ? { query } : {}),
-    trace: { postAnyway: flags["post-anyway"] === "true" },
+    trace: { postAnyway: flags["force-stale-post"] === "true" },
   };
   const auth = authFromFlags(flags, ref, io.env);
   if (auth) options.auth = auth;
@@ -4410,7 +5020,7 @@ async function experimentalResourceRequest(
   const idempotencyKey = validatedIdempotencyKey(flags["idempotency-key"]);
   if (idempotencyKey) options.headers = { "idempotency-key": idempotencyKey };
   const expectedRevision = guardRoomState
-    ? await guardedExpectedRoomRevision(ref, flags, io)
+    ? await guardedExpectedRoomRevision(ref, flags, io, operation, bodySha256)
     : undefined;
   if (expectedRevision) {
     options.headers = {
@@ -5154,6 +5764,14 @@ async function roomEvents(
   io: RoomCliIo,
 ): Promise<void> {
   const ref = resolveRoomRef(target, flags, io.env);
+  const rawEvent = flags.event;
+  const exactEvent = rawEvent === undefined ? undefined : Number(rawEvent);
+  if (exactEvent !== undefined && (!Number.isInteger(exactEvent) || exactEvent < 1)) {
+    throw new Error("--event must be a positive integer");
+  }
+  if (exactEvent !== undefined && flags.since !== undefined) {
+    throw new Error("pass either --event or --since, not both");
+  }
   // Raw stream (audit). Fetch every page by default: the gap-recovery endpoint
   // deliberately caps one response at 1,000 events, while audit timelines can
   // be much longer. An explicit --limit remains a total-result cap.
@@ -5167,6 +5785,34 @@ async function roomEvents(
     }
     return;
   }
+  if (exactEvent !== undefined) {
+    const response = await fetchAllRoomEvents(ref, { ...flags, limit: "1" }, io);
+    const event = response.events.find((candidate) => candidate.seq === exactEvent);
+    if (!event) throw new Error(`event ${exactEvent} was not found in this room`);
+    const options = readRequestOptions(ref, flags, io.env);
+    options.query = { ...(options.query ?? {}), since: exactEvent - 1 };
+    const delta = await requestJson<Record<string, unknown>>(
+      ref.baseUrl,
+      `/api/rooms/${encodeURIComponent(ref.slug)}`,
+      io,
+      options,
+    );
+    const joined = Array.isArray(delta.new)
+      ? delta.new.filter(isRecord).find((entry) => numberOrNull(entry.seq) === exactEvent)
+      : undefined;
+    const lines = [`Event ${exactEvent} in ${response.slug}`];
+    if (joined) {
+      const at = stringOrNull(joined.at);
+      const stamp = at ? `${at.slice(11, 16)} ` : "";
+      for (const [index, line] of renderDeltaEntry(joined).entries()) {
+        lines.push(index === 0 ? `  ${stamp}${line.trimStart()}` : line);
+      }
+    } else {
+      lines.push(`  ${renderEventLine(event)}`);
+    }
+    io.stdout(`${lines.join("\n")}\n`);
+    return;
+  }
   // Spec 115 (WR7-4) — the human timeline is the room's story, not its
   // database: the full delta from event 0, name-keyed with joined discussion
   // text, one compact line per entry. Raw payloads stay behind --jsonl.
@@ -5178,31 +5824,21 @@ async function roomEvents(
   if (rawLimit !== undefined && (!Number.isInteger(totalLimit) || totalLimit < 1)) {
     throw new Error("--limit must be a positive integer");
   }
-  const rawSince = flags["since-seq"];
+  const rawSince = flags.since;
   const sinceSeq = rawSince === undefined ? 0 : Number(rawSince);
   if (!Number.isInteger(sinceSeq) || sinceSeq < 0) {
-    throw new Error("--since-seq must be a non-negative integer");
+    throw new Error("--since must be a non-negative integer");
   }
-  const options = readRequestOptions(ref, flags, io.env);
-  options.query = { ...(options.query ?? {}), since: sinceSeq };
-  const response = await requestJson<Record<string, unknown>>(
-    ref.baseUrl,
-    `/api/rooms/${encodeURIComponent(ref.slug)}`,
-    io,
-    options,
-  );
-  const entries = (Array.isArray(response.new) ? response.new.filter(isRecord) : []).slice(
-    0,
-    totalLimit,
-  );
-  if (entries.length === 0) {
+  const result = await fetchAllRoomDeltaEntries(ref, flags, io, sinceSeq, totalLimit);
+  if (!result.supported) {
     // Old host (no delta support) — fall back to the raw line rendering.
     const rawResponse = await fetchAllRoomEvents(ref, flags, io);
     for (const event of rawResponse.events ?? []) io.stdout(`${renderEventLine(event)}\n`);
     return;
   }
-  const lines = [`Timeline for ${String(response.slug ?? ref.slug)}`];
-  for (const entry of entries) {
+  const lines = [`Timeline for ${result.slug}`];
+  if (result.entries.length === 0) lines.push("  No events in this range.");
+  for (const entry of result.entries) {
     const at = stringOrNull(entry.at);
     const stamp = at ? `${at.slice(11, 16)} ` : "";
     for (const [i, line] of renderDeltaEntry(entry).entries()) {
@@ -5210,6 +5846,41 @@ async function roomEvents(
     }
   }
   io.stdout(`${lines.join("\n")}\n`);
+}
+
+async function fetchAllRoomDeltaEntries(
+  ref: RoomRef,
+  flags: Record<string, string>,
+  io: RoomCliIo,
+  initialSince: number,
+  totalLimit: number,
+): Promise<{ slug: string; entries: Record<string, unknown>[]; supported: boolean }> {
+  const entries: Record<string, unknown>[] = [];
+  let cursor = initialSince;
+  let slug = ref.slug;
+  while (entries.length < totalLimit) {
+    const options = readRequestOptions(ref, flags, io.env);
+    options.query = { ...(options.query ?? {}), since: cursor };
+    const response = await requestJson<Record<string, unknown>>(
+      ref.baseUrl,
+      `/api/rooms/${encodeURIComponent(ref.slug)}`,
+      io,
+      options,
+    );
+    if (!Array.isArray(response.new)) return { slug, entries, supported: false };
+    slug = String(response.slug ?? slug);
+    const next = response.new.filter(isRecord);
+    entries.push(...next.slice(0, totalLimit - entries.length));
+    if (entries.length >= totalLimit) break;
+    const page = isRecord(response.page) ? response.page : {};
+    const through =
+      numberOrNull(page.through_event) ?? numberOrNull(response.current_through) ?? cursor;
+    const complete = page.complete === true || through >= (numberOrNull(page.room_event) ?? through);
+    if (complete) break;
+    if (through <= cursor) throw new Error("timeline pagination did not advance its event cursor");
+    cursor = through;
+  }
+  return { slug, entries, supported: true };
 }
 
 const EVENT_PAGE_SIZE = 1000;
@@ -5221,15 +5892,21 @@ async function fetchAllRoomEvents(
   io: RoomCliIo,
 ): Promise<{ slug: string; events: RoomEvent[] }> {
   const rawLimit = flags.limit;
-  const totalLimit = rawLimit === undefined ? Number.POSITIVE_INFINITY : Number(rawLimit);
+  const totalLimit =
+    flags.event !== undefined
+      ? 1
+      : rawLimit === undefined
+        ? Number.POSITIVE_INFINITY
+        : Number(rawLimit);
   if (rawLimit !== undefined && (!Number.isInteger(totalLimit) || totalLimit < 1)) {
     throw new Error("--limit must be a positive integer");
   }
 
-  const rawSince = flags["since-seq"];
+  const rawEvent = flags.event;
+  const rawSince = rawEvent === undefined ? flags.since : String(Number(rawEvent) - 1);
   let cursor = rawSince === undefined ? undefined : Number(rawSince);
   if (cursor !== undefined && (!Number.isInteger(cursor) || cursor < 0)) {
-    throw new Error("--since-seq must be a non-negative integer");
+    throw new Error("--since must be a non-negative integer");
   }
 
   const events: RoomEvent[] = [];
@@ -5245,7 +5922,11 @@ async function fetchAllRoomEvents(
     };
     if (!firstPage) options.query.since_event_id = undefined;
 
-    const page = await requestJson<{ slug?: string; events?: RoomEvent[] }>(
+    const page = await requestJson<{
+      slug?: string;
+      events?: RoomEvent[];
+      page?: { complete?: boolean; through_event?: number; room_event?: number };
+    }>(
       ref.baseUrl,
       `/api/rooms/${encodeURIComponent(ref.slug)}/events`,
       io,
@@ -5255,7 +5936,7 @@ async function fetchAllRoomEvents(
     const next = page.events ?? [];
     if (next.length === 0) break;
     events.push(...next.slice(0, totalLimit - events.length));
-    if (events.length >= totalLimit || next.length < pageLimit) break;
+    if (events.length >= totalLimit || page.page?.complete === true || next.length < pageLimit) break;
 
     const lastSeq = next.at(-1)?.seq;
     if (
@@ -6673,16 +7354,20 @@ async function actionRequest(
   guardRoomState = false,
 ): Promise<unknown> {
   const auth = authFromFlags(flags, ref, io.env);
+  const normalizedBody = withoutUndefined(body);
+  const operation = guardedWriteOperation(path);
+  const bodySha256 = requestBodySha256(normalizedBody);
+  const forceEligible = ["/ask", "/options", "/discuss"].includes(path);
   const options: RequestOptions = {
     method: "POST",
-    body: withoutUndefined(body),
-    trace: { postAnyway: flags["post-anyway"] === "true" },
+    body: normalizedBody,
+    trace: { postAnyway: flags["force-stale-post"] === "true" },
   };
   if (auth) options.auth = auth;
   const idempotencyKey = validatedIdempotencyKey(flags["idempotency-key"]);
   if (idempotencyKey) options.headers = { "idempotency-key": idempotencyKey };
   const expectedRevision = guardRoomState
-    ? await guardedExpectedRoomRevision(ref, flags, io)
+    ? await guardedExpectedRoomRevision(ref, flags, io, operation, bodySha256)
     : undefined;
   if (expectedRevision) {
     options.headers = {
@@ -6690,18 +7375,40 @@ async function actionRequest(
       "x-grp-expected-room-revision": expectedRevision,
     };
   }
-  const response = await requestJson<unknown>(
-    ref.baseUrl,
-    `/api/rooms/${encodeURIComponent(ref.slug)}${path}`,
-    io,
-    options,
-  );
+  let response: unknown;
+  try {
+    response = await requestJson<unknown>(
+      ref.baseUrl,
+      `/api/rooms/${encodeURIComponent(ref.slug)}${path}`,
+      io,
+      options,
+    );
+  } catch (error) {
+    if (
+      guardRoomState &&
+      forceEligible &&
+      flags["force-stale-post"] !== "true" &&
+      error instanceof RoomStateChangedError
+    ) {
+      const forceEligibleAfterCatchUp = rememberStaleWriteRecovery(
+        ref,
+        operation,
+        bodySha256,
+        error,
+        io.env,
+      );
+      error.catchUp = await catchUpAfterStaleWrite(ref, flags, io);
+      error.forceAvailable = forceEligibleAfterCatchUp && error.catchUp.complete;
+    }
+    throw error;
+  }
   // Only a successful guarded transition can safely advance the observation
   // without a fresh read. An unguarded legacy/bypass response does not.
   if (expectedRevision && isRecord(response)) {
     const revision = stringOrNull(response.state_revision);
     if (revision) persistObservedStateRevision(ref, revision, io.env);
   }
+  if (guardRoomState) clearStaleWriteRecovery(ref, io.env);
   return response;
 }
 
@@ -6713,7 +7420,7 @@ function eventRequestOptions(
   const options: RequestOptions = {
     query: withoutUndefined({
       ...readQuery(ref),
-      since_seq: flags["since-seq"],
+      since_seq: flags.event === undefined ? flags.since : String(Number(flags.event) - 1),
       since_event_id: flags["since-event-id"],
       limit: flags.limit,
     }),
@@ -7448,6 +8155,20 @@ function renderRoomRead(
   env: Record<string, string | undefined>,
 ): string {
   const lines = [`Room ${String(response.slug ?? ref.slug)}`];
+  const discussionCount = Array.isArray(response.discussion)
+    ? response.discussion.filter(isRecord).length
+    : 0;
+  const earlierDiscussion = numberOrNull(response.discussion_earlier) ?? 0;
+  const totalDiscussion = discussionCount + earlierDiscussion;
+  const page = isRecord(response.page) ? response.page : {};
+  const roomEvent =
+    numberOrNull(page.room_event) ?? numberOrNull(response.current_through) ?? 0;
+  lines.push(
+    `SNAPSHOT — current working state; latest ${discussionCount} of ${totalDiscussion} discussion post${totalDiscussion === 1 ? "" : "s"}; cursor now at event ${roomEvent}.`,
+  );
+  if (earlierDiscussion > 0) {
+    lines.push(`Earlier discussion is not included here: ${grpCommand("timeline")}`);
+  }
   const about = stringOrNull(response.about);
   if (about) lines.push(`Project: ${about}`);
   const brief = typeof response.brief === "string" ? response.brief.trim() : "";
@@ -9246,9 +9967,9 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
     summary:
       "Read the room. Your first read is a fresh working-set snapshot; once a watch (or --since) stores your position, later reads return paged catch-up deltas.",
     flags: [
-      "--full           fresh working-set snapshot; skips the delta (not full history or artifact bytes)",
+      "--snapshot       fresh current-state snapshot; skips catch-up (not full history or artifact bytes)",
       "--decision=N     one decision's thread — question, options, outcome, its discussion (never moves your position)",
-      "--since=N        everything after event seq N (moves your position)",
+      "--since=N        everything after event N (moves your position)",
       "--since=last     everything after your stored position",
       "--json           raw JSON (snapshot or delta)",
     ],
@@ -9293,7 +10014,6 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "--agreement           resolves only when every voter accepts the same option;",
       "                      disagreement keeps it open (grp accept N to accept)",
       "--eligible=A,B        limit who can choose on this question",
-      "--post-anyway         deliberately bypass the read-before-write guard",
     ],
     example: 'grp ask "Choose one dinner plan"',
   },
@@ -9303,7 +10023,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "End an open question without choosing an outcome. Requires room conclusion authority; the original question, options, choices, and abstentions remain recorded.",
     flags: [
       "--reason=TEXT    required explanation recorded in the signed cancellation receipt",
-      "                  cancellation always requires a fresh read and has no --post-anyway bypass",
+      "                  cancellation always requires a fresh read",
     ],
     example: 'grp cancel 1 --reason="The premise changed"',
   },
@@ -9324,7 +10044,6 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
     flags: [
       "--file=PATH      propose the file's contents as the option text",
       "--decision=N     target decision N (the seq in grp read); default: the open decision",
-      "--post-anyway    deliberately bypass the read-before-write guard",
     ],
     example: 'grp propose "Tamarind Table at 7:30"',
   },
@@ -9337,7 +10056,6 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "--stance=KIND    agree, disagree, clarify, or extend",
       "--decision=N     attach to decision N (the seq in grp read); default: the open decision",
       "--as-discussion  confirm that substantial content intentionally belongs in chat",
-      "--post-anyway    deliberately bypass the read-before-write guard",
       "--composing",
       "    Signal briefly that you are preparing a discussion message.",
       "    The signal expires automatically and clears when you post.",
@@ -9347,7 +10065,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
   },
   action: {
     usage:
-      "grp act start|read|take|handoff|request-review|review|complete|resume|fail|cancel|takeover ...",
+      "grp act start|read|reviews|take|handoff|request-review|review|complete|resume|fail|cancel|takeover ...",
     summary:
       "Use an action when you are going to do something and the room should track who has it, what you report back, and what counts as complete.\n\nBy default, starting an action means you hold it and your completion report finishes it. Use --completion=group when the room must agree before GRP marks a single or handoff action complete. Use all when every required participant must report.\n\nThe action record lives in GRP. The work may happen elsewhere, or the holder may edit an optional native GRP artifact.",
     flags: [
@@ -9360,16 +10078,18 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "  all defaults to the joined participant roster; --required=A,B freezes a named roster",
       "  initial native artifact: --artifact-name=TEXT --artifact-file=PATH",
       "read ID [room]",
+      "reviews ID [room] [--version=N] [--reviewer=NAME]  read formal review history",
       "take ID [room]  become holder of an available handoff action",
       "handoff ID [room] --to=NAME|ID|group [--note=TEXT]",
       "request-review ID [room]",
       "  for a group-completion action with an artifact: freeze its exact current revision",
       "  your approval is recorded; every other eligible participant reviews the same bytes",
-      "review ID [room] [--approve | --request-changes --body=TEXT|--file=PATH]",
+      "review ID [room] [--approve | --request-changes] [--body=TEXT|--file=PATH]",
       "  with no disposition, read the exact frozen revision and the available responses",
       "  each required participant records approve or request-changes for the exact revision",
       "  all responses are collected; any requested changes return the action to its editor",
       "  unanimous exact-revision approval completes the action",
+      "  optional formal review commentary is limited to 32,000 characters",
       "complete ID [room] [--result-text=TEXT]",
       "  holder: report done and complete the action",
       "  group without an artifact: freeze exact result text and ask whether to complete",
@@ -9404,9 +10124,14 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
   },
   "action:review": {
     usage:
-      "grp act review <action-id> [room] [--approve | --request-changes --body=TEXT|--file=PATH]",
+      "grp act review <action-id> [room] [--approve | --request-changes] [--body=TEXT|--file=PATH]",
     summary:
-      "Read and respond to one action's exact pending artifact revision. With no disposition, this prints the frozen bytes and available responses. Record approve or request-changes against those bytes. A response may be updated while the round remains open.",
+      "Read and respond to one action's exact pending artifact revision. With no disposition, this prints the frozen bytes and available responses. Record approve or request-changes against those bytes. Either disposition may include formal commentary with --body or --file (maximum 32,000 characters); requesting changes requires it. A response may be updated while the round remains open.",
+  },
+  "action:reviews": {
+    usage: "grp act reviews <action-id> [room] [--version=N] [--reviewer=NAME]",
+    summary:
+      "Read the durable formal review history for one action, grouped by exact artifact version. The base view is compact; --version shows full response bodies for one version; --reviewer filters by display name or participant ID.",
   },
   "action:resume": {
     usage: "grp act resume <action-id> [room] --reason=TEXT",
@@ -9414,12 +10139,13 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "Resume your action when its group-completion proposal needs revision.\n\nOnly the current completion proposer may retract that unresolved proposal. GRP preserves the canceled decision, restores the same action with a fresh fencing epoch, and returns its artifact to the holder. Terminal actions never resume.",
   },
   artifact: {
-    usage: "grp artifact create|read|patch|publish ...",
+    usage: "grp artifact create|read|diff|patch|publish ...",
     summary:
-      "An artifact is an optional versioned resource attached to an action. Reads label the blocks in one exact revision ¶1, ¶2, ¶3, ... . Only the current action holder may edit a native artifact. For group completion, request exact review from the owning action; unanimous approval of that revision completes it.",
+      "An artifact is an optional versioned resource attached to an action. Reads number the blocks in one exact revision; diff compares two immutable revisions in unified-diff form. Only the current action holder may edit a native artifact. For group completion, request exact review from the owning action; unanimous approval of that revision completes it.",
     flags: [
       "create [room] --name=TEXT --action=ID [--kind=native] [--file=PATH|--content=TEXT]",
-      "read ID [room] [--version=N]  native reads show ¶1, ¶2, ... blocks",
+      "read ID [room] [--version=N]  native reads show numbered blocks",
+      "diff ID [room] --from-version=N --to-version=M  compare exact revisions",
       "patch ID [room] --action=ID --file=changes.json  apply precise edits atomically",
       "publish ID [room] --action=ID --file=PATH  intentionally replace or synchronize the whole artifact",
       "External Git: --kind=external --external-provider=git --uri=HTTPS --path=PATH --provider-revision=COMMIT --sha256=HEX",
@@ -9429,7 +10155,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
   "artifact:patch": {
     usage: "grp artifact patch <artifact-id> [room] --action=ID --file=changes.json",
     summary:
-      "Apply one or more precise edits to one exact native-artifact revision.\n\nFirst read the artifact. GRP labels the blocks in that revision ¶1, ¶2, ¶3, ... Use those numbers in a patch file.\n\nGRP checks that your base revision is still current, then applies every edit together or none. If the artifact changed, nothing is written and you are directed to read it again.",
+      "Apply one or more precise edits to one exact native-artifact revision.\n\nFirst read the artifact. GRP numbers the blocks in that revision 1, 2, 3, ... Use those revision-local numbers in a patch file.\n\nGRP checks that your base revision is still current, then applies every edit together or none. If the artifact changed, nothing is written and you are directed to read it again.",
     flags: [
       "Available edits:",
       "  replace        replace one block",
@@ -9451,6 +10177,12 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "Block numbers refer to the named base revision. They may change after an insertion or deletion, so read the artifact again before another patch.",
       "Use artifact publish when you intentionally need to replace the whole artifact.",
     ],
+  },
+  "artifact:diff": {
+    usage:
+      "grp artifact diff <artifact-id> [room] (--from-version=N|--from-revision=ID) (--to-version=M|--to-revision=ID)",
+    summary:
+      "Compare two exact immutable native-artifact revisions. Human output uses conventional unified-diff headers and +/- lines. JSON returns both exact revision records, including stable block identities and digests.",
   },
   start: {
     usage: "grp start choosing [room]",
@@ -9493,8 +10225,13 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
   },
   timeline: {
     usage: "grp timeline [room]",
-    summary: "Print the complete room event log.",
-    flags: ["--jsonl          one JSON event per line", "--limit=N        stop after N events"],
+    summary: "Print room history without moving your read position. The default auto-paginates through the complete timeline.",
+    flags: [
+      "--since=N        start after event N",
+      "--event=N        retrieve exactly event N",
+      "--limit=N        stop after N events",
+      "--jsonl          one JSON event per line",
+    ],
     example: "grp timeline --limit=20",
   },
   watch: {
@@ -9614,8 +10351,8 @@ function printRoomHelp(write: (text: string) => void): void {
       "  --mandate=JWS    mandate for mandate-aware REST calls",
       "  --bearer=TOKEN   bearer token for OAuth/restricted-key calls",
       "  --json           formatted JSON output",
-      "  --full           fresh working-set snapshot on read (not full history or artifact bytes)",
-      "  --since=N|last   read activity after an event seq / your stored position",
+      "  --snapshot       fresh current-state snapshot on read (not full history or artifact bytes)",
+      "  --since=N|last   read activity after an event / your stored position",
       "  --jsonl          one JSON event per line for timeline/watch",
       "  --timeout=N      bounded watch: exit 0 with 'nothing new' after N seconds",
       "  --quiet          print only the durable handle when available",

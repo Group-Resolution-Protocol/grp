@@ -70,7 +70,7 @@ prejudge where a successful design ultimately belongs.
 
 - **CLI — Bounded replay and safe acknowledgement** — make the existing
   sequence controls legible at the moment they are needed. `grp read` already
-  pages complete unread events, and `grp timeline --since-seq=N --limit=M` can
+  pages complete unread events, and `grp timeline --since=N --limit=M` can
   retrieve a bounded human-readable range without moving the read mark. Reads
   should also print the exact event range and a copyable replay or continuation
   command; help should expose the current controls; and experiments should

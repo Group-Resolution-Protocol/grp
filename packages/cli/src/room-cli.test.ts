@@ -2560,6 +2560,83 @@ describe("room CLI requests", () => {
     expect(urls[1]?.searchParams.get("since_seq")).toBe("1000");
   });
 
+  it("auto-paginates the complete human timeline using event page metadata", async () => {
+    const urls: URL[] = [];
+    let stdout = "";
+    const code = await runRoomCli(["timeline", "abc123"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: async (input) => {
+        const url = new URL(String(input));
+        urls.push(url);
+        const since = Number(url.searchParams.get("since") ?? 0);
+        if (since === 0) {
+          return jsonResponse({
+            slug: "abc123",
+            current_through: 2,
+            page: { through_event: 2, room_event: 4, complete: false, next_since: 2 },
+            new: [
+              { seq: 1, type: "discussion", at: "2026-08-25T12:00:00.000Z", who: "Silica", said: "First" },
+              { seq: 2, type: "discussion", at: "2026-08-25T12:01:00.000Z", who: "Cobalt", said: "Second" },
+            ],
+          });
+        }
+        return jsonResponse({
+          slug: "abc123",
+          current_through: 4,
+          page: { through_event: 4, room_event: 4, complete: true },
+          new: [
+            { seq: 3, type: "discussion", at: "2026-08-25T12:02:00.000Z", who: "Argon", said: "Third" },
+            { seq: 4, type: "discussion", at: "2026-08-25T12:03:00.000Z", who: "Neon", said: "Fourth" },
+          ],
+        });
+      },
+      env: operatorEnv(),
+    });
+
+    expect(code).toBe(0);
+    expect(urls).toHaveLength(2);
+    expect(urls[0]?.searchParams.get("since")).toBe("0");
+    expect(urls[1]?.searchParams.get("since")).toBe("2");
+    expect(stdout).toContain("Silica: First");
+    expect(stdout).toContain("Neon: Fourth");
+  });
+
+  it("returns exactly one requested event in the raw timeline", async () => {
+    let stdout = "";
+    const code = await runRoomCli(["timeline", "abc123", "--event=3", "--jsonl"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: async (input) => {
+        const url = new URL(String(input));
+        expect(url.searchParams.get("since_seq")).toBe("2");
+        expect(url.searchParams.get("limit")).toBe("1");
+        return jsonResponse({
+          slug: "abc123",
+          events: [
+            {
+              id: "e3",
+              seq: 3,
+              event_type: "discussion.posted",
+              occurred_at: "2026-08-25T12:02:00.000Z",
+              data: {},
+            },
+          ],
+          page: { through_event: 3, room_event: 4, complete: false },
+        });
+      },
+      env: operatorEnv(),
+    });
+
+    expect(code).toBe(0);
+    expect(stdout.trim().split("\n")).toHaveLength(1);
+    expect(JSON.parse(stdout)).toMatchObject({ id: "e3", seq: 3 });
+  });
+
   it("prints timeline history through the preferred timeline alias", async () => {
     let stdout = "";
     const code = await runRoomCli(["timeline", "abc123"], {
@@ -4945,7 +5022,7 @@ describe("spec 113 delta reads", () => {
       "This room resolves when its configured choice rules determine the outcome",
     );
     expect(stdout).not.toContain("every participant has chosen");
-    expect(stdout).toContain("Current through seq 8.");
+    expect(stdout).toContain("COMPLETE CATCH-UP — 3 updates shown, through event 8 of 8.");
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(8);
   });
@@ -5454,10 +5531,10 @@ describe("spec 113 delta reads", () => {
     expect(stderr).toContain('seq 2: "Which venue?"');
   });
 
-  it("--full requests a fresh working-set snapshot rather than exhaustive content", async () => {
+  it("--snapshot requests a fresh working-set snapshot rather than exhaustive content", async () => {
     let sinceParam: string | null = "unset";
     let includeParam: string | null = "unset";
-    const code = await runRoomCli(["read", "--full"], {
+    const code = await runRoomCli(["read", "--snapshot"], {
       stdout: () => {},
       stderr: () => {},
       fetch: async (input, init) => {
@@ -5522,7 +5599,7 @@ describe("spec 113 delta reads", () => {
       env: providerEnv(roomConfig({ lastSeenSeq: 9 })),
     });
     expect(code).toBe(0);
-    expect(stdout).toContain("Nothing new since seq 9.");
+    expect(stdout).toContain("Nothing new through event 9.");
   });
 });
 
@@ -6504,59 +6581,125 @@ describe.skip("obsolete spec 224 candidate — replaced by spec 228", () => {
     expect(headers.get("x-grp-expected-room-revision")).toBe("41");
   });
 
-  it("fails closed on a stale observation and gives an explicit deliberate bypass", async () => {
+  it("offers one payload-bound stale recovery only after a read and a second rejection", async () => {
     const env = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    let currentRevision = "45";
+    let guardedWrites = 0;
+    let forcedWrites = 0;
+    const fetch = withCoordinationDiscovery(async (input, init) => {
+      const request = new Request(input, init);
+      if (request.method === "GET") {
+        return jsonResponse({ state_revision: currentRevision, brief: "Fresh room state." });
+      }
+      const expected = request.headers.get("x-grp-expected-room-revision");
+      if (expected) {
+        guardedWrites += 1;
+        return jsonResponse(
+          {
+            error: {
+              code: "state.precondition_failed",
+              message: "room changed",
+              details: {
+                expected_state_revision: expected,
+                current_state_revision: currentRevision,
+                posted: false,
+              },
+            },
+          },
+          412,
+        );
+      }
+      forcedWrites += 1;
+      return jsonResponse({ accepted: true, options: [], state_revision: "47" });
+    });
+
     let stderr = "";
-    const conflict = {
-      error: {
-        code: "state.precondition_failed",
-        message: "room changed",
-        details: {
-          expected_state_revision: "41",
-          current_state_revision: "45",
-          posted: false,
-        },
-      },
-    };
     expect(
       await runRoomCli(["propose", "new plan"], {
         stdout: () => {},
         stderr: (text) => {
           stderr += text;
         },
-        fetch: withCoordinationDiscovery(async () => jsonResponse(conflict, 412)),
+        fetch,
         env,
       }),
     ).toBe(1);
-    expect(stderr).toBe(
-      [
-        "Room changed from revision 41 to 45 while you were working.",
-        "Nothing was posted.",
-        "Run: grp read",
-        "Then retry, or use --post-anyway to deliberately bypass the guard.",
-        "",
-      ].join("\n"),
-    );
-    expect(
-      JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8")).currentRoom.observedStateRevision,
-    ).toBe("41");
+    expect(stderr).toContain("Next: grp read");
+    expect(stderr).not.toContain("--force-stale-post");
 
-    let bypassHeader: string | null = "not-called";
+    let preemptive = "";
     expect(
-      await runRoomCli(["propose", "new plan", "--post-anyway"], {
+      await runRoomCli(["propose", "new plan", "--force-stale-post"], {
+        stdout: () => {},
+        stderr: (text) => {
+          preemptive += text;
+        },
+        fetch,
+        env,
+      }),
+    ).toBe(1);
+    expect(preemptive).toContain("read the room before using --force-stale-post");
+
+    expect(
+      await runRoomCli(["read", "--json"], {
         stdout: () => {},
         stderr: () => {},
-        fetch: async (input, init) => {
-          bypassHeader = new Request(input, init).headers.get("x-grp-expected-room-revision");
-          return jsonResponse({ accepted: true, options: [], state_revision: "46" });
-        },
+        fetch,
         env,
       }),
     ).toBe(0);
-    expect(bypassHeader).toBeNull();
+
+    currentRevision = "46";
+    stderr = "";
     expect(
-      JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8")).currentRoom.observedStateRevision,
-    ).toBe("41");
+      await runRoomCli(["propose", "new plan"], {
+        stdout: () => {},
+        stderr: (text) => {
+          stderr += text;
+        },
+        fetch,
+        env,
+      }),
+    ).toBe(1);
+    expect(stderr).toContain("--force-stale-post");
+
+    let wrongPayload = "";
+    expect(
+      await runRoomCli(["propose", "different plan", "--force-stale-post"], {
+        stdout: () => {},
+        stderr: (text) => {
+          wrongPayload += text;
+        },
+        fetch,
+        env,
+      }),
+    ).toBe(1);
+    expect(wrongPayload).toContain("exact rejected command payload");
+
+    expect(
+      await runRoomCli(["propose", "new plan", "--force-stale-post"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch,
+        env,
+      }),
+    ).toBe(0);
+    expect(guardedWrites).toBe(2);
+    expect(forcedWrites).toBe(1);
+
+    let reused = "";
+    expect(
+      await runRoomCli(["propose", "new plan", "--force-stale-post"], {
+        stdout: () => {},
+        stderr: (text) => {
+          reused += text;
+        },
+        fetch,
+        env,
+      }),
+    ).toBe(1);
+    expect(reused).toContain("available only after this exact payload was rejected stale");
+    expect(readFileSync(String(env.GRP_CONFIG), "utf8")).not.toContain("new plan");
   });
 
   it("emits structured stale-write evidence and does not claim a guard on legacy hosts", async () => {
@@ -6890,7 +7033,7 @@ describe.skip("obsolete spec 224 candidate — replaced by spec 228", () => {
     let postAnywayError = "";
     let postAnywayFetches = 0;
     expect(
-      await runRoomCli(["discuss", `--body=${"y".repeat(10_001)}`, "--post-anyway"], {
+      await runRoomCli(["discuss", `--body=${"y".repeat(10_001)}`, "--force-stale-post"], {
         stdout: () => {},
         stderr: (text) => {
           postAnywayError += text;
@@ -7707,6 +7850,180 @@ describe("spec 228 action-centered coordination", () => {
     { id: "p_cobalt", display_name: "Cobalt" },
   ];
 
+  it("caches the coordination capability instead of rediscovering it before each guarded write", async () => {
+    const env = providerEnv(
+      roomConfig({
+        token: "t_1",
+        observedStateRevision: "41",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    let discoveryCalls = 0;
+    let expectedHeader: string | null = null;
+    expect(
+      await runRoomCli(["discuss", "One guarded message"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          if (new URL(request.url).pathname === "/.well-known/grp.json") {
+            discoveryCalls += 1;
+            return jsonResponse({});
+          }
+          expectedHeader = request.headers.get("x-grp-expected-room-revision");
+          return jsonResponse({ ok: true, state_revision: "42" });
+        },
+        env,
+      }),
+    ).toBe(0);
+    expect(discoveryCalls).toBe(0);
+    expect(expectedHeader).toBe("41");
+  });
+
+  it("catches up once after a stale post without resending and only then arms the exact bypass", async () => {
+    const env = providerEnv(
+      roomConfig({
+        token: "t_1",
+        lastSeenSeq: 8,
+        observedStateRevision: "41",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    let writes = 0;
+    let reads = 0;
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      if (request.method === "GET") {
+        reads += 1;
+        const event = 8 + reads;
+        return jsonResponse({
+          slug: "abc123",
+          status: "open",
+          brief: "No decision is open.",
+          state_revision: String(44 + reads),
+          current_through: event,
+          page: { through_event: event, room_event: event, complete: true },
+          new: [],
+        });
+      }
+      writes += 1;
+      if (writes <= 2) {
+        return jsonResponse(
+          {
+            error: {
+              code: "state.precondition_failed",
+              message: "room changed",
+              details: {
+                expected_state_revision: request.headers.get("x-grp-expected-room-revision"),
+                current_state_revision: String(44 + writes),
+                posted: false,
+              },
+            },
+          },
+          412,
+        );
+      }
+      return jsonResponse({ ok: true, state_revision: "47" });
+    };
+
+    let first = "";
+    expect(
+      await runRoomCli(["discuss", "Exact payload"], {
+        stdout: () => {},
+        stderr: (text) => {
+          first += text;
+        },
+        fetch,
+        env,
+      }),
+    ).toBe(1);
+    expect(writes).toBe(1);
+    expect(reads).toBe(1);
+    expect(first).toContain("COMPLETE CATCH-UP");
+    expect(first).toContain("NOT POSTED — no automatic retry was attempted");
+    expect(first).not.toContain("--force-stale-post");
+
+    let second = "";
+    expect(
+      await runRoomCli(["discuss", "Exact payload"], {
+        stdout: () => {},
+        stderr: (text) => {
+          second += text;
+        },
+        fetch,
+        env,
+      }),
+    ).toBe(1);
+    expect(writes).toBe(2);
+    expect(reads).toBe(2);
+    expect(second).toContain("--force-stale-post");
+
+    expect(
+      await runRoomCli(["discuss", "Exact payload", "--force-stale-post"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch,
+        env,
+      }),
+    ).toBe(0);
+    expect(writes).toBe(3);
+    expect(reads).toBe(2);
+  });
+
+  it("renders durable action review history and filters one exact version", async () => {
+    const env = providerEnv(roomConfig({ token: "t_1" }));
+    let stdout = "";
+    expect(
+      await runRoomCli(["act", "reviews", "act_1", "--version=2"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input) => {
+          const url = new URL(String(input));
+          const pathname = url.pathname;
+          if (pathname.endsWith("/actions/act_1") && url.searchParams.get("reviews") === "1") {
+            return jsonResponse({
+              action: { id: "act_1" },
+              rounds: [
+                {
+                  event: 20,
+                  revision: { id: "rev_1", ordinal: 1, sha256: "a".repeat(64) },
+                  reviews: [
+                    {
+                      reviewer_id: "p_cobalt",
+                      reviewer_name: "Cobalt",
+                      disposition: "changes_requested",
+                      body: "Old concern",
+                    },
+                  ],
+                },
+                {
+                  event: 30,
+                  revision: { id: "rev_2", ordinal: 2, sha256: "b".repeat(64) },
+                  reviews: [
+                    {
+                      reviewer_id: "p_cobalt",
+                      reviewer_name: "Cobalt",
+                      disposition: "approve",
+                      body: "Concern resolved",
+                    },
+                  ],
+                },
+              ],
+            });
+          }
+          return jsonResponse({ action: { id: "act_1", revision: "7" } });
+        },
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("Artifact version 2 — revision rev_2; requested at event 30");
+    expect(stdout).toContain("Cobalt — approve");
+    expect(stdout).toContain("Concern resolved");
+    expect(stdout).not.toContain("Old concern");
+  });
+
   it("publishes only bounded chat-composing presence", async () => {
     const env = providerEnv(roomConfig());
     let postedBody: unknown;
@@ -8476,8 +8793,8 @@ describe("spec 228 action-centered coordination", () => {
       }),
     ).toBe(0);
     expect(human).toContain("Version: v4");
-    expect(human).toContain("¶1 [paragraph]");
-    expect(human).toContain("¶2 [paragraph]");
+    expect(human).toContain("1  paragraph");
+    expect(human).toContain("2  paragraph");
     expect(human).not.toContain("rev_uuid_4");
     expect(human).not.toContain("block_internal_2");
     expect(human).not.toContain("b".repeat(64));
@@ -8496,6 +8813,77 @@ describe("spec 228 action-centered coordination", () => {
     expect(json).toContain("rev_uuid_4");
     expect(json).toContain("block_internal_2");
     expect(json).toContain("b".repeat(64));
+  });
+
+  it("compares exact artifact revisions using unified-diff presentation", async () => {
+    const env = providerEnv(roomConfig());
+    const revision = (ordinal: number) => ({
+      artifact: { id: "doc_1", name: "Term sheet", revision: `rr_${ordinal}` },
+      revision: {
+        id: `rev_uuid_${ordinal}`,
+        ordinal,
+        blocks:
+          ordinal === 3
+            ? [
+                {
+                  id: "economics",
+                  number: 1,
+                  kind: "paragraph",
+                  content: "Pre-money valuation is $32m.",
+                  content_sha256: "a".repeat(64),
+                },
+                {
+                  id: "obsolete",
+                  number: 2,
+                  kind: "paragraph",
+                  content: "Old reporting term.",
+                  content_sha256: "b".repeat(64),
+                },
+              ]
+            : [
+                {
+                  id: "economics",
+                  number: 1,
+                  kind: "paragraph",
+                  content: "Pre-money valuation is $33m.",
+                  content_sha256: "c".repeat(64),
+                },
+                {
+                  id: "new-rights",
+                  number: 2,
+                  kind: "paragraph",
+                  content: "Quarterly information rights.",
+                  content_sha256: "d".repeat(64),
+                },
+              ],
+      },
+    });
+    let stdout = "";
+    expect(
+      await runRoomCli(
+        ["artifact", "diff", "doc_1", "--from-version=3", "--to-version=4"],
+        {
+          stdout: (text) => {
+            stdout += text;
+          },
+          stderr: () => {},
+          fetch: async (input) => {
+            const version = new URL(new Request(input).url).searchParams.get("version");
+            return jsonResponse(revision(version === "3" ? 3 : 4));
+          },
+          env,
+        },
+      ),
+    ).toBe(0);
+    expect(stdout).toContain("--- artifact v3");
+    expect(stdout).toContain("+++ artifact v4");
+    expect(stdout).toContain("@@ -1,1 +1,1 @@ paragraph");
+    expect(stdout).toContain("-Pre-money valuation is $32m.");
+    expect(stdout).toContain("+Pre-money valuation is $33m.");
+    expect(stdout).toContain("@@ -2,1 +2,1 @@ paragraph");
+    expect(stdout).toContain("-Old reporting term.");
+    expect(stdout).toContain("+Quarterly information rights.");
+    expect(stdout).not.toContain("economics");
   });
 
   it("translates a human paragraph edit to exact resource-local patch coordinates", async () => {
@@ -8981,6 +9369,12 @@ describe("spec 228 action-centered coordination", () => {
         fetch: withCoordinationDiscovery(async (input, init) => {
           const request = new Request(input, init);
           const url = new URL(request.url);
+          if (
+            url.pathname.endsWith("/actions/act_1") &&
+            url.searchParams.get("reviews") === "1"
+          ) {
+            return jsonResponse({ action, rounds: [] });
+          }
           if (url.pathname.endsWith("/actions/act_1")) return jsonResponse({ action });
           if (url.pathname.endsWith("/artifacts/doc_1")) return jsonResponse(exact);
           throw new Error(`unexpected request ${request.method} ${url.pathname}`);
@@ -8994,7 +9388,33 @@ describe("spec 228 action-centered coordination", () => {
     expect(stdout).toContain("grp act review act_1 --approve");
     expect(stdout).toContain("grp act review act_1 --request-changes");
     expect(stdout).toContain("--file=review.md");
+    expect(stdout).toContain("Review body limit: 32,000 characters");
     expect(stdout).toContain("A response may be updated while this review round remains open");
+
+    let oversizedError = "";
+    let oversizedWrites = 0;
+    expect(
+      await runRoomCli(
+        ["act", "review", "act_1", "--approve", `--body=${"x".repeat(32_001)}`],
+        {
+          stdout: () => {},
+          stderr: (text) => {
+            oversizedError += text;
+          },
+          fetch: withCoordinationDiscovery(async (input, init) => {
+            const request = new Request(input, init);
+            const url = new URL(request.url);
+            if (request.method === "PUT") oversizedWrites += 1;
+            if (url.pathname.endsWith("/actions/act_1")) return jsonResponse({ action });
+            if (url.pathname.endsWith("/artifacts/doc_1")) return jsonResponse(exact);
+            throw new Error(`unexpected request ${request.method} ${url.pathname}`);
+          }),
+          env,
+        },
+      ),
+    ).toBe(1);
+    expect(oversizedError).toContain("between 1 and 32,000 characters");
+    expect(oversizedWrites).toBe(0);
 
     let postedBody: unknown;
     stdout = "";
@@ -9013,7 +9433,7 @@ describe("spec 228 action-centered coordination", () => {
       },
     };
     expect(
-      await runRoomCli(["act", "review", "act_1", "--approve"], {
+      await runRoomCli(["act", "review", "act_1", "--approve", "--body=Looks exact"], {
         stdout: (text) => {
           stdout += text;
         },
@@ -9042,6 +9462,7 @@ describe("spec 228 action-centered coordination", () => {
     expect(postedBody).toEqual({
       expected_action_revision: "ar_10",
       disposition: "approve",
+      body: "Looks exact",
     });
     expect(stdout).toContain("State: completed");
     expect(stdout).toContain('"revision_id":"rev_uuid_5"');
@@ -10156,7 +10577,7 @@ describe("spec 228 action-centered coordination", () => {
         }),
       ).toBe(1);
       expect(stderr).toContain(
-        "usage: grp act start|read|take|handoff|request-review|review|complete|resume|fail|cancel|takeover",
+        "usage: grp act start|read|reviews|take|handoff|request-review|review|complete|resume|fail|cancel|takeover",
       );
       expect(fetches).toBe(0);
     }
@@ -11288,7 +11709,7 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
     expect(secondWatch).toContain("Nothing new after 2s");
   }, 20000);
 
-  it("watch → read --full → watch does not re-fire the pointer wake", async () => {
+  it("watch → read --snapshot → watch does not re-fire the pointer wake", async () => {
     const env = providerEnv(roomConfig({ participantId: "p_me", lastSeenSeq: 30 }));
     const oldWake = JSON.stringify({
       id: "e42",
@@ -11907,7 +12328,7 @@ describe("spec 193 — safe room-read pagination", () => {
     expect(firstPage).not.toContain("second complete event line 1");
     expect(firstPage).not.toContain("later event remains readable");
     expect(firstPage).toContain("More unread activity remains: grp read");
-    expect(firstPage).toContain("Current through seq 11.");
+    expect(firstPage).toContain("PARTIAL CATCH-UP — 1 update shown, through event 11");
     let saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(11);
     expect(saved.currentRoom.observedStateRevision).toBe("opaque-10");
@@ -11928,7 +12349,7 @@ describe("spec 193 — safe room-read pagination", () => {
     expect(secondPage).toContain("second complete event line 60");
     expect(secondPage).toContain("later event remains readable");
     expect(secondPage).not.toContain("More unread activity remains");
-    expect(secondPage).toContain("Current through seq 13.");
+    expect(secondPage).toContain("COMPLETE CATCH-UP — 2 updates shown, through event 13");
     saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(13);
     expect(saved.currentRoom.observedStateRevision).toBe("opaque-13");
@@ -11992,7 +12413,7 @@ describe("spec 193 — safe room-read pagination", () => {
     expect(code).toBe(0);
     expect(stdout).toContain(`first-${"a".repeat(60_000)}`);
     expect(stdout).not.toContain("second-");
-    expect(stdout).toContain("Current through seq 11.");
+    expect(stdout).toContain("PARTIAL CATCH-UP — 1 update shown, through event 11");
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(11);
   });
@@ -12015,7 +12436,7 @@ describe("spec 193 — safe room-read pagination", () => {
     expect(saved.currentRoom.lastSeenSeq).toBe(13);
   });
 
-  it("honors limit and since-seq on the human timeline without moving the read mark", async () => {
+  it("honors limit and since on the human timeline without moving the read mark", async () => {
     const env = providerEnv(roomConfig());
     const seenSince: number[] = [];
     const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -12044,7 +12465,7 @@ describe("spec 193 — safe room-read pagination", () => {
 
     let since = "";
     expect(
-      await runRoomCli(["timeline", "--since-seq=11", "--limit=1"], {
+      await runRoomCli(["timeline", "--since=11", "--limit=1"], {
         stdout: (text) => {
           since += text;
         },

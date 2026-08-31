@@ -65,6 +65,7 @@ export interface StaleWriteRecovery {
   rejectedCurrentRevision: string;
   expiresAt: string;
   readStateRevision?: string;
+  forceAvailable?: boolean;
 }
 
 export interface CliProfile {
@@ -919,6 +920,7 @@ function normalizeRoomContext(raw: Partial<RoomContext>): RoomContext {
     typeof raw.baseUrl === "string" && raw.baseUrl.trim().length > 0
       ? normalizeBaseUrl(raw.baseUrl)
       : undefined;
+  const staleWriteRecovery = normalizeStaleWriteRecovery(raw.staleWriteRecovery);
   return {
     ...(provider ? { provider } : {}),
     ...(baseUrl ? { baseUrl } : {}),
@@ -943,9 +945,7 @@ function normalizeRoomContext(raw: Partial<RoomContext>): RoomContext {
     raw.coordinationStateCapability === "absent"
       ? { coordinationStateCapability: raw.coordinationStateCapability }
       : {}),
-    ...(normalizeStaleWriteRecovery(raw.staleWriteRecovery)
-      ? { staleWriteRecovery: normalizeStaleWriteRecovery(raw.staleWriteRecovery) }
-      : {}),
+    ...(staleWriteRecovery ? { staleWriteRecovery } : {}),
   };
 }
 
@@ -975,6 +975,7 @@ function normalizeStaleWriteRecovery(raw: unknown): StaleWriteRecovery | undefin
     ...(typeof value.readStateRevision === "string" && value.readStateRevision.length > 0
       ? { readStateRevision: normalizeObservedStateRevision(value.readStateRevision) }
       : {}),
+    ...(value.forceAvailable === true ? { forceAvailable: true } : {}),
   };
 }
 
