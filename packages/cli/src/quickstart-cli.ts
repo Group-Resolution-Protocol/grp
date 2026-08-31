@@ -83,7 +83,7 @@ export async function runQuickstartCli(
             current_room: created.slug,
             access: access.label,
             ...(access.passwordGenerated ? { room_password: access.password } : {}),
-            next: ask ? "grp options" : 'grp ask "..."',
+            next: "grp read",
           },
           null,
           2,
@@ -116,6 +116,8 @@ export function renderDefaultsHelp(): string {
     "Rooms:",
     "  - `grp create --about ...` creates a persistent room with no open question.",
     "  - `grp create --about ... --ask ...` creates a room and opens the first question.",
+    "  - `grp read` orients to the shared state. From there, discuss context,",
+    "    coordinate work with `grp act`, ask the group to decide, or watch.",
     "",
     "Creation modes:",
     "  - Quick hosted rooms do not require an account; share the room link, invite,",
@@ -140,7 +142,16 @@ export function renderDefaultsHelp(): string {
     "  - `grp profile set-name NAME` sets the default display name for joins.",
     "  - `grp join ROOM --as NAME` overrides it for one room.",
     "",
-    "Choices:",
+    "Actions:",
+    "  - `grp act start` tracks work inside or outside GRP—who has it, what",
+    "    participants report, and what counts as complete.",
+    "  - Single and handoff actions normally complete when the holder reports done.",
+    "    Start with `--completion=group` when the room must agree before GRP",
+    "    marks the action complete. In every mode, report done with `grp act complete`.",
+    "  - When exact shared work will be revised or approved, attach a native",
+    "    versioned artifact to the action.",
+    "",
+    "Decisions:",
     "  - Default mechanism: simple majority. Others (supermajority, approval,",
     "    ranked, score, quadratic) are chosen at create: grp create --mechanism=...",
     "  - An explicit quorum is an electorate floor: a decision cannot resolve",
@@ -214,12 +225,10 @@ function renderQuickstartDone(
   url: string | undefined,
   about: string,
   access: string,
-  firstQuestion: string | undefined,
+  _firstQuestion: string | undefined,
   generatedPassword?: string,
 ): string {
-  const next = firstQuestion
-    ? ["Room commands:", "  grp read", "  grp options", '  grp propose "..."', '  grp choose "..."']
-    : ["Room commands:", "  grp read", '  grp ask "..."'];
+  const next = ["Next:", "  grp invite --name NAME", "  grp read"];
   return `${[
     "GRP quickstart complete",
     "",

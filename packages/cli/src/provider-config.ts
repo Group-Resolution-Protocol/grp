@@ -44,6 +44,27 @@ export interface RoomContext {
    * client-side version of the shared-cursor bug spec 113 refused to build
    * server-side). */
   lastSeenSeq?: number;
+  /** Spec 224 candidate — the opaque canonical room revision observed by the
+   * last room-wide read (or returned by a successful guarded mutation).
+   * This is intentionally independent from lastSeenSeq: watching events is
+   * not evidence that the caller reread canonical room state. */
+  observedStateRevision?: string;
+  /** Live discovery result for the experimental coordination-state surface.
+   * This is kept separate from the observation token so capability is never
+   * inferred merely because an old token happens to be present. */
+  coordinationStateCapability?: "experimental" | "absent";
+  /** One content-free, short-lived recovery capability for an exact mutation
+   * that the host rejected because room state was stale. */
+  staleWriteRecovery?: StaleWriteRecovery;
+}
+
+export interface StaleWriteRecovery {
+  operation: string;
+  requestBodySha256: string;
+  rejectedExpectedRevision: string;
+  rejectedCurrentRevision: string;
+  expiresAt: string;
+  readStateRevision?: string;
 }
 
 export interface CliProfile {
@@ -338,6 +359,27 @@ export function clearCurrentRoom(config: ProviderConfig): ProviderConfig {
   return rest;
 }
 
+/** Remove one exact host+slug room from local memory, including current. */
+export function forgetRoom(config: ProviderConfig, slug: string, baseUrl: string): ProviderConfig {
+  const next = normalizeProviderConfig(config);
+  const targetBase = normalizeBaseUrl(baseUrl);
+  const rooms = Object.fromEntries(
+    Object.entries(next.rooms ?? {}).filter(
+      ([, room]) => !roomMatches(next, room, slug, targetBase),
+    ),
+  );
+  const currentRoom =
+    next.currentRoom && roomMatches(next, next.currentRoom, slug, targetBase)
+      ? undefined
+      : next.currentRoom;
+  const { currentRoom: _currentRoom, rooms: _rooms, ...rest } = next;
+  return {
+    ...rest,
+    ...(currentRoom ? { currentRoom } : {}),
+    ...(Object.keys(rooms).length > 0 ? { rooms } : {}),
+  };
+}
+
 export function findRememberedRoom(
   config: ProviderConfig,
   slug: string,
@@ -411,6 +453,132 @@ export function setRoomLastSeenSeq(
       slug,
       ...(baseUrl ? { baseUrl } : {}),
       lastSeenSeq,
+    });
+    rooms[roomContextKey(room)] = room;
+  }
+  return {
+    ...next,
+    ...(currentRoom ? { currentRoom } : {}),
+    ...(Object.keys(rooms).length > 0 ? { rooms } : {}),
+  };
+}
+
+/**
+ * Spec 224 candidate — replace a room's opaque canonical observation token
+ * without changing the event cursor or current-room selection. Revisions are
+ * equality tokens, never numbers: replacing "z9" with "a1" is valid.
+ */
+export function setRoomObservedStateRevision(
+  config: ProviderConfig,
+  slug: string,
+  baseUrl: string | undefined,
+  observedStateRevision: string,
+): ProviderConfig {
+  const revision = normalizeObservedStateRevision(observedStateRevision);
+  const next = normalizeProviderConfig(config);
+  const targetBase = baseUrl ? normalizeBaseUrl(baseUrl) : undefined;
+  const rooms = { ...(next.rooms ?? {}) };
+  let touched = false;
+  for (const [key, room] of Object.entries(rooms)) {
+    if (!roomMatches(next, room, slug, targetBase)) continue;
+    rooms[key] = normalizeRoomContext({ ...room, observedStateRevision: revision });
+    touched = true;
+  }
+  let currentRoom = next.currentRoom;
+  if (currentRoom && roomMatches(next, currentRoom, slug, targetBase)) {
+    currentRoom = normalizeRoomContext({ ...currentRoom, observedStateRevision: revision });
+    touched = true;
+  }
+  if (!touched) {
+    const room = normalizeRoomContext({
+      slug,
+      ...(baseUrl ? { baseUrl } : {}),
+      observedStateRevision: revision,
+    });
+    rooms[roomContextKey(room)] = room;
+  }
+  return {
+    ...next,
+    ...(currentRoom ? { currentRoom } : {}),
+    ...(Object.keys(rooms).length > 0 ? { rooms } : {}),
+  };
+}
+
+export function setRoomStaleWriteRecovery(
+  config: ProviderConfig,
+  slug: string,
+  baseUrl: string | undefined,
+  recovery: StaleWriteRecovery | undefined,
+): ProviderConfig {
+  const next = normalizeProviderConfig(config);
+  const targetBase = baseUrl ? normalizeBaseUrl(baseUrl) : undefined;
+  const apply = (room: RoomContext): RoomContext => {
+    if (!recovery) {
+      const { staleWriteRecovery: _removed, ...withoutRecovery } = room;
+      return normalizeRoomContext(withoutRecovery);
+    }
+    return normalizeRoomContext({ ...room, staleWriteRecovery: recovery });
+  };
+  const rooms = { ...(next.rooms ?? {}) };
+  let touched = false;
+  for (const [key, room] of Object.entries(rooms)) {
+    if (!roomMatches(next, room, slug, targetBase)) continue;
+    rooms[key] = apply(room);
+    touched = true;
+  }
+  let currentRoom = next.currentRoom;
+  if (currentRoom && roomMatches(next, currentRoom, slug, targetBase)) {
+    currentRoom = apply(currentRoom);
+    touched = true;
+  }
+  if (!touched && recovery) {
+    const room = apply({ slug, ...(baseUrl ? { baseUrl } : {}) });
+    rooms[roomContextKey(room)] = room;
+  }
+  return {
+    ...next,
+    ...(currentRoom ? { currentRoom } : {}),
+    ...(Object.keys(rooms).length > 0 ? { rooms } : {}),
+  };
+}
+
+/** Record a live discovery result. An absent capability invalidates any
+ * previously observed candidate revision so a downgraded host is never sent
+ * a stale experimental precondition by accident. */
+export function setRoomCoordinationStateCapability(
+  config: ProviderConfig,
+  slug: string,
+  baseUrl: string | undefined,
+  capability: "experimental" | "absent",
+): ProviderConfig {
+  const next = normalizeProviderConfig(config);
+  const targetBase = baseUrl ? normalizeBaseUrl(baseUrl) : undefined;
+  const apply = (room: RoomContext): RoomContext => {
+    if (capability === "absent") {
+      const { observedStateRevision: _removed, ...withoutObservation } = room;
+      return normalizeRoomContext({
+        ...withoutObservation,
+        coordinationStateCapability: capability,
+      });
+    }
+    return normalizeRoomContext({ ...room, coordinationStateCapability: capability });
+  };
+  const rooms = { ...(next.rooms ?? {}) };
+  let touched = false;
+  for (const [key, room] of Object.entries(rooms)) {
+    if (!roomMatches(next, room, slug, targetBase)) continue;
+    rooms[key] = apply(room);
+    touched = true;
+  }
+  let currentRoom = next.currentRoom;
+  if (currentRoom && roomMatches(next, currentRoom, slug, targetBase)) {
+    currentRoom = apply(currentRoom);
+    touched = true;
+  }
+  if (!touched) {
+    const room = apply({
+      slug,
+      ...(baseUrl ? { baseUrl } : {}),
     });
     rooms[roomContextKey(room)] = room;
   }
@@ -768,7 +936,60 @@ function normalizeRoomContext(raw: Partial<RoomContext>): RoomContext {
     raw.lastSeenSeq >= 0
       ? { lastSeenSeq: raw.lastSeenSeq }
       : {}),
+    ...(typeof raw.observedStateRevision === "string" && raw.observedStateRevision.trim().length > 0
+      ? { observedStateRevision: normalizeObservedStateRevision(raw.observedStateRevision) }
+      : {}),
+    ...(raw.coordinationStateCapability === "experimental" ||
+    raw.coordinationStateCapability === "absent"
+      ? { coordinationStateCapability: raw.coordinationStateCapability }
+      : {}),
+    ...(normalizeStaleWriteRecovery(raw.staleWriteRecovery)
+      ? { staleWriteRecovery: normalizeStaleWriteRecovery(raw.staleWriteRecovery) }
+      : {}),
   };
+}
+
+function normalizeStaleWriteRecovery(raw: unknown): StaleWriteRecovery | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const value = raw as Partial<StaleWriteRecovery>;
+  if (
+    typeof value.operation !== "string" ||
+    !/^[a-z][a-z0-9_.\/-]{0,199}$/.test(value.operation) ||
+    typeof value.requestBodySha256 !== "string" ||
+    !/^[0-9a-f]{64}$/.test(value.requestBodySha256) ||
+    typeof value.rejectedExpectedRevision !== "string" ||
+    value.rejectedExpectedRevision.length === 0 ||
+    typeof value.rejectedCurrentRevision !== "string" ||
+    value.rejectedCurrentRevision.length === 0 ||
+    typeof value.expiresAt !== "string" ||
+    !Number.isFinite(Date.parse(value.expiresAt))
+  ) {
+    return undefined;
+  }
+  return {
+    operation: value.operation,
+    requestBodySha256: value.requestBodySha256,
+    rejectedExpectedRevision: normalizeObservedStateRevision(value.rejectedExpectedRevision),
+    rejectedCurrentRevision: normalizeObservedStateRevision(value.rejectedCurrentRevision),
+    expiresAt: value.expiresAt,
+    ...(typeof value.readStateRevision === "string" && value.readStateRevision.length > 0
+      ? { readStateRevision: normalizeObservedStateRevision(value.readStateRevision) }
+      : {}),
+  };
+}
+
+function normalizeObservedStateRevision(raw: string): string {
+  const hasControl = [...raw].some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+  // Preserve opaque equality tokens byte-for-byte. HTTP field values cannot
+  // safely carry controls or significant surrounding whitespace, so reject
+  // those representations instead of silently trimming/changing the token.
+  if (!raw || raw.trim() !== raw || hasControl) {
+    throw new Error("observed room state revision must be a non-empty HTTP-safe opaque string");
+  }
+  return raw;
 }
 
 function roomContextKey(room: RoomContext): string {
@@ -805,6 +1026,10 @@ function mergeRoomContexts(
   const provider = incoming.provider ?? remembered.provider;
   const role = incoming.role ?? remembered.role;
   const participantId = incoming.participantId ?? remembered.participantId;
+  const observedStateRevision = incoming.observedStateRevision ?? remembered.observedStateRevision;
+  const coordinationStateCapability =
+    incoming.coordinationStateCapability ?? remembered.coordinationStateCapability;
+  const staleWriteRecovery = incoming.staleWriteRecovery ?? remembered.staleWriteRecovery;
   // Spec 113 — a read mark only ever moves forward across duplicate contexts.
   const lastSeenSeq =
     incoming.lastSeenSeq !== undefined && remembered.lastSeenSeq !== undefined
@@ -817,6 +1042,15 @@ function mergeRoomContexts(
   if (role) merged.role = role;
   if (participantId) merged.participantId = participantId;
   if (lastSeenSeq !== undefined) merged.lastSeenSeq = lastSeenSeq;
+  if (observedStateRevision !== undefined) merged.observedStateRevision = observedStateRevision;
+  if (staleWriteRecovery !== undefined) merged.staleWriteRecovery = staleWriteRecovery;
+  if (coordinationStateCapability !== undefined) {
+    merged.coordinationStateCapability = coordinationStateCapability;
+    if (coordinationStateCapability === "absent") {
+      const { observedStateRevision: _removed, ...withoutObservation } = merged;
+      return normalizeRoomContext(withoutObservation);
+    }
+  }
   return normalizeRoomContext(merged);
 }
 

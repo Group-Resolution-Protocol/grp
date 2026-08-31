@@ -55,6 +55,103 @@ describe("verifyAgreementReceiptSemantics", () => {
     ).toEqual({ status: "verified" });
   });
 
+  it("verifies an attributed cancellation while preserving signed participation", () => {
+    expect(
+      verifyAgreementReceiptSemantics(
+        receipt({
+          votes: [{ agent_id: "did:one", choice: "yes", weight: 1 }],
+          overrides: [
+            {
+              by: "participant:operator",
+              reason: "The premise changed.",
+              fired_at: "2026-08-21T12:34:56.000Z",
+              authority_source: "conclusion_authority:operator",
+            },
+          ],
+          outcome: {
+            status: "canceled",
+            winning_option: null,
+            tallies: {},
+            diagnostics: { cast_votes: 1, eligible_voters: 2 },
+          },
+        }),
+      ),
+    ).toEqual({ status: "verified" });
+  });
+
+  it("verifies a submitted-action holder withdrawing their exact approval round", () => {
+    expect(
+      verifyAgreementReceiptSemantics(
+        receipt({
+          votes: [{ agent_id: "did:holder", choice: "yes", weight: 1 }],
+          overrides: [
+            {
+              by: "participant:holder",
+              reason: "A reviewer found one correction.",
+              fired_at: "2026-08-22T18:34:13.035Z",
+              authority_source: "action_submission:holder",
+            },
+          ],
+          outcome: {
+            status: "canceled",
+            winning_option: null,
+            tallies: {},
+            diagnostics: { cast_votes: 1, eligible_voters: 2 },
+          },
+        }),
+      ),
+    ).toEqual({ status: "verified" });
+  });
+
+  it("rejects a cancellation without one valid authority-attributed override", () => {
+    const outcome = {
+      status: "canceled",
+      winning_option: null,
+      tallies: {},
+      diagnostics: { cast_votes: 2, eligible_voters: 2 },
+    };
+    expect(verifyAgreementReceiptSemantics(receipt({ overrides: [], outcome }))).toEqual({
+      status: "failed",
+      reason: "canceled agreement receipt must have one attributed cancellation override",
+    });
+    expect(
+      verifyAgreementReceiptSemantics(
+        receipt({
+          overrides: [
+            {
+              by: "participant:operator",
+              reason: "The premise changed.",
+              fired_at: "2026-08-21T12:34:56.000Z",
+              authority_source: "decision_opening_authority:any_participant",
+            },
+          ],
+          outcome,
+        }),
+      ),
+    ).toEqual({
+      status: "failed",
+      reason: "canceled agreement receipt has invalid actor, reason, time, or authority",
+    });
+    expect(
+      verifyAgreementReceiptSemantics(
+        receipt({
+          overrides: [
+            {
+              by: "participant:reviewer",
+              reason: "The premise changed.",
+              fired_at: "2026-08-21T12:34:56.000Z",
+              authority_source: "action_submission:reviewer",
+            },
+          ],
+          outcome,
+        }),
+      ),
+    ).toEqual({
+      status: "failed",
+      reason: "canceled agreement receipt has invalid actor, reason, time, or authority",
+    });
+  });
+
   it("rejects a signed outcome that contradicts the signed acceptances", () => {
     expect(
       verifyAgreementReceiptSemantics(

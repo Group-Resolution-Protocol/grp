@@ -61,8 +61,10 @@ describe("GRP CLI quickstart", () => {
     expect(stdout.split(password)).toHaveLength(2);
     expect(stdout).toContain("keep it out of URLs, recordings, screenshots, transcripts, and logs");
     expect(stdout).toContain("URL: http://127.0.0.1:3001/r/abc123");
-    expect(stdout).toContain("Room commands:");
-    expect(stdout).not.toContain("Next:");
+    expect(stdout).toContain("Next:");
+    expect(stdout).toContain("grp invite --name NAME");
+    expect(stdout).toContain("grp read");
+    expect(stdout).not.toContain('grp ask "..."');
   });
 
   it("creates a room shell from about without opening a decision", async () => {
@@ -183,6 +185,10 @@ describe("GRP CLI quickstart", () => {
     expect(renderDefaultsHelp()).toContain("Default early close: on");
     expect(renderDefaultsHelp()).toContain("Default option flow: fluid");
     expect(renderDefaultsHelp()).toContain("grp ask ... --collect-options");
+    expect(renderDefaultsHelp()).toContain("--completion=group");
+    expect(renderDefaultsHelp()).toContain("In every mode, report done with `grp act complete`.");
+    expect(renderDefaultsHelp()).not.toContain("grp act submit");
+    expect(renderDefaultsHelp()).not.toContain("grp act withdraw");
   });
 
   it("creates private invite-only and password-enabled rooms explicitly", async () => {

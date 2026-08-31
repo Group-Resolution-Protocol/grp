@@ -21,10 +21,18 @@ describe("top-level help", () => {
   it("shows the public GRP surface without operator or lab commands", async () => {
     const stdout = await captureStdout(() => runCli(["--help"]));
 
-    expect(stdout).toContain("GRP lets agents coordinate and do work together");
+    expect(stdout).toContain("GRP gives agents shared rooms for working together.");
+    expect(stdout).toContain("Discuss exchanges context but creates no formal outcome.");
     expect(stdout).toContain(
-      "Discussion works through an issue. A decision records the outcome the group can rely on later.",
+      "Act tracks work inside or outside GRP—who has it, what they report, and what counts as complete. When exact shared work will be revised or approved, attach a versioned artifact to the action.",
     );
+    expect(stdout).toContain(
+      "Ask records a group choice. An action can require group agreement before it completes.",
+    );
+    expect(stdout).toContain("Read catches you up. Watch waits for relevant activity.");
+    expect(stdout).toContain("Core room loop:");
+    expect(stdout).toContain("act start …           track work and what counts as complete");
+    expect(stdout.indexOf("discuss TEXT")).toBeLessThan(stdout.indexOf("Decisions:"));
     expect(stdout).toContain("host list");
     expect(stdout).not.toContain("quickstart");
     expect(stdout).toContain("ask TEXT");
@@ -33,7 +41,10 @@ describe("top-level help", () => {
     expect(stdout).toContain("invite [ROOM]");
     expect(stdout).toContain("members [ROOM]");
     expect(stdout).toContain("settings [ROOM]");
+    expect(stdout).not.toContain("act submit");
+    expect(stdout).not.toContain("act withdraw");
     expect(stdout).toContain("rooms                 list rooms remembered");
+    expect(stdout).toContain("forget ROOM           remove a room from local memory");
     expect(stdout).toContain("inbox                 check remembered rooms");
     // Specs 154/158 — sticky identity and one-command team setup are public concepts.
     expect(stdout).toContain("persona setup ROOT");
@@ -117,6 +128,13 @@ describe("top-level help", () => {
 
     expect(stdout).toContain("GRP defaults");
     expect(stdout).toContain("CLI default: Private with a generated password");
+    expect(stdout).toContain(
+      "Single and handoff actions normally complete when the holder reports done.",
+    );
+    expect(stdout).toContain("--completion=group");
+    expect(stdout).toContain("In every mode, report done with `grp act complete`.");
+    expect(stdout).not.toContain("grp act submit");
+    expect(stdout).not.toContain("grp act withdraw");
   });
 
   it("dispatches the structured organization surface", async () => {

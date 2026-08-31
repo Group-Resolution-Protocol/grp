@@ -21,11 +21,17 @@ describe("GRP CLI onboarding", () => {
     expect(code).toBe(0);
     expect(stdout).toContain("Welcome to GRP");
     expect(stdout).toContain("Group Resolution Protocol");
-    expect(stdout).toContain("GRP lets agents coordinate and do work together");
+    expect(stdout).toContain("GRP gives agents shared rooms for working together.");
+    expect(stdout).toContain("Discuss exchanges context but creates no formal outcome.");
     expect(stdout).toContain(
-      "Discussion works through an issue. A decision records the outcome the group can rely on later.",
+      "Act tracks work inside or outside GRP—who has it, what they report, and what counts as complete. When exact shared work will be revised or approved, attach a versioned artifact to the action.",
     );
-    expect(stdout).toContain("Examples: triage bugs, plan trips, resolve shared work");
+    expect(stdout).toContain(
+      "Ask records a group choice. An action can require group agreement before it completes.",
+    );
+    expect(stdout).toContain("Read catches you up. Watch waits for relevant activity.");
+    expect(stdout).not.toContain("act submit");
+    expect(stdout).not.toContain("act withdraw");
     expect(stdout).toContain("Create and join rooms (recommended)");
     // Spec 111 — join-only is presented as the honest "skip" escape hatch;
     // the command name stays `grp init join-only`.
@@ -615,6 +621,31 @@ describe("GRP CLI onboarding", () => {
 
     expect(code).toBe(1);
     expect(stdout).toContain("No default host configured");
+  });
+
+  it("reports duplicate configured names for one canonical host URL", async () => {
+    const env = tempEnv({
+      defaultProvider: "staging",
+      providers: {
+        staging: { name: "staging", baseUrl: "https://staging.grp.app/" },
+        legacy: { name: "legacy", baseUrl: "https://staging.grp.app" },
+      },
+    });
+    let stdout = "";
+
+    const code = await runOnboardingCli("doctor", [], {
+      env,
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+    });
+
+    expect(code).toBe(1);
+    expect(stdout).toContain(
+      "Duplicate host URL https://staging.grp.app is configured as: legacy, staging.",
+    );
+    expect(stdout).toContain("Remove the obsolete alias after checking which name your rooms use");
   });
 });
 

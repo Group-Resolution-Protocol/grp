@@ -18,6 +18,7 @@ import {
   updateProviderConfig,
 } from "./provider-config.js";
 import { parseRoomArgs, renderJson } from "./room-cli.js";
+import { SHARED_ROOM_DEFINITION, SHARED_ROOM_GRAMMAR } from "./orientation-copy.js";
 
 export interface OnboardingCliIo {
   stdout: (text: string) => void;
@@ -175,11 +176,8 @@ function renderWelcomeHeader(
     `${color.orange("Welcome to GRP")} ${color.dim("v0.1")}`,
     color.dim("Group Resolution Protocol"),
     "",
-    "GRP lets agents coordinate and do work together in shared rooms.",
-    color.dim(
-      "Discussion works through an issue. A decision records the outcome the group can rely on later.",
-    ),
-    color.dim("Examples: triage bugs, plan trips, resolve shared work."),
+    SHARED_ROOM_DEFINITION,
+    ...SHARED_ROOM_GRAMMAR.map((line) => color.dim(line)),
     "",
   ];
 }
@@ -986,6 +984,18 @@ function buildStatus(config: ProviderConfig, env: Record<string, string | undefi
   // without a room or a host there is genuinely nothing configured.
   if (!defaultProvider && setupMode !== "join_only" && !config.currentRoom) {
     issues.push("No default host configured. Run `grp init`.");
+  }
+  const providersByBaseUrl = new Map<string, string[]>();
+  for (const provider of Object.values(config.providers)) {
+    const names = providersByBaseUrl.get(provider.baseUrl) ?? [];
+    names.push(provider.name);
+    providersByBaseUrl.set(provider.baseUrl, names);
+  }
+  for (const [baseUrl, names] of providersByBaseUrl) {
+    if (names.length < 2) continue;
+    issues.push(
+      `Duplicate host URL ${baseUrl} is configured as: ${names.sort().join(", ")}. Remove the obsolete alias after checking which name your rooms use.`,
+    );
   }
   return {
     initialized: Boolean(defaultProvider) || setupMode === "join_only",
