@@ -1482,11 +1482,11 @@ describe("room CLI requests", () => {
     expect(stdout).not.toMatch(/\bturn\b/i);
   });
 
-  // Spec 112 (WR4-5) — the plain read renders the discussion tail the agent
-  // view carries; plain-read agents must not vote deliberation-blind.
+  // Spec 112 (WR4-5) — exact expansion renders the discussion tail the agent
+  // view carries; agents can recover the deliberation without truncation.
   it("renders the discussion tail between the options and the guidance", async () => {
     let stdout = "";
-    const code = await runRoomCli(["read", "abc123"], {
+    const code = await runRoomCli(["read", "abc123", "--expand"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -1535,7 +1535,7 @@ describe("room CLI requests", () => {
 
   it("renders long discussion entries in full (WR7-1: the read is the catch-up surface)", async () => {
     let stdout = "";
-    const code = await runRoomCli(["read", "abc123"], {
+    const code = await runRoomCli(["read", "abc123", "--expand"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -4994,11 +4994,11 @@ describe("spec 113 delta reads", () => {
     more: {},
   };
 
-  it("renders the anchored delta on a bare read and advances the mark", async () => {
+  it("renders the anchored delta and advances the mark when acknowledged", async () => {
     const env = providerEnv(roomConfig({ lastSeenSeq: 5 }));
     let stdout = "";
     let sinceParam: string | null = null;
-    const code = await runRoomCli(["read"], {
+    const code = await runRoomCli(["read", "--ack"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -6150,7 +6150,7 @@ describe.skip("obsolete spec 224 candidate — replaced by spec 228", () => {
       }),
     );
     let stdout = "";
-    const code = await runRoomCli(["read", "--full"], {
+    const code = await runRoomCli(["read", "--snapshot"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -6193,7 +6193,7 @@ describe.skip("obsolete spec 224 candidate — replaced by spec 228", () => {
       }),
     );
     let stdout = "";
-    const code = await runRoomCli(["read", "--full"], {
+    const code = await runRoomCli(["read", "--snapshot"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -6240,7 +6240,7 @@ describe.skip("obsolete spec 224 candidate — replaced by spec 228", () => {
   it("does not advertise candidate presence on a feature-off host", async () => {
     const env = providerEnv(roomConfig({ coordinationStateCapability: "absent" }));
     let stdout = "";
-    const code = await runRoomCli(["read", "--full"], {
+    const code = await runRoomCli(["read", "--snapshot"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -6271,7 +6271,7 @@ describe.skip("obsolete spec 224 candidate — replaced by spec 228", () => {
       }),
     );
     let stdout = "";
-    const code = await runRoomCli(["read", "--full"], {
+    const code = await runRoomCli(["read", "--snapshot"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -7016,7 +7016,7 @@ describe.skip("obsolete spec 224 candidate — replaced by spec 228", () => {
     const postedBodies: string[] = [];
     const fetch = withCoordinationDiscovery(async (input, init) => {
       const request = new Request(input, init);
-      postedBodies.push(String((await request.json() as { body: string }).body));
+      postedBodies.push(String(((await request.json()) as { body: string }).body));
       return jsonResponse({ ok: true, id: "message_1", state_revision: "42" });
     });
 
@@ -7321,7 +7321,7 @@ describe.skip("obsolete spec 224 candidate — replaced by spec 228", () => {
     const env = providerEnv(roomConfig());
     let stdout = "";
     expect(
-      await runRoomCli(["read", "--full"], {
+      await runRoomCli(["read", "--snapshot"], {
         stdout: (text) => {
           stdout += text;
         },
@@ -8061,7 +8061,7 @@ describe("spec 228 action-centered coordination", () => {
     const env = providerEnv(roomConfig());
     let stdout = "";
     expect(
-      await runRoomCli(["read", "--full"], {
+      await runRoomCli(["read", "--snapshot"], {
         stdout: (text) => {
           stdout += text;
         },
@@ -8422,7 +8422,7 @@ describe("spec 228 action-centered coordination", () => {
     );
     let stdout = "";
     expect(
-      await runRoomCli(["read", "--full"], {
+      await runRoomCli(["read", "--snapshot"], {
         stdout: (text) => {
           stdout += text;
         },
@@ -8476,7 +8476,7 @@ describe("spec 228 action-centered coordination", () => {
     );
     let stdout = "";
     expect(
-      await runRoomCli(["read", "--full"], {
+      await runRoomCli(["read", "--snapshot"], {
         stdout: (text) => {
           stdout += text;
         },
@@ -8542,7 +8542,7 @@ describe("spec 228 action-centered coordination", () => {
     );
     let stdout = "";
     expect(
-      await runRoomCli(["read", "--full"], {
+      await runRoomCli(["read", "--snapshot"], {
         stdout: (text) => {
           stdout += text;
         },
@@ -8860,20 +8860,17 @@ describe("spec 228 action-centered coordination", () => {
     });
     let stdout = "";
     expect(
-      await runRoomCli(
-        ["artifact", "diff", "doc_1", "--from-version=3", "--to-version=4"],
-        {
-          stdout: (text) => {
-            stdout += text;
-          },
-          stderr: () => {},
-          fetch: async (input) => {
-            const version = new URL(new Request(input).url).searchParams.get("version");
-            return jsonResponse(revision(version === "3" ? 3 : 4));
-          },
-          env,
+      await runRoomCli(["artifact", "diff", "doc_1", "--from-version=3", "--to-version=4"], {
+        stdout: (text) => {
+          stdout += text;
         },
-      ),
+        stderr: () => {},
+        fetch: async (input) => {
+          const version = new URL(new Request(input).url).searchParams.get("version");
+          return jsonResponse(revision(version === "3" ? 3 : 4));
+        },
+        env,
+      }),
     ).toBe(0);
     expect(stdout).toContain("--- artifact v3");
     expect(stdout).toContain("+++ artifact v4");
@@ -9272,16 +9269,17 @@ describe("spec 228 action-centered coordination", () => {
           if (url.pathname.endsWith("/artifacts/doc_1") && request.method === "GET") {
             return jsonResponse(artifact);
           }
-          if (
-            url.pathname.endsWith("/actions/act_1/request-review") &&
-            request.method === "POST"
-          ) {
+          if (url.pathname.endsWith("/actions/act_1/request-review") && request.method === "POST") {
             postedGuard = request.headers.get("x-grp-expected-room-revision");
             postedBody = await request.json();
             return jsonResponse({ action: reviewing, ...artifact, state_revision: "11" });
           }
           if (url.pathname === "/api/rooms/abc123" && request.method === "GET") {
-            return jsonResponse({ participants, actions: [reviewing], artifacts: [artifact.artifact] });
+            return jsonResponse({
+              participants,
+              actions: [reviewing],
+              artifacts: [artifact.artifact],
+            });
           }
           throw new Error(`unexpected request ${request.method} ${url.pathname}`);
         }),
@@ -9394,24 +9392,21 @@ describe("spec 228 action-centered coordination", () => {
     let oversizedError = "";
     let oversizedWrites = 0;
     expect(
-      await runRoomCli(
-        ["act", "review", "act_1", "--approve", `--body=${"x".repeat(32_001)}`],
-        {
-          stdout: () => {},
-          stderr: (text) => {
-            oversizedError += text;
-          },
-          fetch: withCoordinationDiscovery(async (input, init) => {
-            const request = new Request(input, init);
-            const url = new URL(request.url);
-            if (request.method === "PUT") oversizedWrites += 1;
-            if (url.pathname.endsWith("/actions/act_1")) return jsonResponse({ action });
-            if (url.pathname.endsWith("/artifacts/doc_1")) return jsonResponse(exact);
-            throw new Error(`unexpected request ${request.method} ${url.pathname}`);
-          }),
-          env,
+      await runRoomCli(["act", "review", "act_1", "--approve", `--body=${"x".repeat(32_001)}`], {
+        stdout: () => {},
+        stderr: (text) => {
+          oversizedError += text;
         },
-      ),
+        fetch: withCoordinationDiscovery(async (input, init) => {
+          const request = new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "PUT") oversizedWrites += 1;
+          if (url.pathname.endsWith("/actions/act_1")) return jsonResponse({ action });
+          if (url.pathname.endsWith("/artifacts/doc_1")) return jsonResponse(exact);
+          throw new Error(`unexpected request ${request.method} ${url.pathname}`);
+        }),
+        env,
+      }),
     ).toBe(1);
     expect(oversizedError).toContain("between 1 and 32,000 characters");
     expect(oversizedWrites).toBe(0);
@@ -9452,7 +9447,11 @@ describe("spec 228 action-centered coordination", () => {
             return jsonResponse({ action: completed, ...exact });
           }
           if (url.pathname === "/api/rooms/abc123") {
-            return jsonResponse({ participants, actions: [completed], artifacts: [exact.artifact] });
+            return jsonResponse({
+              participants,
+              actions: [completed],
+              artifacts: [exact.artifact],
+            });
           }
           throw new Error(`unexpected request ${request.method} ${url.pathname}`);
         }),
@@ -9746,7 +9745,7 @@ describe("spec 228 action-centered coordination", () => {
     let stdout = "";
 
     expect(
-      await runRoomCli(["read", "--full"], {
+      await runRoomCli(["read", "--snapshot"], {
         stdout: (text) => {
           stdout += text;
         },
@@ -10576,9 +10575,14 @@ describe("spec 228 action-centered coordination", () => {
           env: providerEnv(roomConfig()),
         }),
       ).toBe(1);
-      expect(stderr).toContain(
-        "usage: grp act start|read|reviews|take|handoff|request-review|review|complete|resume|fail|cancel|takeover",
-      );
+      if (argv.at(-1) === "act_1") {
+        expect(stderr).toContain(`unknown act subcommand: ${argv[1]}`);
+        expect(stderr).toContain("Did you mean: grp act read act_1");
+      } else {
+        expect(stderr).toContain(
+          "usage: grp act start|read|reviews|take|handoff|request-review|review|complete|resume|fail|cancel|takeover",
+        );
+      }
       expect(fetches).toBe(0);
     }
   });
@@ -11613,13 +11617,13 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
     expect(saved.currentRoom.lastSeenSeq).toBe(224);
   });
 
-  it("--full advances the mark through current_through (WR11-1)", async () => {
+  it("--snapshot --ack advances the mark through current_through (WR11-1)", async () => {
     // Run 11's stale wakes: wake parks the mark at seq-1, the follow-up
-    // `read --full` used to leave it there, and the next bare watch
+    // `read --snapshot` used to leave it there, and the next bare watch
     // re-fired the same event. A full picture now advances the mark.
     const env = providerEnv(roomConfig({ lastSeenSeq: 30 }));
     let sinceParam: string | null = "unset";
-    const code = await runRoomCli(["read", "--full"], {
+    const code = await runRoomCli(["read", "--snapshot", "--ack"], {
       stdout: () => {},
       stderr: () => {},
       fetch: async (input, init) => {
@@ -11773,7 +11777,7 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
     expect(saved.currentRoom.lastSeenSeq).toBe(42);
 
     expect(
-      await runRoomCli(["read", "--full"], {
+      await runRoomCli(["read", "--snapshot"], {
         stdout: () => {},
         stderr: () => {},
         fetch,
@@ -11798,9 +11802,9 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
     expect(secondWake).not.toContain("Old wake");
   });
 
-  it("the first-contact snapshot sets the mark, so the second read is a delta", async () => {
+  it("an acknowledged first-contact snapshot sets the mark for the next delta", async () => {
     const env = providerEnv(roomConfig());
-    const code = await runRoomCli(["read"], {
+    const code = await runRoomCli(["read", "--ack"], {
       stdout: () => {},
       stderr: () => {},
       fetch: async () => jsonResponse(snapshotBody(17)),
@@ -11813,7 +11817,7 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
 
   it("old hosts without current_through leave the mark untouched", async () => {
     const env = providerEnv(roomConfig({ lastSeenSeq: 30 }));
-    const code = await runRoomCli(["read", "--full"], {
+    const code = await runRoomCli(["read", "--snapshot"], {
       stdout: () => {},
       stderr: () => {},
       fetch: async () => jsonResponse(snapshotBody()),
@@ -12314,7 +12318,7 @@ describe("spec 193 — safe room-read pagination", () => {
     const env = providerEnv(roomConfig());
     let firstPage = "";
     expect(
-      await runRoomCli(["read"], {
+      await runRoomCli(["read", "--ack"], {
         stdout: (text) => {
           firstPage += text;
         },
@@ -12335,7 +12339,7 @@ describe("spec 193 — safe room-read pagination", () => {
 
     let secondPage = "";
     expect(
-      await runRoomCli(["read"], {
+      await runRoomCli(["read", "--ack"], {
         stdout: (text) => {
           secondPage += text;
         },
@@ -12362,7 +12366,7 @@ describe("spec 193 — safe room-read pagination", () => {
       (_, index) => `oversized event line ${index + 1}`,
     ).join("\n");
     let stdout = "";
-    const code = await runRoomCli(["read"], {
+    const code = await runRoomCli(["read", "--ack"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -12393,7 +12397,7 @@ describe("spec 193 — safe room-read pagination", () => {
       { seq: 12, type: "discussion", who: "Cobalt", said: `second-${"b".repeat(60_000)}` },
     ];
     let stdout = "";
-    const code = await runRoomCli(["read"], {
+    const code = await runRoomCli(["read", "--ack"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -12421,7 +12425,7 @@ describe("spec 193 — safe room-read pagination", () => {
   it("keeps JSON reads complete and acknowledges the host high-water mark", async () => {
     const env = providerEnv(roomConfig());
     let stdout = "";
-    const code = await runRoomCli(["read", "--json"], {
+    const code = await runRoomCli(["read", "--json", "--ack"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -12615,7 +12619,7 @@ describe("spec 131 — multi-room attention and routing", () => {
   it("keeps every next-action hint scoped after an explicit non-current read", async () => {
     const env = providerEnv(multiRoomConfig());
     let stdout = "";
-    const code = await runRoomCli(["read", "nightroom2", "--full"], {
+    const code = await runRoomCli(["read", "nightroom2", "--snapshot"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -12678,7 +12682,7 @@ describe("spec 131 — multi-room attention and routing", () => {
     };
 
     expect(
-      await runRoomCli(["read", "--full", "nightroom2"], {
+      await runRoomCli(["read", "--snapshot", "nightroom2"], {
         stdout: () => {},
         stderr: () => {},
         fetch,

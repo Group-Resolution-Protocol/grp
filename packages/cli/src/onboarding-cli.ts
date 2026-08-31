@@ -1,5 +1,6 @@
 import { emitKeypressEvents } from "node:readline";
 import { runAuthCli } from "./auth-cli.js";
+import { SHARED_ROOM_DEFINITION, SHARED_ROOM_GRAMMAR } from "./orientation-copy.js";
 import {
   type PersonaContext,
   type ProviderConfig,
@@ -18,7 +19,6 @@ import {
   updateProviderConfig,
 } from "./provider-config.js";
 import { parseRoomArgs, renderJson } from "./room-cli.js";
-import { SHARED_ROOM_DEFINITION, SHARED_ROOM_GRAMMAR } from "./orientation-copy.js";
 
 export interface OnboardingCliIo {
   stdout: (text: string) => void;

@@ -278,12 +278,14 @@ const MUTABLE_SETTING_KEYS = [
 const BOOLEAN_CLI_FLAG_KEYS = new Set([
   "agreement",
   "as-discussion",
+  "ack",
   "creator-votes",
   "composing",
   "defer-first-decision",
   "dry-run",
   "early-close",
   "enter",
+  "expand",
   "expected",
   "exclusive",
   "force",
@@ -628,6 +630,13 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
         return 0;
       case "read":
         await roomRead(
+          targetOrCurrent(maybeTarget, parsed.flags, resolvedIo),
+          parsed.flags,
+          resolvedIo,
+        );
+        return 0;
+      case "whoami":
+        await roomWhoAmI(
           targetOrCurrent(maybeTarget, parsed.flags, resolvedIo),
           parsed.flags,
           resolvedIo,
@@ -1132,10 +1141,13 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
   read: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, [
     "json",
     "quiet",
+    "ack",
+    "expand",
     "snapshot",
     "decision",
     "since",
   ]),
+  whoami: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, ["json", "quiet"]),
   join: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, ROOM_ACTION_OUTPUT_FLAG_KEYS, [
     "invite",
     "as",
@@ -1188,6 +1200,7 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
       "artifact",
       "artifact-name",
       "artifact-file",
+      "supersedes",
       "deadline",
       "ttl",
       "idempotency-key",
@@ -2160,10 +2173,13 @@ async function roomRead(
   // Spec 142 (D9) — the FOCUSED read: one decision's thread (question,
   // options, status/outcome, attached discussion). NON-CONSUMING by ruling
   // P-6: it never advances the room's read mark — a focused read of one
-  // thread must not eat the other threads' wakes. Only the full room read
-  // moves the cursor.
+  // thread must not eat the other threads' wakes. Only an explicitly
+  // acknowledged full-room read moves the cursor.
   const focusedSeq = parseDecisionFlag(flags.decision);
   if (focusedSeq !== undefined) {
+    if (flags.ack === "true") {
+      throw new Error("--ack is not used with --decision; focused reads never move your position");
+    }
     const focusedOptions = readRequestOptions(ref, flags, io.env);
     focusedOptions.query = { ...(focusedOptions.query ?? {}), include: "full" };
     const full = await requestJson<Record<string, unknown>>(
@@ -2190,13 +2206,14 @@ async function roomRead(
     io,
     options,
   );
+  const acknowledge = flags.ack === "true";
   // Feature detection: a delta-capable host answers a `since` read with the
   // anchored delta (its `new` array); old hosts ignore the unknown query
   // param and return the snapshot agent view.
   if (since !== undefined && Array.isArray(response.new)) {
     if (isJson(flags)) {
       const currentThrough = numberOrNull(response.current_through);
-      if (currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
+      if (acknowledge && currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
       // JSON exports the complete anchored delta; unlike the paged human
       // rendering, it does not hide a suffix from the caller.
       persistObservedStateRevisionFromRead(ref, response, io.env);
@@ -2211,31 +2228,33 @@ async function roomRead(
     // explicit complete structured export.
     const page = humanDeltaPage(response, ref, io.env);
     const currentThrough = numberOrNull(page.response.current_through);
-    if (currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
+    if (acknowledge && currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
     if (!page.moreUnread) {
       persistObservedStateRevisionFromRead(ref, response, io.env);
     } else {
       persistCoordinationCapabilityFromRead(ref, response, io.env);
     }
-    if (io.stdoutIsTTY === false) {
+    if (acknowledge && io.stdoutIsTTY === false) {
       io.stderr(
         "Warning: grp read is already paginated. Shell filters can hide displayed content after the read cursor advances.\n",
       );
     }
     io.stdout(
       withPersonaReadHeader(
-        renderRoomDelta(page.response, ref, io.env, { moreUnread: page.moreUnread }),
+        renderRoomDelta(page.response, ref, io.env, {
+          moreUnread: page.moreUnread,
+          acknowledged: acknowledge,
+        }),
         io.env,
       ),
     );
     return;
   }
-  // Spec 119 (WR11-1) — fresh working-set snapshots still advance the mark. The old
-  // rule ("snapshot never touches the mark") left it parked at a pointer wake's
-  // seq-1 and made the next watch re-fire. Spec 193 changes only paged human
-  // deltas; working-set snapshots and old-host fallbacks keep this contract.
+  // Spec 248 — reads are observational by default. `--ack` retains the
+  // explicit WR11-1 escape hatch for callers that incorporated the displayed
+  // snapshot and want subsequent reads/watches to begin after it.
   const currentThrough = numberOrNull(response.current_through);
-  if (currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
+  if (acknowledge && currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
   persistObservedStateRevisionFromRead(ref, response, io.env);
   if (isJson(flags)) {
     io.stdout(renderJson(response));
@@ -2245,7 +2264,13 @@ async function roomRead(
     since !== undefined ? renderDimNote("(this host does not support delta reads)", io) : "";
   if (typeof response.brief === "string" || response.decision !== undefined) {
     io.stdout(
-      withPersonaReadHeader(renderRoomRead(response, ref, io.env), io.env) + deltaUnsupportedNote,
+      withPersonaReadHeader(
+        renderRoomRead(response, ref, io.env, {
+          acknowledged: acknowledge,
+          expandBodies: flags.expand === "true",
+        }),
+        io.env,
+      ) + deltaUnsupportedNote,
     );
     return;
   }
@@ -2270,6 +2295,50 @@ async function roomRead(
   if (deltaUnsupportedNote) io.stdout(deltaUnsupportedNote);
 }
 
+async function roomWhoAmI(
+  target: string,
+  flags: Record<string, string>,
+  io: RoomCliIo,
+): Promise<void> {
+  const ref = resolveRoomRef(target, flags, io.env);
+  const response = await requestJson<Record<string, unknown>>(
+    ref.baseUrl,
+    `/api/rooms/${encodeURIComponent(ref.slug)}`,
+    io,
+    readRequestOptions(ref, flags, io.env),
+  );
+  const projected = isRecord(response.you) ? response.you : null;
+  const local = callerIdentity(ref, io.env);
+  const participantId = stringOrNull(projected?.participant_id) ?? local.participantId ?? null;
+  const name = stringOrNull(projected?.name) ?? local.displayName ?? participantId;
+  const role = readRoleValue(projected?.role) ?? callerRole(response, ref, io.env);
+  if (!participantId && !name) {
+    throw new Error(
+      "this read is not authenticated as a room participant; join first or provide a participant token",
+    );
+  }
+  const identity = {
+    participant_id: participantId,
+    name,
+    role,
+    room: ref.slug,
+  };
+  if (isJson(flags)) {
+    io.stdout(renderJson(identity));
+  } else if (flags.quiet === "true") {
+    io.stdout(`${participantId ?? name ?? ""}\n`);
+  } else {
+    io.stdout(
+      `${[
+        `You are ${name ?? participantId ?? "unknown"} in room ${ref.slug}.`,
+        `Role: ${role ?? "unknown"}`,
+        `Participant ID: ${participantId ?? "unknown"}`,
+        "(identity read — your room position did not move)",
+      ].join("\n")}\n`,
+    );
+  }
+}
+
 function withPersonaReadHeader(rendered: string, env: Record<string, string | undefined>): string {
   const persona = resolvePersonaContext(env);
   return persona ? `${renderPersonaIdentity(persona)}\n\n${rendered}` : rendered;
@@ -2279,8 +2348,8 @@ function withPersonaReadHeader(rendered: string, env: Record<string, string | un
  * Spec 113 — which event this read should start from. Undefined = snapshot.
  * Explicit `--since=N` wins; `--since=last` requires a stored mark;
  * a bare read uses the stored mark when one exists. `--snapshot` bypasses the
- * mark for the REQUEST (always the snapshot) but — spec 119 (WR11-1) — the
- * rendered picture advances it. Deviation from the spec sketch: `--last=N`
+ * mark for the REQUEST (always the snapshot); only `--ack` advances the
+ * stored mark after rendering. Deviation from the spec sketch: `--last=N`
  * is not implemented — the wire supports `since` only.
  */
 function resolveReadSince(
@@ -2534,8 +2603,6 @@ async function catchUpAfterStaleWrite(
     );
     if (since !== undefined && Array.isArray(response.new)) {
       const page = humanDeltaPage(response, ref, io.env);
-      const through = numberOrNull(page.response.current_through);
-      if (through !== null) persistLastSeenSeq(ref, through, io.env);
       if (page.moreUnread) {
         persistCoordinationCapabilityFromRead(ref, response, io.env);
       } else {
@@ -2547,6 +2614,8 @@ async function catchUpAfterStaleWrite(
           page.response,
           renderRoomDelta(page.response, ref, io.env, {
             moreUnread: page.moreUnread,
+            acknowledged: false,
+            elideBodies: true,
           }),
           ref,
           io.env,
@@ -2554,14 +2623,12 @@ async function catchUpAfterStaleWrite(
         complete: !page.moreUnread,
       };
     }
-    const through = numberOrNull(response.current_through);
-    if (through !== null) persistLastSeenSeq(ref, through, io.env);
     persistObservedStateRevisionFromRead(ref, response, io.env);
     return {
       response,
       rendered: renderForegroundCatchUp(
         response,
-        renderRoomRead(response, ref, io.env),
+        renderRoomRead(response, ref, io.env, { acknowledged: false, expandBodies: false }),
         ref,
         io.env,
       ),
@@ -2848,17 +2915,18 @@ function coordinationAvailable(response: Record<string, unknown>): boolean {
 /**
  * Spec 113 item 1 — the anchored delta read: a constant-size anchor (room,
  * project, brief, own standing), everything that happened since the caller's
- * mark rendered oldest-first with FULL text, then the Next block for the
- * caller's own standing.
+ * mark rendered oldest-first, then the Next block for the caller's own
+ * standing. Explicit reads carry full text; automatic stale-write catch-up
+ * may elide bodies behind an exact expansion command.
  */
 function renderRoomDelta(
   response: Record<string, unknown>,
   ref: RoomRef,
   env: Record<string, string | undefined>,
-  options: { moreUnread?: boolean } = {},
+  options: { moreUnread?: boolean; acknowledged?: boolean; elideBodies?: boolean } = {},
 ): string {
   if (foregroundFromResponse(response)) {
-    return renderPhasedRoomDelta(response, ref, options);
+    return renderPhasedRoomDelta(response, ref, env, options);
   }
   const slug = String(response.slug ?? ref.slug);
   // Spec 117 (the delta diet) — one thin header, the new events, Next.
@@ -2874,6 +2942,7 @@ function renderRoomDelta(
   const complete = !options.moreUnread && page.complete !== false;
   const catchUpLabel = `${complete ? "COMPLETE" : "PARTIAL"} CATCH-UP — ${entries.length} update${entries.length === 1 ? "" : "s"} shown, through event ${throughEvent} of ${roomEvent}.`;
   const lines = [catchUpLabel, state ? `${slug} — ${state}` : `Room ${slug}`];
+  appendViewerIdentity(lines, response);
   const yourStatus = stringOrNull(response.your_status);
   if (yourStatus) lines.push(`You: ${yourStatus}`);
 
@@ -2885,16 +2954,26 @@ function renderRoomDelta(
     );
   } else {
     lines.push("", "New since your last read:");
-    for (const entry of entries) lines.push(...renderDeltaEntry(entry, room));
+    for (const entry of entries) {
+      lines.push(...renderDeltaEntry(entry, room, { elideBodies: options.elideBodies === true }));
+    }
   }
+
+  lines.push(
+    "",
+    options.acknowledged
+      ? `Position acknowledged through event ${throughEvent}.`
+      : `Position unchanged. Acknowledge through event ${throughEvent}: ${grpCommand(`read --ack${room}`)}`,
+  );
 
   const isObserver = callerRole(response, ref, env) === "observer";
   appendCoordinationState(lines, response, ref, env);
 
   lines.push("", "Next:");
   if (options.moreUnread) {
-    lines.push(`  More unread activity remains: ${grpCommand(`read${room}`)}`);
-    lines.push("", catchUpLabel);
+    lines.push(
+      `  More unread activity remains: ${grpCommand(`read${options.acknowledged ? "" : " --ack"}${room}`)}`,
+    );
     return `${lines.join("\n")}\n`;
   }
   const decision = activeDecision(response);
@@ -2946,14 +3025,14 @@ function renderRoomDelta(
     lines.push(`  Wait for what's next: ${grpCommand(`watch${room}`)}`);
   }
 
-  lines.push("", catchUpLabel);
   return `${lines.join("\n")}\n`;
 }
 
 function renderPhasedRoomDelta(
   response: Record<string, unknown>,
   ref: RoomRef,
-  options: { moreUnread?: boolean },
+  env: Record<string, string | undefined>,
+  options: { moreUnread?: boolean; acknowledged?: boolean; elideBodies?: boolean },
 ): string {
   const entries = Array.isArray(response.new) ? response.new.filter(isRecord) : [];
   const currentThrough = numberOrNull(response.current_through);
@@ -2963,13 +3042,23 @@ function renderPhasedRoomDelta(
   const complete = !options.moreUnread && page.complete !== false;
   const label = `${complete ? "COMPLETE" : "PARTIAL"} CATCH-UP — ${entries.length} update${entries.length === 1 ? "" : "s"} shown, through event ${throughEvent} of ${roomEvent}.`;
   const lines = [label, `Room ${String(response.slug ?? ref.slug)}`];
+  const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
+  appendViewerIdentity(lines, response);
   if (entries.length === 0) lines.push("", `Nothing new through event ${throughEvent}.`);
   else {
     lines.push("", "New since your last read:");
-    for (const entry of entries) lines.push(...renderDeltaEntry(entry));
+    for (const entry of entries) {
+      lines.push(...renderDeltaEntry(entry, room, { elideBodies: options.elideBodies === true }));
+    }
   }
+  lines.push(
+    "",
+    options.acknowledged
+      ? `Position acknowledged through event ${throughEvent}.`
+      : `Position unchanged. Acknowledge through event ${throughEvent}: ${grpCommand(`read --ack${room}`)}`,
+  );
   if (options.moreUnread) lines.push("", "More unread activity remains.");
-  lines.push("", label);
+  appendAuthoritativeResult(lines, response, ref, env);
   return `${lines.join("\n")}\n`;
 }
 
@@ -3041,15 +3130,32 @@ function hasDecisionTargetInStatus(yourStatus: string): boolean {
 }
 
 /** One delta entry, rendered with full text (no truncation on the delta). */
-function renderDeltaEntry(entry: Record<string, unknown>, room = ""): string[] {
+function renderDeltaEntry(
+  entry: Record<string, unknown>,
+  room = "",
+  options: { elideBodies?: boolean } = {},
+): string[] {
   const who = stringOrNull(entry.who) ?? "unknown";
   switch (stringOrNull(entry.type)) {
     case "discussion": {
       const stance = stringOrNull(entry.stance);
       const said = typeof entry.said === "string" ? entry.said : "";
+      const aboutActionId = stringOrNull(entry.about_action_id);
+      const scope = aboutActionId ? ` about action ${aboutActionId}` : "";
+      if (options.elideBodies) {
+        const seq = numberOrNull(entry.seq);
+        return [
+          `  ${who}${stance ? ` (${stance})` : ""} posted ${said.length.toLocaleString("en-US")} characters${scope}.`,
+          ...(seq !== null
+            ? [
+                `    Expand exact body: ${grpCommand(`read --since=${Math.max(0, seq - 1)} --expand${room}`)}`,
+              ]
+            : []),
+        ];
+      }
       const [first = "", ...rest] = said.split("\n");
       return [
-        `  ${who}${stance ? ` (${stance})` : ""}: ${first}`,
+        `  ${who}${stance ? ` (${stance})` : ""}${scope}: ${first}`,
         ...rest.map((line) => `    ${line}`),
       ];
     }
@@ -3481,7 +3587,7 @@ async function roomDiscuss(
     writeStructured(response, flags, io, "id");
     return;
   }
-  io.stdout(renderDiscussionPosted(ref, io.env));
+  io.stdout(renderDiscussionPosted(response, ref, io.env));
 }
 
 async function roomAction(
@@ -3493,7 +3599,18 @@ async function roomAction(
   if (operation === "start") {
     const ref = resolveRoomRef(targetOrCurrent(id, flags, io), flags, io.env);
     const mode = normalizeActionMode(flags.mode);
-    const completion = normalizeActionCompletion(flags.completion, mode);
+    const supersedesActionId = flags.supersedes?.trim();
+    if (flags.supersedes !== undefined && !supersedesActionId) {
+      throw new Error("--supersedes requires a completed action ID");
+    }
+    // Spec 248 — omission is meaningful for a reviewed successor: the host
+    // inherits the original exact-review completion gate. Sending the normal
+    // holder default would turn a valid amendment into completion=holder and
+    // correctly make the host reject it.
+    const completion =
+      supersedesActionId && flags.completion === undefined
+        ? undefined
+        : normalizeActionCompletion(flags.completion, mode);
     const artifactName = flags["artifact-name"];
     const artifactFile = flags["artifact-file"];
     const startsArtifact = artifactName !== undefined || artifactFile !== undefined;
@@ -3544,6 +3661,7 @@ async function roomAction(
         ...(mode === "all" ? {} : { completion }),
         participant_ids: participantIds,
         target_artifact_id: flags.artifact,
+        supersedes_action_id: supersedesActionId,
         deadline_at: flags.deadline,
         ttl_seconds: parseOptionalIntegerFlag(flags.ttl, "--ttl"),
       },
@@ -3589,22 +3707,26 @@ async function roomAction(
     await writeActionResponse(response, ref, flags, io, "started");
     return;
   }
-  if (
-    ![
-      "read",
-      "reviews",
-      "take",
-      "handoff",
-      "request-review",
-      "review",
-      "complete",
-      "resume",
-      "fail",
-      "cancel",
-      "takeover",
-    ].includes(operation ?? "") ||
-    !id
-  ) {
+  const actionOperations = [
+    "read",
+    "reviews",
+    "take",
+    "handoff",
+    "request-review",
+    "review",
+    "complete",
+    "resume",
+    "fail",
+    "cancel",
+    "takeover",
+  ];
+  if (operation && !actionOperations.includes(operation) && id) {
+    const roomArg = room ? ` ${room}` : "";
+    throw new Error(
+      `unknown act subcommand: ${operation}\nDid you mean: ${grpCommand(`act read ${id}${roomArg}`)}`,
+    );
+  }
+  if (!actionOperations.includes(operation ?? "") || !id) {
     throw new Error(
       "usage: grp act start|read|reviews|take|handoff|request-review|review|complete|resume|fail|cancel|takeover ...",
     );
@@ -3714,7 +3836,7 @@ async function roomAction(
         io.stdout(renderArtifactRead(exact, ref, io.env));
       } else {
         io.stdout(
-          `${renderArtifactRead(exact, ref, io.env).trimEnd()}\n\n${renderActionReviewChoice(currentAction, exact, ref, io.env, history)}`,
+          `${renderArtifactRead(exact, ref, io.env).trimEnd()}\n\n${renderActionReviewChoice(currentAction, exact, ref, io.env, history, current)}`,
         );
       }
       return;
@@ -4020,9 +4142,10 @@ async function writeActionResponse(
   io: RoomCliIo,
   event: string,
 ): Promise<void> {
+  const projection = isRecord(response) ? response : {};
   const action = actionFromResponse(response);
   if (foregroundFromResponse(response) && !isJson(flags) && flags.quiet !== "true") {
-    io.stdout(renderPhasedActionReceipt(action, event));
+    io.stdout(renderPhasedActionReceipt(action, event, projection, ref, io.env));
     return;
   }
   const review = isRecord(action.review) ? action.review : null;
@@ -4057,10 +4180,16 @@ async function writeActionResponse(
     return;
   }
   const full = await fullRoomForResource(ref, flags, io);
-  io.stdout(renderActionState(action, ref, io.env, full, event, exactArtifact));
+  io.stdout(renderActionState(action, ref, io.env, full, event, exactArtifact, projection));
 }
 
-function renderPhasedActionReceipt(action: Record<string, unknown>, event: string): string {
+function renderPhasedActionReceipt(
+  action: Record<string, unknown>,
+  event: string,
+  projection: Record<string, unknown>,
+  ref: RoomRef,
+  env: Record<string, string | undefined>,
+): string {
   const id = stringOrNull(action.id) ?? "ACTION_ID";
   const lines = [
     `Action ${id} ${event}.`,
@@ -4071,6 +4200,7 @@ function renderPhasedActionReceipt(action: Record<string, unknown>, event: strin
   if (artifactId) lines.push(`Artifact target: ${artifactId}.`);
   const result = isRecord(action.result) ? action.result : null;
   if (result) lines.push(`Result: ${JSON.stringify(result)}.`);
+  appendFocusedActionProjection(lines, projection, id, roomHintArg(ref.slug, ref, env));
   return `${lines.join("\n")}\n`;
 }
 
@@ -4164,6 +4294,7 @@ function renderActionReviewChoice(
   ref: RoomRef,
   env: Record<string, string | undefined>,
   history: unknown = null,
+  projection: unknown = null,
 ): string {
   const id = stringOrNull(action.id) ?? "ACTION_ID";
   const review = isRecord(action.review) ? action.review : {};
@@ -4176,6 +4307,14 @@ function renderActionReviewChoice(
   const exact = isRecord(exactArtifact) ? exactArtifact : {};
   const responses = Array.isArray(exact.reviews) ? exact.reviews.filter(isRecord) : [];
   const lines = [`Action review ${id} targets exact artifact revision ${revisionId}.`];
+  const projectionRecord = isRecord(projection) ? projection : {};
+  const round = isRecord(projectionRecord.review_round) ? projectionRecord.review_round : null;
+  if (round?.can_approve === false) {
+    lines.push(
+      "This review round can no longer approve: a required reviewer has requested changes.",
+      "Required responses are still recorded against these exact bytes before the round closes.",
+    );
+  }
   if (responses.length > 0) {
     lines.push("Formal responses already recorded:");
     for (const response of responses) {
@@ -4315,6 +4454,7 @@ function renderActionState(
   full: Record<string, unknown>,
   event: string,
   exactArtifact: unknown = null,
+  projection: Record<string, unknown> = {},
 ): string {
   const id = stringOrNull(action.id) ?? "ACTION_ID";
   const status = stringOrNull(action.status) ?? "unknown";
@@ -4355,6 +4495,7 @@ function renderActionState(
       `Review history: ${grpCommand(`act reviews ${id}${room}`)}`,
     );
   }
+  appendFocusedActionProjection(lines, projection, id, room);
   const completionResultFlag = target ? "" : ' --result-text="What happened"';
   const result = isRecord(action.result) ? action.result : null;
   if (result && status !== "awaiting_completion") lines.push(`Result: ${JSON.stringify(result)}.`);
@@ -4535,6 +4676,28 @@ function renderActionState(
     lines.push("", `${holderName} holds this single action; unrelated work may continue.`);
   }
   return `${lines.join("\n")}\n`;
+}
+
+function appendFocusedActionProjection(
+  lines: string[],
+  projection: Record<string, unknown>,
+  actionId: string,
+  room: string,
+): void {
+  const successor = isRecord(projection.superseded_by) ? projection.superseded_by : null;
+  const successorId = successor ? stringOrNull(successor.action_id) : null;
+  if (successorId) {
+    lines.push(
+      `Superseded by action ${successorId} (${stringOrNull(successor?.status) ?? "unknown"}).`,
+      `Read the successor: ${grpCommand(`act read ${successorId}${room}`)}`,
+    );
+  }
+  const round = isRecord(projection.review_round) ? projection.review_round : null;
+  if (round?.can_approve === false) {
+    lines.push(
+      `Review round for action ${actionId} can no longer approve: a required reviewer requested changes.`,
+    );
+  }
 }
 
 type ArtifactPatchEdit =
@@ -6551,7 +6714,11 @@ async function roomFilteredWatch(
   io: RoomCliIo,
 ): Promise<void> {
   const controller = new AbortController();
-  const initialFull = await fullRoomForResource(ref, flags, io);
+  // Spec 248 — an action-scoped watch already polls the focused action and
+  // races the participant obligation endpoint. A full-room preflight plus a
+  // second full-room polling loop transferred the entire working set on every
+  // cycle without adding a wake the target action could not provide.
+  const initialFull = flags.action ? null : await fullRoomForResource(ref, flags, io);
   const racers: Promise<FilteredWatchWake>[] = [];
   if (flags.action) racers.push(pollActionWatch(ref, flags.action, flags, io, controller.signal));
   else if (flags.artifact) {
@@ -6559,7 +6726,9 @@ async function roomFilteredWatch(
   } else if (flags.decision) {
     racers.push(pollDecisionWatch(ref, flags.decision, flags, io, controller.signal));
   }
-  racers.push(pollDirectActionObligation(ref, initialFull, flags, io, controller.signal));
+  if (initialFull) {
+    racers.push(pollDirectActionObligation(ref, initialFull, flags, io, controller.signal));
+  }
   const auth = authFromFlags(flags, ref, io.env);
   if (auth) {
     racers.push(
@@ -8508,8 +8677,11 @@ function renderRoomRead(
   response: Record<string, unknown>,
   ref: RoomRef,
   env: Record<string, string | undefined>,
+  options: { acknowledged?: boolean; expandBodies?: boolean } = {},
 ): string {
-  if (foregroundFromResponse(response)) return renderPhasedRoomRead(response, ref);
+  if (foregroundFromResponse(response)) {
+    return renderPhasedRoomRead(response, ref, env, options);
+  }
   const lines = [`Room ${String(response.slug ?? ref.slug)}`];
   const discussionCount = Array.isArray(response.discussion)
     ? response.discussion.filter(isRecord).length
@@ -8519,8 +8691,14 @@ function renderRoomRead(
   const page = isRecord(response.page) ? response.page : {};
   const roomEvent = numberOrNull(page.room_event) ?? numberOrNull(response.current_through) ?? 0;
   lines.push(
-    `SNAPSHOT — current working state; latest ${discussionCount} of ${totalDiscussion} discussion post${totalDiscussion === 1 ? "" : "s"}; cursor now at event ${roomEvent}.`,
+    `SNAPSHOT — current working state; latest ${discussionCount} of ${totalDiscussion} discussion post${totalDiscussion === 1 ? "" : "s"}; ${options.acknowledged ? "position acknowledged through" : "position unchanged at"} event ${roomEvent}.`,
   );
+  appendViewerIdentity(lines, response);
+  if (!options.acknowledged) {
+    lines.push(
+      `Acknowledge this snapshot through event ${roomEvent}: ${grpCommand(`read --snapshot --ack${roomHintArg(String(response.slug ?? ref.slug), ref, env)}`)}`,
+    );
+  }
   if (earlierDiscussion > 0) {
     lines.push(`Earlier discussion is not included here: ${grpCommand("timeline")}`);
   }
@@ -8550,7 +8728,7 @@ function renderRoomRead(
   const decision = initialDecision;
   const state = optionState(response);
   if (decision) {
-    const options = decisionOptions(decision);
+    const decisionOptionList = decisionOptions(decision);
     const choicesCast = numberOrNull(decision.choices_cast) ?? numberOrNull(decision.votes_cast);
     const eligibleVoters = numberOrNull(decision.eligible_voters);
     const hasProgress = choicesCast !== null && eligibleVoters !== null;
@@ -8564,11 +8742,13 @@ function renderRoomRead(
     }
     const eligible = stringArray(decision.eligible);
     if (eligible.length > 0) lines.push(`Who can choose: ${eligible.join(", ")}`);
-    if (options.length > 0) {
+    if (decisionOptionList.length > 0) {
       lines.push("Options:");
-      for (const [index, option] of options.entries()) lines.push(`  ${index + 1}. ${option}`);
+      for (const [index, option] of decisionOptionList.entries()) {
+        lines.push(`  ${index + 1}. ${option}`);
+      }
     }
-    appendDiscussion(lines, response);
+    appendDiscussion(lines, response, ref, env, options.expandBodies === true);
     if (isObserver) {
       appendObserverGuidance(lines, response, ref, env);
     } else {
@@ -8582,7 +8762,7 @@ function renderRoomRead(
       );
     }
   } else if (String(response.status ?? "") === "open") {
-    appendDiscussion(lines, response);
+    appendDiscussion(lines, response, ref, env, options.expandBodies === true);
     const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
     if (isObserver) {
       lines.push("", "Next:", `  Wait for room activity: ${grpCommand(`watch${room}`)}`);
@@ -8618,27 +8798,39 @@ function renderRoomRead(
   return `${lines.join("\n")}\n`;
 }
 
-function renderPhasedRoomRead(response: Record<string, unknown>, ref: RoomRef): string {
+function renderPhasedRoomRead(
+  response: Record<string, unknown>,
+  ref: RoomRef,
+  env: Record<string, string | undefined>,
+  options: { acknowledged?: boolean; expandBodies?: boolean } = {},
+): string {
   const lines = [`Room ${String(response.slug ?? ref.slug)}`];
   const discussion = Array.isArray(response.discussion) ? response.discussion.filter(isRecord) : [];
   const earlierDiscussion = numberOrNull(response.discussion_earlier) ?? 0;
   const page = isRecord(response.page) ? response.page : {};
   const roomEvent = numberOrNull(page.room_event) ?? numberOrNull(response.current_through) ?? 0;
   lines.push(
-    `SNAPSHOT — current working state; latest ${discussion.length} of ${discussion.length + earlierDiscussion} discussion post${discussion.length + earlierDiscussion === 1 ? "" : "s"}; cursor now at event ${roomEvent}.`,
+    `SNAPSHOT — current working state; latest ${discussion.length} of ${discussion.length + earlierDiscussion} discussion post${discussion.length + earlierDiscussion === 1 ? "" : "s"}; ${options.acknowledged ? "position acknowledged through" : "position unchanged at"} event ${roomEvent}.`,
   );
+  appendViewerIdentity(lines, response);
+  const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
+  if (!options.acknowledged) {
+    lines.push(
+      `Acknowledge this snapshot through event ${roomEvent}: ${grpCommand(`read --snapshot --ack${room}`)}`,
+    );
+  }
   const about = stringOrNull(response.about);
   if (about) lines.push(`Project: ${about}`);
   const foreground = foregroundFromResponse(response);
   const decision = foreground?.decision;
-  const options = decision && Array.isArray(decision.options) ? decision.options : [];
-  if (options.length > 0) {
+  const decisionOptionList = decision && Array.isArray(decision.options) ? decision.options : [];
+  if (decisionOptionList.length > 0) {
     lines.push("", "Options:");
-    for (const [index, option] of options.entries()) {
+    for (const [index, option] of decisionOptionList.entries()) {
       lines.push(`  ${index + 1}. ${typeof option === "string" ? option : String(option)}`);
     }
   }
-  appendDiscussion(lines, response);
+  appendDiscussion(lines, response, ref, env, options.expandBodies === true);
   const actions = Array.isArray(response.actions) ? response.actions.filter(isRecord) : [];
   if (actions.length > 0) {
     lines.push("", "Shared actions:");
@@ -8660,7 +8852,47 @@ function renderPhasedRoomRead(response: Record<string, unknown>, ref: RoomRef): 
         .join(", ")}.`,
     );
   }
+  appendAuthoritativeResult(lines, response, ref, env);
   return `${lines.join("\n")}\n`;
+}
+
+function appendViewerIdentity(lines: string[], response: Record<string, unknown>): void {
+  const you = isRecord(response.you) ? response.you : null;
+  if (!you) return;
+  const name = stringOrNull(you.name) ?? stringOrNull(you.participant_id) ?? "unknown";
+  const role = stringOrNull(you.role) ?? "unknown";
+  const participantId = stringOrNull(you.participant_id);
+  lines.push(`You are ${name} (${role}${participantId ? `; ${participantId}` : ""}).`);
+}
+
+function appendAuthoritativeResult(
+  lines: string[],
+  response: Record<string, unknown>,
+  ref: RoomRef,
+  env: Record<string, string | undefined>,
+): void {
+  const result = isRecord(response.authoritative_result) ? response.authoritative_result : null;
+  if (!result) return;
+  const actionId = stringOrNull(result.action_id);
+  const artifactId = stringOrNull(result.artifact_id);
+  const revisionId = stringOrNull(result.revision_id);
+  const sha256 = stringOrNull(result.sha256);
+  if (!actionId || !artifactId || !revisionId || !sha256) return;
+  const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
+  const openSuccessor = stringOrNull(result.open_successor_action_id);
+  lines.push(
+    "",
+    "Authoritative result:",
+    `  Action ${actionId}; artifact ${artifactId}; revision ${revisionId}; SHA-256 ${sha256}.`,
+    `  Read action: ${grpCommand(`act read ${actionId}${room}`)}`,
+    `  Read exact artifact: ${grpCommand(`artifact read ${artifactId} --revision-id=${revisionId}${room}`)}`,
+  );
+  if (openSuccessor) {
+    lines.push(
+      `  Open successor ${openSuccessor} is amending this result.`,
+      `  Read successor: ${grpCommand(`act read ${openSuccessor}${room}`)}`,
+    );
+  }
 }
 
 /** Spec 224 candidate — bounded shared-work state carried by ordinary reads. */
@@ -8670,6 +8902,7 @@ function appendCoordinationState(
   ref: RoomRef,
   env: Record<string, string | undefined>,
 ): void {
+  appendAuthoritativeResult(lines, response, ref, env);
   const composing = Array.isArray(response.composing) ? response.composing.filter(isRecord) : [];
   if (composing.length > 0) {
     const names = composing.map(
@@ -8940,24 +9173,41 @@ function recoverablePeerWatchActions(
 }
 
 /**
- * Spec 112 (WR4-5) — render the discussion tail the agent view already
- * carries. Spec 115 (WR7-1): UNCLIPPED. The read is the flagship catch-up
- * surface — run 7's joiners lost the premise's tail to a 600-char display
- * cap and detoured through --json/timeline to recover it. The tail is
- * server-windowed, so the render stays bounded without a per-entry cap.
+ * Spec 112/248 — render a bounded index of the discussion tail the agent view
+ * already carries. `--expand` preserves Spec 115's exact, unclipped bodies;
+ * the default keeps repeated snapshots small while pointing to that explicit
+ * recovery surface.
  */
-function appendDiscussion(lines: string[], response: Record<string, unknown>): void {
+function appendDiscussion(
+  lines: string[],
+  response: Record<string, unknown>,
+  ref: RoomRef,
+  env: Record<string, string | undefined>,
+  expandBodies: boolean,
+): void {
   const discussion = Array.isArray(response.discussion) ? response.discussion : [];
   const entries = discussion.filter(isRecord);
   if (entries.length === 0) return;
-  lines.push("Discussion:");
+  const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
+  lines.push(expandBodies ? "Discussion:" : "Discussion (bodies elided):");
   for (const entry of entries) {
     const who = stringOrNull(entry.who) ?? "unknown";
     const stance = stringOrNull(entry.stance);
     const said = stringOrNull(entry.said) ?? "";
+    const aboutActionId = stringOrNull(entry.about_action_id);
+    const scope = aboutActionId ? ` about action ${aboutActionId}` : "";
+    if (!expandBodies) {
+      lines.push(
+        `  ${who}${stance ? ` (${stance})` : ""} posted ${said.length.toLocaleString("en-US")} characters${scope}.`,
+      );
+      continue;
+    }
     const [first = "", ...restLines] = said.split("\n");
-    lines.push(`  ${who}${stance ? ` (${stance})` : ""}: ${first}`);
+    lines.push(`  ${who}${stance ? ` (${stance})` : ""}${scope}: ${first}`);
     for (const restLine of restLines) lines.push(`    ${restLine}`);
+  }
+  if (!expandBodies) {
+    lines.push(`  Expand exact bodies: ${grpCommand(`read --snapshot --expand${room}`)}`);
   }
   const earlier = numberOrNull(response.discussion_earlier);
   if (earlier !== null && earlier > 0)
@@ -9493,10 +9743,21 @@ function renderOptionProposed(
   return `${lines.join("\n")}\n`;
 }
 
-function renderDiscussionPosted(ref: RoomRef, env: Record<string, string | undefined>): string {
+function renderDiscussionPosted(
+  response: unknown,
+  ref: RoomRef,
+  env: Record<string, string | undefined>,
+): string {
+  const record = isRecord(response) ? response : {};
+  const postedAs = isRecord(record.posted_as) ? record.posted_as : null;
+  const author = stringOrNull(postedAs?.name) ?? stringOrNull(postedAs?.participant_id);
+  const aboutActionId = stringOrNull(record.about_action_id);
   const room = roomHintArg(ref.slug, ref, env);
   const destination = room ? ` Room: ${ref.slug}.` : "";
-  const lines = [`Discussion posted.${destination}`];
+  const lines = [
+    `Discussion posted${author ? ` as ${author}` : ""}.${destination}`,
+    ...(aboutActionId ? [`Commentary on action: ${aboutActionId}.`] : []),
+  ];
   lines.push(
     "",
     "Next:",
@@ -10379,15 +10640,24 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
   read: {
     usage: "grp read [room]",
     summary:
-      "Read the room. Your first read is a fresh working-set snapshot; once a watch (or --since) stores your position, later reads return paged catch-up deltas.",
+      "Read the room without moving your stored position. Use --ack when the displayed snapshot or catch-up page has been incorporated; later reads then continue after that acknowledged event.",
     flags: [
       "--snapshot       fresh current-state snapshot; skips catch-up (not full history or artifact bytes)",
       "--decision=N     one decision's thread — question, options, outcome, its discussion (never moves your position)",
-      "--since=N        everything after event N (moves your position)",
+      "--since=N        everything after event N (does not move your position without --ack)",
       "--since=last     everything after your stored position",
+      "--ack            acknowledge the displayed page through its final event",
+      "--expand         include exact discussion bodies in a working-state snapshot",
       "--json           raw JSON (snapshot or delta)",
     ],
     example: "grp read",
+  },
+  whoami: {
+    usage: "grp whoami [room]",
+    summary:
+      "Show the participant name, role, and ID the room associates with the current credential. This identity read never moves your room position.",
+    flags: ["--json           structured identity", "--quiet          participant ID only"],
+    example: "grp whoami",
   },
   enter: {
     usage: "grp enter <room-url|slug>",
@@ -10487,10 +10757,11 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "  single   one holder works; peers may continue",
       "  handoff  one current holder; holder-scoped transitions require that holder",
       "  all      every required participant reports",
-      "start [room] --title=TEXT [--mode=single|handoff|all] [--completion=holder|group] [--to=NAME] [--description=TEXT]",
+      "start [room] --title=TEXT [--mode=single|handoff|all] [--completion=holder|group] [--to=NAME] [--description=TEXT] [--supersedes=ACTION_ID]",
       "  single and handoff default to holder completion; group completion requires room agreement",
       "  all defaults to the joined participant roster; --required=A,B freezes a named roster",
       "  initial native artifact: --artifact-name=TEXT --artifact-file=PATH",
+      "  amend a completed reviewed result: --supersedes=ACTION_ID (inherits its artifact and review gate)",
       "read ID [room]",
       "reviews ID [room] [--version=N] [--reviewer=NAME]  read formal review history",
       "take ID [room]  become holder of an available handoff action",
@@ -10523,6 +10794,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "  grp act request-review ACTION_ID",
       "  grp act review ACTION_ID --approve",
       '  grp act start --title="Consult our principals" --mode=all --required=Neon,Cobalt',
+      '  grp act start --title="Amend the reviewed result" --supersedes=ACTION_ID',
     ],
     example: 'grp act start --title="Check the release data" --mode=single',
   },
@@ -10728,6 +11000,7 @@ function printRoomHelp(write: (text: string) => void): void {
       "  act            track work and what counts as complete",
       "  ask            record a group choice",
       "  read           catch up on shared state",
+      "  whoami         show your authenticated identity in the room",
       "  watch          wait for relevant room activity",
       "",
       "Commands:",
@@ -10767,6 +11040,8 @@ function printRoomHelp(write: (text: string) => void): void {
       "  --bearer=TOKEN   bearer token for OAuth/restricted-key calls",
       "  --json           formatted JSON output",
       "  --snapshot       fresh current-state snapshot on read (not full history or artifact bytes)",
+      "  --ack            acknowledge the displayed read page through its final event",
+      "  --expand         include exact discussion bodies in a snapshot",
       "  --since=N|last   read activity after an event / your stored position",
       "  --jsonl          one JSON event per line for timeline/watch",
       "  --timeout=N      bounded watch: exit 0 with 'nothing new' after N seconds",

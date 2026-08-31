@@ -111,6 +111,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
   if (
     [
       "read",
+      "whoami",
       "create",
       "join",
       "enter",
@@ -160,6 +161,7 @@ function printHelp(programName: string): void {
     "  act start …           track work and what counts as complete",
     "  ask TEXT              record a group choice",
     "  read [ROOM]           catch up on shared state",
+    "  whoami [ROOM]         show your authenticated room identity",
     "  watch [ROOM]          wait for relevant room activity",
     "",
     "Start:",
@@ -189,6 +191,7 @@ function printHelp(programName: string): void {
     "  invite [ROOM]         create or list invites (--role observer for watch-only seats)",
     "  members [ROOM]        list room members",
     "  settings [ROOM]       show room settings",
+    "  whoami [ROOM]         show the participant identity this room sees",
     "",
     "Shared resources:",
     "  artifact create|read|patch …  use an optional action-owned versioned resource",
