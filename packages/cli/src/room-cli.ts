@@ -9,6 +9,12 @@ import {
 import type { GrpAuth, RoomEvent } from "../../agent-sdk/src/index.js";
 import { grpCommand } from "./command-hints.js";
 import { finishEvalTraceRequest, preflightEvalTrace, startEvalTraceRequest } from "./eval-trace.js";
+import {
+  type CliForegroundProjection,
+  foregroundFromResponse,
+  insertForegroundBlock,
+  renderForegroundBlock,
+} from "./foreground-cli.js";
 import { SHARED_ROOM_DEFINITION } from "./orientation-copy.js";
 import {
   clearCurrentRoom,
@@ -23,6 +29,7 @@ import {
   resolveProviderBaseUrl,
   setCurrentRoom,
   setRoomCoordinationStateCapability,
+  setRoomForegroundObservation,
   setRoomLastSeenSeq,
   setRoomObservedStateRevision,
   setRoomStaleWriteRecovery,
@@ -97,6 +104,7 @@ class RoomStateChangedError extends Error {
   constructor(
     readonly expectedRevision: string,
     readonly currentRevision: string,
+    readonly foreground?: CliForegroundProjection,
   ) {
     super(`Room changed from revision ${expectedRevision} to ${currentRevision}`);
     this.name = "RoomStateChangedError";
@@ -110,11 +118,22 @@ class CliHttpError extends Error {
     readonly code?: string,
     readonly serverMessage?: string,
     readonly serverHint?: string,
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "CliHttpError";
   }
 }
+
+interface ForegroundCommandState {
+  projection?: CliForegroundProjection;
+  source?: "read" | "mutation" | "error";
+  baseUrl?: string;
+  slug?: string;
+  rendered: boolean;
+}
+
+const foregroundCommandStates = new WeakMap<RoomCliIo, ForegroundCommandState>();
 
 interface SseMessage {
   id?: string;
@@ -561,14 +580,14 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
     const helpCommand =
       (command === "artifact" && ["diff", "patch"].includes(subcommand ?? "")) ||
       ((command === "act" || command === "action") &&
-        ["request-review", "review", "reviews", "complete", "resume"].includes(
-          subcommand ?? "",
-        ))
+        ["request-review", "review", "reviews", "complete", "resume"].includes(subcommand ?? ""))
         ? `${command === "act" ? "action" : command}:${subcommand}`
         : command;
     printCommandHelp(helpCommand, resolvedIo.stdout);
     return 0;
   }
+
+  resolvedIo = foregroundRenderingIo(resolvedIo, parsed.flags);
 
   try {
     assertOnlyRoomCommandFlags(parsed);
@@ -581,7 +600,7 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
       cwd: resolvedIo.cwd ?? process.cwd(),
     });
     if (selection?.source === "workspace") {
-      resolvedIo = { ...resolvedIo, env: { ...resolvedIo.env, GRP_SESSION: selection.name } };
+      resolvedIo.env = { ...resolvedIo.env, GRP_SESSION: selection.name };
     }
     switch (command) {
       case "use":
@@ -819,6 +838,8 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
   } catch (err) {
     if (err instanceof RoomStateChangedError) {
       const canForce = roomCommandAllowsFlag(parsed, "force-stale-post");
+      const recoveryForeground =
+        foregroundFromResponse(err.catchUp?.response) ?? err.foreground ?? null;
       if (isJson(parsed.flags)) {
         resolvedIo.stdout(
           renderJson({
@@ -829,6 +850,7 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
                 expected_state_revision: err.expectedRevision,
                 current_state_revision: err.currentRevision,
                 posted: false,
+                ...(recoveryForeground ?? {}),
               },
             },
             suggested_command: grpCommand("read"),
@@ -847,13 +869,96 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
           }),
         );
       } else {
-        resolvedIo.stderr(`${roomStateChangedMessage(err, canForce)}\n`);
+        const message = roomStateChangedMessage(err, canForce);
+        resolvedIo.stderr(
+          recoveryForeground && !message.includes("\nForeground:")
+            ? insertForegroundBlock(
+                `${message}\n`,
+                foregroundBlockForIo(recoveryForeground, resolvedIo),
+              )
+            : `${message}\n`,
+        );
       }
       return 1;
+    }
+    if (err instanceof CliHttpError) {
+      const foreground = foregroundFromResponse(err.details);
+      if (foreground) {
+        if (isJson(parsed.flags)) {
+          resolvedIo.stdout(
+            renderJson({
+              error: {
+                code: err.code ?? "foreground.conflict",
+                message: err.serverMessage ?? err.message,
+                details: err.details,
+              },
+            }),
+          );
+        } else {
+          resolvedIo.stderr(renderForegroundFailure(err, foreground, resolvedIo));
+        }
+        return 1;
+      }
     }
     resolvedIo.stderr(`${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   }
+}
+
+function foregroundRenderingIo(io: RoomCliIo, flags: Record<string, string>): RoomCliIo {
+  const state: ForegroundCommandState = { rendered: false };
+  const wrapped: RoomCliIo = {
+    ...io,
+    stdout: (text) => {
+      if (!state.rendered && state.projection && !isJson(flags) && flags.quiet !== "true") {
+        state.rendered = true;
+        io.stdout(insertForegroundBlock(text, foregroundBlockForIo(state.projection, wrapped)));
+        return;
+      }
+      io.stdout(text);
+    },
+  };
+  foregroundCommandStates.set(wrapped, state);
+  return wrapped;
+}
+
+function foregroundBlockForIo(
+  foreground: CliForegroundProjection,
+  io: RoomCliIo,
+  includeWatch = true,
+): string {
+  const state = foregroundCommandStates.get(io);
+  const ref = state?.baseUrl && state.slug ? { baseUrl: state.baseUrl, slug: state.slug } : null;
+  const roomArg = ref ? roomHintArg(ref.slug, ref, io.env) : "";
+  return renderForegroundBlock(foreground, { roomArg, includeWatch });
+}
+
+function renderForegroundFailure(
+  error: CliHttpError,
+  foreground: CliForegroundProjection,
+  io: RoomCliIo,
+): string {
+  const state = foregroundCommandStates.get(io);
+  const ref = state?.baseUrl && state.slug ? { baseUrl: state.baseUrl, slug: state.slug } : null;
+  const roomArg = ref ? roomHintArg(ref.slug, ref, io.env) : "";
+  const object =
+    foreground.phase === "decision"
+      ? ` ${foreground.decision_id ?? ""}`
+      : foreground.phase === "action" || foreground.phase === "review"
+        ? ` ${foreground.action_id ?? ""}`
+        : "";
+  const block = foregroundBlockForIo(foreground, io, false);
+  return [
+    `NOT CHANGED — this command is unavailable while the room foreground is ${foreground.phase.toUpperCase()}${object}.`,
+    block.trimEnd(),
+    `Read current state: ${grpCommand(`read${roomArg}`)}`,
+    error.code === "foreground.precondition_failed"
+      ? "Retry only from the newly observed foreground epoch."
+      : null,
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n")
+    .concat("\n");
 }
 
 function roomStateChangedMessage(error: RoomStateChangedError, canForce: boolean): string {
@@ -867,7 +972,7 @@ function roomStateChangedMessage(error: RoomStateChangedError, canForce: boolean
     canForce && error.forceAvailable
       ? [
           "The room changed again after a prior complete catch-up.",
-          `Retry normally, or intentionally bypass the room-state guard once for this exact payload with --force-stale-post.`,
+          "Retry normally, or intentionally bypass the room-state guard once for this exact payload with --force-stale-post.",
           "The bypass is payload-bound, short-lived, and consumed once.",
         ]
       : canForce
@@ -1972,6 +2077,7 @@ function rememberCreatedRoom(
   // its own watch (run 8's Iridium self-wake loop).
   const participantId =
     stringOrNull(response.participant_id) ?? stringOrNull(response.participantId);
+  const foreground = foregroundFromResponse(response);
   updateProviderConfig(
     (current) =>
       setCurrentRoom(current, {
@@ -1980,6 +2086,12 @@ function rememberCreatedRoom(
         ...(token ? { token } : {}),
         ...(options.password ? { password: options.password } : {}),
         ...(participantId ? { participantId } : {}),
+        ...(foreground
+          ? {
+              foregroundPolicy: foreground.policy,
+              observedForegroundEpoch: foreground.epoch,
+            }
+          : {}),
       }),
     options.env,
   );
@@ -2431,9 +2543,14 @@ async function catchUpAfterStaleWrite(
       }
       return {
         response: page.response,
-        rendered: renderRoomDelta(page.response, ref, io.env, {
-          moreUnread: page.moreUnread,
-        }),
+        rendered: renderForegroundCatchUp(
+          page.response,
+          renderRoomDelta(page.response, ref, io.env, {
+            moreUnread: page.moreUnread,
+          }),
+          ref,
+          io.env,
+        ),
         complete: !page.moreUnread,
       };
     }
@@ -2442,7 +2559,12 @@ async function catchUpAfterStaleWrite(
     persistObservedStateRevisionFromRead(ref, response, io.env);
     return {
       response,
-      rendered: renderRoomRead(response, ref, io.env),
+      rendered: renderForegroundCatchUp(
+        response,
+        renderRoomRead(response, ref, io.env),
+        ref,
+        io.env,
+      ),
       complete: true,
     };
   } catch (error) {
@@ -2451,6 +2573,20 @@ async function catchUpAfterStaleWrite(
       error: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+function renderForegroundCatchUp(
+  response: Record<string, unknown>,
+  rendered: string,
+  ref: RoomRef,
+  env: Record<string, string | undefined>,
+): string {
+  const foreground = foregroundFromResponse(response);
+  if (!foreground) return rendered;
+  return insertForegroundBlock(
+    rendered,
+    renderForegroundBlock(foreground, { roomArg: roomHintArg(ref.slug, ref, env) }),
+  );
 }
 
 function persistObservedStateRevision(
@@ -2462,6 +2598,106 @@ function persistObservedStateRevision(
     (current) => setRoomObservedStateRevision(current, ref.slug, ref.baseUrl, revision),
     env,
   );
+}
+
+function captureForegroundResponse(
+  io: RoomCliIo,
+  response: unknown,
+  baseUrl: string,
+  path: string,
+  source: "read" | "mutation" | "error",
+): CliForegroundProjection | null {
+  const foreground = foregroundFromResponse(response);
+  if (!foreground) return null;
+  const state = foregroundCommandStates.get(io);
+  const responseRecord = isRecord(response) ? response : {};
+  const slug = roomSlugFromApiPath(path) ?? stringOrNull(responseRecord.slug) ?? state?.slug;
+  let accepted = !state;
+  if (state) {
+    const replace =
+      source === "mutation" ||
+      source === "error" ||
+      state.source === undefined ||
+      state.source === "read" ||
+      state.source === "error";
+    if (replace) {
+      accepted = true;
+      state.projection = foreground;
+      state.source = source;
+      state.baseUrl = baseUrl;
+      if (slug) state.slug = slug;
+    }
+  }
+  if (accepted && slug && findRememberedRoom(readProviderConfig(io.env), slug, baseUrl)) {
+    persistForegroundObservation({ baseUrl, slug }, foreground, io.env);
+  }
+  return foreground;
+}
+
+function roomSlugFromApiPath(path: string): string | null {
+  const match = path.match(/^\/api\/rooms\/([^/?]+)/);
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+function persistForegroundObservation(
+  ref: RoomRef,
+  foreground: CliForegroundProjection,
+  env: Record<string, string | undefined>,
+): void {
+  updateProviderConfig(
+    (current) =>
+      setRoomForegroundObservation(
+        current,
+        ref.slug,
+        ref.baseUrl,
+        foreground.policy,
+        foreground.epoch,
+      ),
+    env,
+  );
+}
+
+async function expectedForegroundEpoch(
+  ref: RoomRef,
+  flags: Record<string, string>,
+  io: RoomCliIo,
+): Promise<string | undefined> {
+  const remembered = findRememberedRoom(readProviderConfig(io.env), ref.slug, ref.baseUrl);
+  if (remembered?.foregroundPolicy !== "phased_serial") return undefined;
+  if (remembered.observedForegroundEpoch) return remembered.observedForegroundEpoch;
+
+  const response = await requestJson<Record<string, unknown>>(
+    ref.baseUrl,
+    `/api/rooms/${encodeURIComponent(ref.slug)}`,
+    io,
+    readRequestOptions(ref, flags, io.env),
+  );
+  const foreground = foregroundFromResponse(response);
+  if (!foreground) {
+    throw new Error(
+      `This phased room requires an authenticated read before mutation. Run: ${grpCommand("read")}`,
+    );
+  }
+  return foreground.epoch;
+}
+
+async function foregroundForReadSurface(
+  ref: RoomRef,
+  flags: Record<string, string>,
+  io: RoomCliIo,
+  response?: unknown,
+): Promise<CliForegroundProjection | null> {
+  const projected = foregroundFromResponse(response);
+  if (projected) return projected;
+  const remembered = findRememberedRoom(readProviderConfig(io.env), ref.slug, ref.baseUrl);
+  if (remembered?.foregroundPolicy !== "phased_serial") return null;
+  const current = await requestJson<Record<string, unknown>>(
+    ref.baseUrl,
+    `/api/rooms/${encodeURIComponent(ref.slug)}`,
+    io,
+    readRequestOptions(ref, flags, io.env),
+  );
+  return foregroundFromResponse(current);
 }
 
 /**
@@ -2531,7 +2767,9 @@ function renderFocusedDecision(
     }
   }
   if (status !== "resolved") {
-    lines.push("", `Act on it: ${grpCommand(`choose <option> --decision=${seq}`)}`);
+    if (!foregroundFromResponse(full)) {
+      lines.push("", `Act on it: ${grpCommand(`choose <option> --decision=${seq}`)}`);
+    }
   }
   lines.push("", "(focused read — your room position did not move)");
   return `${lines.join("\n")}\n`;
@@ -2619,6 +2857,9 @@ function renderRoomDelta(
   env: Record<string, string | undefined>,
   options: { moreUnread?: boolean } = {},
 ): string {
+  if (foregroundFromResponse(response)) {
+    return renderPhasedRoomDelta(response, ref, options);
+  }
   const slug = String(response.slug ?? ref.slug);
   // Spec 117 (the delta diet) — one thin header, the new events, Next.
   // No premise, no restated question, no roster: an agent in its own thread
@@ -2706,6 +2947,29 @@ function renderRoomDelta(
   }
 
   lines.push("", catchUpLabel);
+  return `${lines.join("\n")}\n`;
+}
+
+function renderPhasedRoomDelta(
+  response: Record<string, unknown>,
+  ref: RoomRef,
+  options: { moreUnread?: boolean },
+): string {
+  const entries = Array.isArray(response.new) ? response.new.filter(isRecord) : [];
+  const currentThrough = numberOrNull(response.current_through);
+  const page = isRecord(response.page) ? response.page : {};
+  const throughEvent = numberOrNull(page.through_event) ?? currentThrough ?? 0;
+  const roomEvent = numberOrNull(page.room_event) ?? throughEvent;
+  const complete = !options.moreUnread && page.complete !== false;
+  const label = `${complete ? "COMPLETE" : "PARTIAL"} CATCH-UP — ${entries.length} update${entries.length === 1 ? "" : "s"} shown, through event ${throughEvent} of ${roomEvent}.`;
+  const lines = [label, `Room ${String(response.slug ?? ref.slug)}`];
+  if (entries.length === 0) lines.push("", `Nothing new through event ${throughEvent}.`);
+  else {
+    lines.push("", "New since your last read:");
+    for (const entry of entries) lines.push(...renderDeltaEntry(entry));
+  }
+  if (options.moreUnread) lines.push("", "More unread activity remains.");
+  lines.push("", label);
   return `${lines.join("\n")}\n`;
 }
 
@@ -3170,7 +3434,9 @@ async function roomDiscuss(
       io.stdout(renderJson(response));
     } else if (flags.quiet !== "true") {
       io.stdout(
-        "Composing signal active.\nIt will clear when you post or when it expires.\n\nNext: post normally with grp discuss.\n",
+        foregroundFromResponse(response)
+          ? "Composing signal active.\n"
+          : "Composing signal active.\nIt will clear when you post or when it expires.\n\nNext: post normally with grp discuss.\n",
       );
     }
     return;
@@ -3368,7 +3634,8 @@ async function roomAction(
     );
     const filtered = filterActionReviewHistory(history, flags);
     if (isJson(flags)) io.stdout(renderJson(filtered));
-    else io.stdout(renderActionReviewHistory(filtered, id, ref, io.env, flags.version !== undefined));
+    else
+      io.stdout(renderActionReviewHistory(filtered, id, ref, io.env, flags.version !== undefined));
     return;
   }
   const currentAction = actionFromResponse(current);
@@ -3440,7 +3707,11 @@ async function roomAction(
         { reviews: 1 },
       );
       if (isJson(flags)) {
-        io.stdout(renderJson({ action: currentAction, exact_artifact: exact, review_history: history }));
+        io.stdout(
+          renderJson({ action: currentAction, exact_artifact: exact, review_history: history }),
+        );
+      } else if (foregroundFromResponse(current) || foregroundFromResponse(exact)) {
+        io.stdout(renderArtifactRead(exact, ref, io.env));
       } else {
         io.stdout(
           `${renderArtifactRead(exact, ref, io.env).trimEnd()}\n\n${renderActionReviewChoice(currentAction, exact, ref, io.env, history)}`,
@@ -3750,6 +4021,10 @@ async function writeActionResponse(
   event: string,
 ): Promise<void> {
   const action = actionFromResponse(response);
+  if (foregroundFromResponse(response) && !isJson(flags) && flags.quiet !== "true") {
+    io.stdout(renderPhasedActionReceipt(action, event));
+    return;
+  }
   const review = isRecord(action.review) ? action.review : null;
   const reviewState = review ? stringOrNull(review.state) : null;
   const artifactId = stringOrNull(action.target_artifact_id);
@@ -3783,6 +4058,20 @@ async function writeActionResponse(
   }
   const full = await fullRoomForResource(ref, flags, io);
   io.stdout(renderActionState(action, ref, io.env, full, event, exactArtifact));
+}
+
+function renderPhasedActionReceipt(action: Record<string, unknown>, event: string): string {
+  const id = stringOrNull(action.id) ?? "ACTION_ID";
+  const lines = [
+    `Action ${id} ${event}.`,
+    `Work: ${stringOrNull(action.title) ?? "untitled"}`,
+    `State: ${stringOrNull(action.status) ?? "unknown"}; action v${stringOrNull(action.revision) ?? "?"}.`,
+  ];
+  const artifactId = stringOrNull(action.target_artifact_id);
+  if (artifactId) lines.push(`Artifact target: ${artifactId}.`);
+  const result = isRecord(action.result) ? action.result : null;
+  if (result) lines.push(`Result: ${JSON.stringify(result)}.`);
+  return `${lines.join("\n")}\n`;
 }
 
 function linkedCompletionDecision(
@@ -4011,7 +4300,9 @@ function renderActionReviewHistory(
       }
     }
     if (!detailed && version !== null) {
-      lines.push(`  Full bodies: ${grpCommand(`act reviews ${actionId} --version=${version}${room}`)}`);
+      lines.push(
+        `  Full bodies: ${grpCommand(`act reviews ${actionId} --version=${version}${room}`)}`,
+      );
     }
   }
   return `${lines.join("\n")}\n`;
@@ -4628,6 +4919,10 @@ async function roomArtifact(
       },
       false,
     );
+    if (foregroundFromResponse(response)) {
+      writeArtifactResponse(response, ref, flags, io, "updated");
+      return;
+    }
     const actionAfterEdit = actionFromResponse(
       await experimentalResourceRequest(
         ref,
@@ -4725,6 +5020,10 @@ async function roomArtifact(
       },
       false,
     );
+    if (foregroundFromResponse(response)) {
+      writeArtifactResponse(response, ref, flags, io, "updated");
+      return;
+    }
     const actionAfterEdit = actionFromResponse(
       await experimentalResourceRequest(
         ref,
@@ -4761,6 +5060,20 @@ function writeArtifactResponse(
   }
   if (!descriptor?.artifactId || !descriptor.revisionId) {
     throw new Error("host did not return an exact artifact descriptor");
+  }
+  if (foregroundFromResponse(response)) {
+    const action = isRecord(record.action) ? record.action : owningAction;
+    const actionId = stringOrNull(action?.id) ?? stringOrNull(artifact.action_id);
+    io.stdout(
+      `${[
+        `Artifact ${descriptor.artifactId} ${event}.`,
+        `Revision: rev_${descriptor.ordinal ?? "?"}`,
+        `Revision ID: ${descriptor.revisionId}`,
+        ...(descriptor.sha256 ? [`SHA-256: ${descriptor.sha256}`] : []),
+        ...(actionId ? [`Action: ${actionId}`] : []),
+      ].join("\n")}\n`,
+    );
+    return;
   }
   const room = roomHintArg(ref.slug, ref, io.env);
   const ordinal = descriptor.ordinal ?? "?";
@@ -4830,9 +5143,11 @@ function renderArtifactRead(
       for (const line of content.split("\n")) lines.push(`   ${line}`);
       lines.push("");
     }
-    lines.push(
-      `Action holder edit: ${grpCommand(`artifact patch ${artifactId} --action=ACTION_ID --file=changes.json${room}`)}`,
-    );
+    if (!foregroundFromResponse(response)) {
+      lines.push(
+        `Action holder edit: ${grpCommand(`artifact patch ${artifactId} --action=ACTION_ID --file=changes.json${room}`)}`,
+      );
+    }
   } else if (stringOrNull(revision.content) !== null) {
     lines.push("", "Content:", stringOrNull(revision.content) ?? "");
   } else if (isRecord(revision.external)) {
@@ -5019,6 +5334,14 @@ async function experimentalResourceRequest(
   if (password) options.password = password;
   const idempotencyKey = validatedIdempotencyKey(flags["idempotency-key"]);
   if (idempotencyKey) options.headers = { "idempotency-key": idempotencyKey };
+  const foregroundEpoch =
+    method === "GET" ? undefined : await expectedForegroundEpoch(ref, flags, io);
+  if (foregroundEpoch) {
+    options.headers = {
+      ...(options.headers ?? {}),
+      "x-grp-expected-foreground-epoch": foregroundEpoch,
+    };
+  }
   const expectedRevision = guardRoomState
     ? await guardedExpectedRoomRevision(ref, flags, io, operation, bodySha256)
     : undefined;
@@ -5214,13 +5537,15 @@ async function roomAbstain(
     return;
   }
   io.stdout(
-    [
-      "Abstention recorded.",
-      `Room: ${ref.slug}`,
-      `Reason: ${flags.reason}`,
-      "You may replace it with a choice while the decision remains open.",
-      "",
-    ].join("\n"),
+    foregroundFromResponse(response)
+      ? `Abstention recorded.\nRoom: ${ref.slug}\nReason: ${flags.reason}\n`
+      : [
+          "Abstention recorded.",
+          `Room: ${ref.slug}`,
+          `Reason: ${flags.reason}`,
+          "You may replace it with a choice while the decision remains open.",
+          "",
+        ].join("\n"),
   );
 }
 
@@ -5287,6 +5612,7 @@ async function roomOutcome(
   );
   const outcome = latestOutcome(response);
   const receiptVerification = outcome ? await verifyOutcomeReceiptChain(response, io) : null;
+  const foreground = await foregroundForReadSurface(ref, flags, io, response);
   if (isJson(flags)) {
     // Spec 120 — structured output includes the portable receipt artifacts,
     // not only their hashes, so an agent can archive or independently verify
@@ -5312,6 +5638,7 @@ async function roomOutcome(
           decisions: Array.isArray(response.decisions) ? response.decisions : [],
           conclusion: response.conclusion ?? null,
         },
+        ...(foreground ? { foreground } : {}),
       }),
     );
     return;
@@ -5660,6 +5987,7 @@ async function roomSettingsSet(
   }
   const settings = parseSettingsPatch(key, value, flags);
   const ref = resolveRoomRef(targetOrCurrent(target, flags, io), flags, io.env);
+  const foregroundEpoch = await expectedForegroundEpoch(ref, flags, io);
   const response = await requestJson<Record<string, unknown>>(
     ref.baseUrl,
     `/api/rooms/${encodeURIComponent(ref.slug)}/settings`,
@@ -5670,6 +5998,9 @@ async function roomSettingsSet(
       body: {
         settings,
       },
+      ...(foregroundEpoch
+        ? { headers: { "x-grp-expected-foreground-epoch": foregroundEpoch } }
+        : {}),
     },
   );
   if (isJson(flags)) {
@@ -5772,6 +6103,9 @@ async function roomEvents(
   if (exactEvent !== undefined && flags.since !== undefined) {
     throw new Error("pass either --event or --since, not both");
   }
+  if (flags.jsonl !== "true" && !isJson(flags)) {
+    await foregroundForReadSurface(ref, flags, io);
+  }
   // Raw stream (audit). Fetch every page by default: the gap-recovery endpoint
   // deliberately caps one response at 1,000 events, while audit timelines can
   // be much longer. An explicit --limit remains a total-result cap.
@@ -5781,7 +6115,8 @@ async function roomEvents(
     if (flags.jsonl === "true") {
       for (const event of events) io.stdout(`${JSON.stringify(event)}\n`);
     } else {
-      io.stdout(renderJson(response));
+      const foreground = await foregroundForReadSurface(ref, flags, io, response);
+      io.stdout(renderJson(foreground ? { ...response, foreground } : response));
     }
     return;
   }
@@ -5875,7 +6210,8 @@ async function fetchAllRoomDeltaEntries(
     const page = isRecord(response.page) ? response.page : {};
     const through =
       numberOrNull(page.through_event) ?? numberOrNull(response.current_through) ?? cursor;
-    const complete = page.complete === true || through >= (numberOrNull(page.room_event) ?? through);
+    const complete =
+      page.complete === true || through >= (numberOrNull(page.room_event) ?? through);
     if (complete) break;
     if (through <= cursor) throw new Error("timeline pagination did not advance its event cursor");
     cursor = through;
@@ -5926,17 +6262,13 @@ async function fetchAllRoomEvents(
       slug?: string;
       events?: RoomEvent[];
       page?: { complete?: boolean; through_event?: number; room_event?: number };
-    }>(
-      ref.baseUrl,
-      `/api/rooms/${encodeURIComponent(ref.slug)}/events`,
-      io,
-      options,
-    );
+    }>(ref.baseUrl, `/api/rooms/${encodeURIComponent(ref.slug)}/events`, io, options);
     slug = page.slug ?? slug;
     const next = page.events ?? [];
     if (next.length === 0) break;
     events.push(...next.slice(0, totalLimit - events.length));
-    if (events.length >= totalLimit || page.page?.complete === true || next.length < pageLimit) break;
+    if (events.length >= totalLimit || page.page?.complete === true || next.length < pageLimit)
+      break;
 
     const lastSeq = next.at(-1)?.seq;
     if (
@@ -6113,6 +6445,7 @@ async function roomWatch(
     for (const racer of racers) racer.catch(() => undefined);
   }
 
+  await foregroundForReadSurface(ref, flags, io);
   const room = roomHintArg(ref.slug, ref, io.env);
   if (wake.kind === "timeout") {
     // Spec 231 — use the light read to surface action recovery and size the
@@ -6252,6 +6585,7 @@ async function roomFilteredWatch(
     controller.abort();
     for (const racer of racers) racer.catch(() => undefined);
   }
+  await foregroundForReadSurface(ref, flags, io);
   const room = roomHintArg(ref.slug, ref, io.env);
   if (wake.kind === "timeout") {
     const target = flags.action
@@ -7366,6 +7700,13 @@ async function actionRequest(
   if (auth) options.auth = auth;
   const idempotencyKey = validatedIdempotencyKey(flags["idempotency-key"]);
   if (idempotencyKey) options.headers = { "idempotency-key": idempotencyKey };
+  const foregroundEpoch = await expectedForegroundEpoch(ref, flags, io);
+  if (foregroundEpoch) {
+    options.headers = {
+      ...(options.headers ?? {}),
+      "x-grp-expected-foreground-epoch": foregroundEpoch,
+    };
+  }
   const expectedRevision = guardRoomState
     ? await guardedExpectedRoomRevision(ref, flags, io, operation, bodySha256)
     : undefined;
@@ -7503,6 +7844,13 @@ async function requestJson<T>(
     responseStatus = response.status;
     if (!response.ok) {
       const error = await httpError(response, url);
+      const details =
+        error instanceof CliHttpError
+          ? error.details
+          : error instanceof RoomStateChangedError
+            ? error.foreground
+            : undefined;
+      if (details) captureForegroundResponse(io, details, baseUrl, path, "error");
       traceFinished = true;
       finishEvalTraceRequest(trace, {
         status: response.status,
@@ -7512,6 +7860,13 @@ async function requestJson<T>(
     }
     const text = await readBoundedResponseText(response);
     const parsed = (text ? JSON.parse(text) : null) as T;
+    captureForegroundResponse(
+      io,
+      parsed,
+      baseUrl,
+      path,
+      (options.method ?? "GET") === "GET" ? "read" : "mutation",
+    );
     traceFinished = true;
     finishEvalTraceRequest(trace, { status: response.status });
     return parsed;
@@ -8154,6 +8509,7 @@ function renderRoomRead(
   ref: RoomRef,
   env: Record<string, string | undefined>,
 ): string {
+  if (foregroundFromResponse(response)) return renderPhasedRoomRead(response, ref);
   const lines = [`Room ${String(response.slug ?? ref.slug)}`];
   const discussionCount = Array.isArray(response.discussion)
     ? response.discussion.filter(isRecord).length
@@ -8161,8 +8517,7 @@ function renderRoomRead(
   const earlierDiscussion = numberOrNull(response.discussion_earlier) ?? 0;
   const totalDiscussion = discussionCount + earlierDiscussion;
   const page = isRecord(response.page) ? response.page : {};
-  const roomEvent =
-    numberOrNull(page.room_event) ?? numberOrNull(response.current_through) ?? 0;
+  const roomEvent = numberOrNull(page.room_event) ?? numberOrNull(response.current_through) ?? 0;
   lines.push(
     `SNAPSHOT — current working state; latest ${discussionCount} of ${totalDiscussion} discussion post${totalDiscussion === 1 ? "" : "s"}; cursor now at event ${roomEvent}.`,
   );
@@ -8258,6 +8613,51 @@ function renderRoomRead(
       `  ${grpCommand(`invite${room}`)}`,
       `  ${grpCommand(`members${room}`)}`,
       `  ${grpCommand(`settings${room}`)}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function renderPhasedRoomRead(response: Record<string, unknown>, ref: RoomRef): string {
+  const lines = [`Room ${String(response.slug ?? ref.slug)}`];
+  const discussion = Array.isArray(response.discussion) ? response.discussion.filter(isRecord) : [];
+  const earlierDiscussion = numberOrNull(response.discussion_earlier) ?? 0;
+  const page = isRecord(response.page) ? response.page : {};
+  const roomEvent = numberOrNull(page.room_event) ?? numberOrNull(response.current_through) ?? 0;
+  lines.push(
+    `SNAPSHOT — current working state; latest ${discussion.length} of ${discussion.length + earlierDiscussion} discussion post${discussion.length + earlierDiscussion === 1 ? "" : "s"}; cursor now at event ${roomEvent}.`,
+  );
+  const about = stringOrNull(response.about);
+  if (about) lines.push(`Project: ${about}`);
+  const foreground = foregroundFromResponse(response);
+  const decision = foreground?.decision;
+  const options = decision && Array.isArray(decision.options) ? decision.options : [];
+  if (options.length > 0) {
+    lines.push("", "Options:");
+    for (const [index, option] of options.entries()) {
+      lines.push(`  ${index + 1}. ${typeof option === "string" ? option : String(option)}`);
+    }
+  }
+  appendDiscussion(lines, response);
+  const actions = Array.isArray(response.actions) ? response.actions.filter(isRecord) : [];
+  if (actions.length > 0) {
+    lines.push("", "Shared actions:");
+    for (const action of actions) {
+      lines.push(
+        `  ${stringOrNull(action.id) ?? "unknown"} — ${stringOrNull(action.title) ?? "untitled"}; ${stringOrNull(action.status) ?? "unknown"}; v${stringOrNull(action.revision) ?? "?"}`,
+      );
+    }
+  }
+  const composing = Array.isArray(response.composing) ? response.composing.filter(isRecord) : [];
+  if (composing.length > 0) {
+    lines.push(
+      "",
+      `Composing: ${composing
+        .map(
+          (signal) =>
+            stringOrNull(signal.display_name) ?? stringOrNull(signal.participant_id) ?? "unknown",
+        )
+        .join(", ")}.`,
     );
   }
   return `${lines.join("\n")}\n`;
@@ -9725,7 +10125,13 @@ async function httpError(response: Response, requestUrl?: URL): Promise<Error> {
       if (code === "state.precondition_failed" && details) {
         const expected = stringOrNull(details.expected_state_revision);
         const current = stringOrNull(details.current_state_revision);
-        if (expected && current) return new RoomStateChangedError(expected, current);
+        if (expected && current) {
+          return new RoomStateChangedError(
+            expected,
+            current,
+            foregroundFromResponse(details) ?? undefined,
+          );
+        }
       }
       return new CliHttpError(
         formatJsonError(
@@ -9741,6 +10147,7 @@ async function httpError(response: Response, requestUrl?: URL): Promise<Error> {
         code ?? undefined,
         serverMessage,
         serverHint,
+        details ?? undefined,
       );
     }
   } catch {
@@ -9876,6 +10283,7 @@ function rememberJoinedRoom(
   // from everyone else's (own events never wake).
   const participantId =
     stringOrNull(response.participant_id) ?? stringOrNull(response.participantId);
+  const foreground = foregroundFromResponse(response);
   const joinedRoom = {
     baseUrl: ref.baseUrl,
     slug: ref.slug,
@@ -9883,6 +10291,12 @@ function rememberJoinedRoom(
     ...(ref.password ? { password: ref.password } : {}),
     ...(role ? { role } : {}),
     ...(participantId ? { participantId } : {}),
+    ...(foreground
+      ? {
+          foregroundPolicy: foreground.policy,
+          observedForegroundEpoch: foreground.epoch,
+        }
+      : {}),
   };
   const explicitlyEnter = flags.enter === "true";
   let state: JoinedRoomState | null = null;
@@ -10225,7 +10639,8 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
   },
   timeline: {
     usage: "grp timeline [room]",
-    summary: "Print room history without moving your read position. The default auto-paginates through the complete timeline.",
+    summary:
+      "Print room history without moving your read position. The default auto-paginates through the complete timeline.",
     flags: [
       "--since=N        start after event N",
       "--event=N        retrieve exactly event N",

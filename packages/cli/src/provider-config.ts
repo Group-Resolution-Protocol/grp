@@ -53,6 +53,14 @@ export interface RoomContext {
    * This is kept separate from the observation token so capability is never
    * inferred merely because an old token happens to be present. */
   coordinationStateCapability?: "experimental" | "absent";
+  /** Spec 247 candidate — authenticated observation that this room uses the
+   * phased foreground policy. Absence means unknown/open, never phased by
+   * inference. */
+  foregroundPolicy?: "phased_serial";
+  /** Spec 247 candidate — the exact foreground epoch returned by the last
+   * authenticated phased response. This is a decimal equality token, not a
+   * client-side counter. */
+  observedForegroundEpoch?: string;
   /** One content-free, short-lived recovery capability for an exact mutation
    * that the host rejected because room state was stale. */
   staleWriteRecovery?: StaleWriteRecovery;
@@ -505,6 +513,47 @@ export function setRoomObservedStateRevision(
   };
 }
 
+/** Spec 247 candidate — replace the authenticated foreground observation
+ * without changing the room cursor, canonical state revision, or selection. */
+export function setRoomForegroundObservation(
+  config: ProviderConfig,
+  slug: string,
+  baseUrl: string | undefined,
+  policy: "phased_serial",
+  epoch: string,
+): ProviderConfig {
+  const observedForegroundEpoch = normalizeForegroundEpoch(epoch);
+  const next = normalizeProviderConfig(config);
+  const targetBase = baseUrl ? normalizeBaseUrl(baseUrl) : undefined;
+  const apply = (room: RoomContext): RoomContext =>
+    normalizeRoomContext({
+      ...room,
+      foregroundPolicy: policy,
+      observedForegroundEpoch,
+    });
+  const rooms = { ...(next.rooms ?? {}) };
+  let touched = false;
+  for (const [key, room] of Object.entries(rooms)) {
+    if (!roomMatches(next, room, slug, targetBase)) continue;
+    rooms[key] = apply(room);
+    touched = true;
+  }
+  let currentRoom = next.currentRoom;
+  if (currentRoom && roomMatches(next, currentRoom, slug, targetBase)) {
+    currentRoom = apply(currentRoom);
+    touched = true;
+  }
+  if (!touched) {
+    const room = apply({ slug, ...(baseUrl ? { baseUrl } : {}) });
+    rooms[roomContextKey(room)] = room;
+  }
+  return {
+    ...next,
+    ...(currentRoom ? { currentRoom } : {}),
+    ...(Object.keys(rooms).length > 0 ? { rooms } : {}),
+  };
+}
+
 export function setRoomStaleWriteRecovery(
   config: ProviderConfig,
   slug: string,
@@ -945,6 +994,11 @@ function normalizeRoomContext(raw: Partial<RoomContext>): RoomContext {
     raw.coordinationStateCapability === "absent"
       ? { coordinationStateCapability: raw.coordinationStateCapability }
       : {}),
+    ...(raw.foregroundPolicy === "phased_serial" ? { foregroundPolicy: "phased_serial" } : {}),
+    ...(typeof raw.observedForegroundEpoch === "string" &&
+    /^[0-9]+$/.test(raw.observedForegroundEpoch)
+      ? { observedForegroundEpoch: normalizeForegroundEpoch(raw.observedForegroundEpoch) }
+      : {}),
     ...(staleWriteRecovery ? { staleWriteRecovery } : {}),
   };
 }
@@ -993,6 +1047,13 @@ function normalizeObservedStateRevision(raw: string): string {
   return raw;
 }
 
+function normalizeForegroundEpoch(raw: string): string {
+  if (!/^(?:0|[1-9][0-9]*)$/.test(raw)) {
+    throw new Error("observed foreground epoch must be a canonical non-negative integer");
+  }
+  return raw;
+}
+
 function roomContextKey(room: RoomContext): string {
   if (room.baseUrl) return `base:${room.baseUrl}|${room.slug}`;
   if (room.provider) return `provider:${room.provider}|${room.slug}`;
@@ -1030,6 +1091,9 @@ function mergeRoomContexts(
   const observedStateRevision = incoming.observedStateRevision ?? remembered.observedStateRevision;
   const coordinationStateCapability =
     incoming.coordinationStateCapability ?? remembered.coordinationStateCapability;
+  const foregroundPolicy = incoming.foregroundPolicy ?? remembered.foregroundPolicy;
+  const observedForegroundEpoch =
+    incoming.observedForegroundEpoch ?? remembered.observedForegroundEpoch;
   const staleWriteRecovery = incoming.staleWriteRecovery ?? remembered.staleWriteRecovery;
   // Spec 113 — a read mark only ever moves forward across duplicate contexts.
   const lastSeenSeq =
@@ -1044,6 +1108,10 @@ function mergeRoomContexts(
   if (participantId) merged.participantId = participantId;
   if (lastSeenSeq !== undefined) merged.lastSeenSeq = lastSeenSeq;
   if (observedStateRevision !== undefined) merged.observedStateRevision = observedStateRevision;
+  if (foregroundPolicy !== undefined) merged.foregroundPolicy = foregroundPolicy;
+  if (observedForegroundEpoch !== undefined) {
+    merged.observedForegroundEpoch = observedForegroundEpoch;
+  }
   if (staleWriteRecovery !== undefined) merged.staleWriteRecovery = staleWriteRecovery;
   if (coordinationStateCapability !== undefined) {
     merged.coordinationStateCapability = coordinationStateCapability;

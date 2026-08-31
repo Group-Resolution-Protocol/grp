@@ -1,0 +1,210 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`spec 247 foreground copy matrix > all action report recorded 1`] = `
+"Foreground: ACTION a1 — all-participant; 2/3 reports recorded.
+No report is outstanding from you.
+Next: grp watch --action=a1
+"
+`;
+
+exports[`spec 247 foreground copy matrix > all action report required 1`] = `
+"Foreground: ACTION a1 — all-participant; 1/3 reports recorded.
+Required: grp act complete a1 --result-text="What happened"
+Available:
+  grp ask "..."
+  grp watch --action=a1
+"
+`;
+
+exports[`spec 247 foreground copy matrix > changes requested returns to action 1`] = `
+"Foreground: ACTION a1 — "Prepare the record"
+You hold this action.
+Available:
+  grp act complete a1 --result-text="What happened"
+  grp act fail a1
+  grp act handoff a1 --to=NAME
+  grp watch --action=a1
+"
+`;
+
+exports[`spec 247 foreground copy matrix > decision agreement 1`] = `
+"Foreground: DECISION 2 — "Which route?"
+You have not responded on this decision.
+Available:
+  grp discuss "..." --decision=2
+  grp accept "<option>" --decision=2
+  grp watch --decision=2
+"
+`;
+
+exports[`spec 247 foreground copy matrix > decision choice owed 1`] = `
+"Foreground: DECISION 2 — "Which route?"
+You have not responded on this decision.
+Available:
+  grp discuss "..." --decision=2
+  grp choose "<option>" --decision=2
+  grp abstain --reason="..." --decision=2
+  grp watch --decision=2
+"
+`;
+
+exports[`spec 247 foreground copy matrix > decision choice recorded 1`] = `
+"Foreground: DECISION 2 — "Which route?"
+Your response is recorded and remains revisable while choices are open.
+Available:
+  grp discuss "..." --decision=2
+  grp choose "<option>" --decision=2
+  grp abstain --reason="..." --decision=2
+  grp watch --decision=2
+"
+`;
+
+exports[`spec 247 foreground copy matrix > decision ineligible 1`] = `
+"Foreground: DECISION 2 — "Which route?"
+Available:
+  grp discuss "..." --decision=2
+  grp watch --decision=2
+"
+`;
+
+exports[`spec 247 foreground copy matrix > decision proposal collection 1`] = `
+"Foreground: DECISION 2 — "Which route?"
+Available:
+  grp discuss "..." --decision=2
+  grp propose "<option>" --decision=2
+  grp start choosing
+  grp cancel 2 --reason="..."
+  grp watch --decision=2
+"
+`;
+
+exports[`spec 247 foreground copy matrix > decision returns to action 1`] = `
+"Foreground: DECISION 2 — "Which route?"
+Returns to action a1 when this decision closes.
+You have not responded on this decision.
+Available:
+  grp discuss "..." --decision=2
+  grp choose "<option>" --decision=2
+  grp abstain --reason="..." --decision=2
+  grp watch --decision=2
+"
+`;
+
+exports[`spec 247 foreground copy matrix > decision settling 1`] = `
+"Foreground: DECISION 2 — "Which route?"
+Your response is recorded and remains revisable while choices are open.
+Available:
+  grp discuss "..." --decision=2
+  grp choose "<option>" --decision=2
+  grp abstain --reason="..." --decision=2
+  grp watch --decision=2
+"
+`;
+
+exports[`spec 247 foreground copy matrix > discussion observer 1`] = `
+"Foreground: DISCUSSION — no decision or action is active.
+Next: grp watch
+"
+`;
+
+exports[`spec 247 foreground copy matrix > discussion participant 1`] = `
+"Foreground: DISCUSSION — no decision or action is active.
+Available:
+  grp discuss "..."       exchange room context
+  grp ask "..."           open the foreground decision
+  grp act start --title="..."   start the foreground action
+  grp watch
+"
+`;
+
+exports[`spec 247 foreground copy matrix > handoff action available 1`] = `
+"Foreground: ACTION a1 — "Prepare the record".
+No action transition is required from you.
+Available:
+  grp act take a1
+  grp watch --action=a1
+"
+`;
+
+exports[`spec 247 foreground copy matrix > handoff action holder 1`] = `
+"Foreground: ACTION a1 — "Prepare the record"
+You hold this action.
+Available:
+  grp act complete a1 --result-text="What happened"
+  grp act fail a1
+  grp act handoff a1 --to=NAME
+  grp watch --action=a1
+"
+`;
+
+exports[`spec 247 foreground copy matrix > handoff action recoverable 1`] = `
+"Foreground: ACTION a1 — "Prepare the record"; held by p1.
+No action transition is required from you.
+Available:
+  grp act takeover a1 --reason="..."
+  grp watch --action=a1
+"
+`;
+
+exports[`spec 247 foreground copy matrix > review non-reviewer 1`] = `
+"Foreground: REVIEW a1 — artifact v3 (SHA-256 abc123)
+The artifact cannot change while this review is open.
+No review response is required from you.
+Next: grp watch --action=a1
+"
+`;
+
+exports[`spec 247 foreground copy matrix > review requester 1`] = `
+"Foreground: REVIEW a1 — artifact v3 (SHA-256 abc123)
+The artifact cannot change while this review is open.
+No review response is required from you.
+Available:
+  grp act cancel a1
+  grp watch --action=a1
+"
+`;
+
+exports[`spec 247 foreground copy matrix > review response recorded 1`] = `
+"Foreground: REVIEW a1 — artifact v3 (SHA-256 abc123)
+The artifact cannot change while this review is open.
+Your response is recorded.
+Available:
+  grp act review a1
+  grp watch --action=a1
+"
+`;
+
+exports[`spec 247 foreground copy matrix > review response required 1`] = `
+"Foreground: REVIEW a1 — artifact v3 (SHA-256 abc123)
+The artifact cannot change while this review is open.
+Required: grp act review a1
+"
+`;
+
+exports[`spec 247 foreground copy matrix > single action holder 1`] = `
+"Foreground: ACTION a1 — "Prepare the record"
+You hold this action.
+Available:
+  grp act complete a1 --result-text="What happened"
+  grp act fail a1
+  grp act handoff a1 --to=NAME
+  grp watch --action=a1
+"
+`;
+
+exports[`spec 247 foreground copy matrix > single action peer 1`] = `
+"Foreground: ACTION a1 — "Prepare the record"; held by p1.
+No action transition is required from you.
+Next: grp watch --action=a1
+"
+`;
+
+exports[`spec 247 foreground copy matrix > unanimous review completion returns to discussion 1`] = `
+"Foreground: DISCUSSION — no decision or action is active.
+Available:
+  grp discuss "..."       exchange room context
+  grp ask "..."           open the foreground decision
+  grp act start --title="..."   start the foreground action
+  grp watch
+"
+`;
