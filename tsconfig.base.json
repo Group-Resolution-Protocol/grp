@@ -3,9 +3,7 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": [
-      "ES2022"
-    ],
+    "lib": ["ES2022"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
@@ -23,24 +21,11 @@
     "tsBuildInfoFile": ".tsbuild/tsconfig.tsbuildinfo",
     "baseUrl": ".",
     "paths": {
-      "@grp-protocol/engine": [
-        "./packages/engine/src/index.ts"
-      ],
-      "@grp-protocol/audit": [
-        "./packages/audit/src/index.ts"
-      ],
-      "@grp-protocol/conformance": [
-        "./packages/conformance/src/index.ts"
-      ],
-      "@grp-protocol/sdk": [
-        "./packages/agent-sdk/src/index.ts"
-      ]
+      "@grp-protocol/engine": ["./packages/engine/src/index.ts"],
+      "@grp-protocol/audit": ["./packages/audit/src/index.ts"],
+      "@grp-protocol/conformance": ["./packages/conformance/src/index.ts"],
+      "@grp-protocol/sdk": ["./packages/agent-sdk/src/index.ts"]
     }
   },
-  "exclude": [
-    "node_modules",
-    "dist",
-    ".next",
-    ".tsbuild"
-  ]
+  "exclude": ["node_modules", "dist", ".next", ".tsbuild"]
 }

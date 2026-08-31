@@ -60,7 +60,7 @@ describe("runBudgetAllocation — quadratic_funding", () => {
       votes: [...tenSmall, { voter_id: "big", allocation: { env: 0, edu: 1 } }],
       deterministic_seed: "test",
     });
-    expect(result.per_option_score.env).toBeGreaterThan(result.per_option_score.edu! * 5);
+    expect(result.per_option_score.env).toBeGreaterThan((result.per_option_score.edu ?? 0) * 5);
   });
 
   it("matches arithmetic average when all voters allocate uniformly", () => {
@@ -98,9 +98,9 @@ describe("runBudgetAllocation — equal_shares", () => {
     const sum = Object.values(result.per_option_score).reduce((a, b) => a + b, 0);
     expect(sum).toBeCloseTo(1, 5);
     // Every option that had at least one supporter should get nonzero.
-    expect(result.per_option_score.env!).toBeGreaterThan(0);
-    expect(result.per_option_score.edu!).toBeGreaterThan(0);
-    expect(result.per_option_score.health!).toBeGreaterThan(0);
+    expect(result.per_option_score.env ?? 0).toBeGreaterThan(0);
+    expect(result.per_option_score.edu ?? 0).toBeGreaterThan(0);
+    expect(result.per_option_score.health ?? 0).toBeGreaterThan(0);
   });
 
   it("respects proportional fairness — 3-to-1 supporter ratio yields ~3x allocation", () => {
@@ -117,8 +117,8 @@ describe("runBudgetAllocation — equal_shares", () => {
     });
     // 3 voters x 0.25 budget each = 0.75 for popular; 1 voter x 0.25 = 0.25 for niche.
     // Ratio = 3:1.
-    expect(result.per_option_score.popular!).toBeCloseTo(0.75, 2);
-    expect(result.per_option_score.niche!).toBeCloseTo(0.25, 2);
+    expect(result.per_option_score.popular ?? 0).toBeCloseTo(0.75, 2);
+    expect(result.per_option_score.niche ?? 0).toBeCloseTo(0.25, 2);
   });
 });
 

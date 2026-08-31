@@ -12,10 +12,7 @@
       "import": "./dist/engine/src/index.js"
     }
   },
-  "files": [
-    "dist/engine/src",
-    "README.md"
-  ],
+  "files": ["dist/engine/src", "README.md"],
   "engines": {
     "node": ">=22.0.0"
   },

@@ -129,7 +129,8 @@ export function runRankedPairwise(input: RankedPairwiseInput): RankedPairwiseRes
         const bRank = rankIndex.get(b);
         if (aRank === undefined && bRank === undefined) continue;
         if (aRank !== undefined && (bRank === undefined || aRank < bRank)) {
-          preferences[a]![b] = (preferences[a]?.[b] ?? 0) + vote.weight;
+          const row = matrixRow(preferences, a);
+          row[b] = (row[b] ?? 0) + vote.weight;
         }
       }
     }
@@ -138,8 +139,8 @@ export function runRankedPairwise(input: RankedPairwiseInput): RankedPairwiseRes
   for (const i of parameters.options) {
     for (const j of parameters.options) {
       if (i === j) continue;
-      paths[i]![j] =
-        (preferences[i]?.[j] ?? 0) > (preferences[j]?.[i] ?? 0) ? preferences[i]?.[j]! : 0;
+      const forward = preferences[i]?.[j] ?? 0;
+      matrixRow(paths, i)[j] = forward > (preferences[j]?.[i] ?? 0) ? forward : 0;
     }
   }
 
@@ -148,7 +149,7 @@ export function runRankedPairwise(input: RankedPairwiseInput): RankedPairwiseRes
       if (i === j) continue;
       for (const k of parameters.options) {
         if (i === k || j === k) continue;
-        paths[j]![k] = Math.max(
+        matrixRow(paths, j)[k] = Math.max(
           paths[j]?.[k] ?? 0,
           Math.min(paths[j]?.[i] ?? 0, paths[i]?.[k] ?? 0),
         );
@@ -208,10 +209,20 @@ function validateParameters(parameters: RankedPairwiseParameters, eligibleVoters
 function emptyMatrix(options: string[]): Record<string, Record<string, number>> {
   const out: Record<string, Record<string, number>> = {};
   for (const a of options) {
-    out[a] = {};
-    for (const b of options) out[a]![b] = a === b ? 0 : 0;
+    const row: Record<string, number> = {};
+    for (const b of options) row[b] = 0;
+    out[a] = row;
   }
   return out;
+}
+
+function matrixRow(
+  matrix: Record<string, Record<string, number>>,
+  option: string,
+): Record<string, number> {
+  const row = matrix[option];
+  if (!row) throw new RankedPairwiseError(`internal matrix is missing option ${option}`);
+  return row;
 }
 
 function resolveTie(
@@ -220,7 +231,7 @@ function resolveTie(
   tieBreak: RankedPairwiseTieBreak,
   seed: string,
 ): string | null {
-  if (ties.length === 1) return ties[0]!;
+  if (ties.length === 1) return ties[0] ?? null;
   if (tieBreak === "no_pass") return null;
   if (tieBreak === "first_listed") return options.find((o) => ties.includes(o)) ?? null;
   const idxBytes = createHash("sha256")

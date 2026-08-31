@@ -56,8 +56,14 @@ describe("jws sign/verify", () => {
       privateKey: PRIV,
     });
     const parts = jws.split(".");
-    const sigBytes = base64urlDecode(parts[2]!);
-    sigBytes[0] = (sigBytes[0]! ^ 0x01) & 0xff;
+    const signature = parts[2];
+    expect(signature).toBeDefined();
+    if (!signature) throw new Error("signed fixture is missing its signature segment");
+    const sigBytes = base64urlDecode(signature);
+    const firstByte = sigBytes[0];
+    expect(firstByte).toBeDefined();
+    if (firstByte === undefined) throw new Error("signed fixture has an empty signature");
+    sigBytes[0] = (firstByte ^ 0x01) & 0xff;
     const tampered = `${parts[0]}.${parts[1]}.${base64urlEncodeBytes(sigBytes)}`;
     await expect(verifyCompactJws({ jws: tampered, publicKey: pub })).rejects.toThrow(
       JwsVerificationError,

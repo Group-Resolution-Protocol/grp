@@ -633,7 +633,8 @@ describe("generic_vote — plurality_fallthrough (spec 037)", () => {
       deterministic_seed: SEED,
     });
     expect(r.outcome).toBe("plurality_pass");
-    expect(["a", "b", "c"]).toContain(r.winner!);
+    expect(r.winner).not.toBeNull();
+    expect(["a", "b", "c"]).toContain(r.winner);
     expect(r.threshold_met).toBe(false);
     expect(r.quorum_met).toBe(true);
     expect(r.trace.tie_resolution_reason).toMatch(/plurality_fallthrough/);
@@ -672,7 +673,12 @@ describe("generic_vote — plurality_fallthrough (spec 037)", () => {
       deterministic_seed: SEED,
     };
     const winners = new Set<string>();
-    for (let i = 0; i < 20; i++) winners.add(runGenericVote(input).winner!);
+    for (let i = 0; i < 20; i++) {
+      const winner = runGenericVote(input).winner;
+      expect(winner).not.toBeNull();
+      if (!winner) throw new Error("plurality fixture unexpectedly produced no winner");
+      winners.add(winner);
+    }
     expect(winners.size).toBe(1);
   });
 

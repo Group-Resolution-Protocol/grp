@@ -199,16 +199,22 @@ export function runGenericVote(input: GenericVoteInput): GenericVoteResult {
     if (parameters.plurality_fallthrough && topScore > 0) {
       const pluralityWinner =
         ties.length === 1
-          ? ties[0]!
+          ? requiredGenericVoteOption(ties[0], "single plurality leader is missing")
           : parameters.tie_break === "first_listed"
-            ? parameters.options.find((o) => ties.includes(o))!
+            ? requiredGenericVoteOption(
+                parameters.options.find((o) => ties.includes(o)),
+                "first-listed plurality leader is missing",
+              )
             : parameters.tie_break === "random_seeded"
               ? (() => {
                   const idxBytes = createHash("sha256")
                     .update(deterministic_seed, "utf8")
                     .update(canonicalize({ options: parameters.options, ties }))
                     .digest();
-                  return ties[idxBytes.readUInt32BE(0) % ties.length]!;
+                  return requiredGenericVoteOption(
+                    ties[idxBytes.readUInt32BE(0) % ties.length],
+                    "seeded plurality leader is missing",
+                  );
                 })()
               : null;
       if (pluralityWinner !== null) {
@@ -252,7 +258,7 @@ export function runGenericVote(input: GenericVoteInput): GenericVoteResult {
   }
 
   if (ties.length === 1) {
-    const winner = ties[0]!;
+    const winner = requiredGenericVoteOption(ties[0], "single threshold winner is missing");
     return {
       outcome: "pass",
       winner,
@@ -290,7 +296,10 @@ export function runGenericVote(input: GenericVoteInput): GenericVoteResult {
 
   if (parameters.tie_break === "first_listed") {
     // Pick whichever tied option appears earliest in the original options list.
-    const winner = parameters.options.find((o) => ties.includes(o))!;
+    const winner = requiredGenericVoteOption(
+      parameters.options.find((o) => ties.includes(o)),
+      "first-listed tied winner is missing",
+    );
     return {
       outcome: "pass",
       winner,
@@ -315,7 +324,7 @@ export function runGenericVote(input: GenericVoteInput): GenericVoteResult {
     .digest();
   // First 4 bytes as uint32 → modulo ties.length
   const idx = idxBytes.readUInt32BE(0) % ties.length;
-  const winner = ties[idx]!;
+  const winner = requiredGenericVoteOption(ties[idx], "seeded tied winner is missing");
   return {
     outcome: "pass",
     winner,
@@ -331,6 +340,11 @@ export function runGenericVote(input: GenericVoteInput): GenericVoteResult {
       tie_resolution_reason: `random_seeded: chose '${winner}' from ${ties.length}-way tie via seed`,
     },
   };
+}
+
+function requiredGenericVoteOption(option: string | undefined, invariant: string): string {
+  if (option === undefined) throw new GenericVoteError(`invariant violation: ${invariant}`);
+  return option;
 }
 
 /**

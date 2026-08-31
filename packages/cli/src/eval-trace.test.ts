@@ -9,11 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  finishEvalTraceRequest,
-  preflightEvalTrace,
-  startEvalTraceRequest,
-} from "./eval-trace.js";
+import { finishEvalTraceRequest, preflightEvalTrace, startEvalTraceRequest } from "./eval-trace.js";
 
 const TRACE_KEY = "a-private-per-run-eval-key-with-more-than-32-bytes";
 

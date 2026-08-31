@@ -55,7 +55,10 @@ describe("hash chain", () => {
     }
     // Tamper: change the second event's body.
     const tampered = [...events];
-    tampered[1] = { ...events[1]!, body: { x: 999 } };
+    const second = events[1];
+    expect(second).toBeDefined();
+    if (!second) throw new Error("test fixture is missing its second event");
+    tampered[1] = { ...second, body: { x: 999 } };
     expect(verifyChain(tampered, hashes)).toBe(false);
   });
 

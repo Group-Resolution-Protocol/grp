@@ -206,8 +206,7 @@ describe("provider config transactions", () => {
       env,
     );
     updateProviderConfig(
-      (current) =>
-        setRoomObservedStateRevision(current, "newsroom", TEST_BASE_URL, "opaque-a1"),
+      (current) => setRoomObservedStateRevision(current, "newsroom", TEST_BASE_URL, "opaque-a1"),
       env,
     );
 
