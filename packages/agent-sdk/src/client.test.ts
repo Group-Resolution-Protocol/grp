@@ -240,6 +240,63 @@ describe("@grp-protocol/sdk", () => {
     expect(requests[0]?.headers.get("authorization")).toBe("Bearer t_default");
   });
 
+  it("constructs floor-release and append-only review-note requests", async () => {
+    const requests: Request[] = [];
+    const client = new GrpClient({
+      baseUrl: "https://operator.example",
+      token: "t_default",
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request.clone());
+        if (request.url.endsWith("/review-notes")) {
+          return jsonResponse({
+            review_note: {
+              id: "note-1",
+              action_id: "action-1",
+              artifact_revision_id: "revision-2",
+              reviewer_id: "p1",
+              kind: "correction",
+              corrects_review_id: "review-1",
+              body: "Correction.",
+              non_dispositive: true,
+              created_at: "2026-08-31T12:00:00Z",
+            },
+            state_revision: "12",
+          });
+        }
+        return jsonResponse({
+          floor_release: request.method === "DELETE" ? null : { id: "release-1" },
+          changed: true,
+          state_revision: "11",
+        });
+      },
+    });
+
+    await client.setFloorRelease({ slug: "abc123" });
+    await client.revokeFloorRelease({ slug: "abc123" });
+    await client.appendActionReviewNote({
+      slug: "abc123",
+      action_id: "action-1",
+      artifact_revision_id: "revision-2",
+      kind: "correction",
+      corrects_review_id: "review-1",
+      body: "Correction.",
+    });
+
+    expect(requests.map((request) => request.method)).toEqual(["PUT", "DELETE", "POST"]);
+    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+      "/api/rooms/abc123/floor-release",
+      "/api/rooms/abc123/floor-release",
+      "/api/rooms/abc123/actions/action-1/review-notes",
+    ]);
+    expect(await requests[2]?.json()).toEqual({
+      artifact_revision_id: "revision-2",
+      kind: "correction",
+      body: "Correction.",
+      corrects_review_id: "review-1",
+    });
+  });
+
   it("constructs bound invite requests", async () => {
     const requests: Request[] = [];
     const client = new GrpClient({

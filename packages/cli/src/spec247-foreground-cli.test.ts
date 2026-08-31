@@ -410,7 +410,15 @@ describe("spec 247 phased foreground CLI", () => {
     );
 
     expect(await runRoomCli(["read", "--snapshot", "--json"], io)).toBe(0);
-    expect(JSON.parse(stdout.join(""))).toEqual(response);
+    expect(JSON.parse(stdout.join(""))).toMatchObject({
+      ...response,
+      _cli: {
+        schema: "grp.read.v1",
+        kind: "snapshot",
+        complete: true,
+        cursor: { advanced: false, displayed_through: 0 },
+      },
+    });
     expect(stdout.join("")).not.toContain("Foreground:");
   });
 });

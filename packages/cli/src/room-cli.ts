@@ -301,6 +301,7 @@ const BOOLEAN_CLI_FLAG_KEYS = new Set([
   "quiet",
   "snapshot",
   "rewrite",
+  "revoke",
   "override",
   "unlisted",
 ]);
@@ -567,6 +568,7 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
         "handoff",
         "request-review",
         "review",
+        "review-note",
         "complete",
         "resume",
         "fail",
@@ -575,14 +577,16 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
       ].includes(subcommand)
     ) {
       resolvedIo.stderr(
-        "usage: grp act start|read|reviews|take|handoff|request-review|review|complete|resume|fail|cancel|takeover ...\n",
+        "usage: grp act start|read|reviews|take|handoff|request-review|review|review-note|complete|resume|fail|cancel|takeover ...\n",
       );
       return 1;
     }
     const helpCommand =
       (command === "artifact" && ["diff", "patch"].includes(subcommand ?? "")) ||
       ((command === "act" || command === "action") &&
-        ["request-review", "review", "reviews", "complete", "resume"].includes(subcommand ?? ""))
+        ["request-review", "review", "review-note", "reviews", "complete", "resume"].includes(
+          subcommand ?? "",
+        ))
         ? `${command === "act" ? "action" : command}:${subcommand}`
         : command;
     printCommandHelp(helpCommand, resolvedIo.stdout);
@@ -637,6 +641,13 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
         return 0;
       case "whoami":
         await roomWhoAmI(
+          targetOrCurrent(maybeTarget, parsed.flags, resolvedIo),
+          parsed.flags,
+          resolvedIo,
+        );
+        return 0;
+      case "yield":
+        await roomYield(
           targetOrCurrent(maybeTarget, parsed.flags, resolvedIo),
           parsed.flags,
           resolvedIo,
@@ -1107,6 +1118,7 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
       "ask",
       "question",
       "context",
+      "context-file",
       "option",
       "options",
       "defer-first-decision",
@@ -1148,6 +1160,9 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
     "since",
   ]),
   whoami: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, ["json", "quiet"]),
+  yield: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, ROOM_ACTION_OUTPUT_FLAG_KEYS, [
+    "revoke",
+  ]),
   join: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, ROOM_ACTION_OUTPUT_FLAG_KEYS, [
     "invite",
     "as",
@@ -1159,6 +1174,7 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
     "ask",
     "question",
     "context",
+    "context-file",
     "option",
     "options",
     "eligible",
@@ -1229,7 +1245,12 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
   "action:review": roomFlagSet(
     ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS,
     ROOM_ACTION_OUTPUT_FLAG_KEYS,
-    ["approve", "request-changes", "body", "file", "idempotency-key"],
+    ["approve", "request-changes", "body", "file", "revision", "idempotency-key"],
+  ),
+  "action:review-note": roomFlagSet(
+    ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS,
+    ROOM_ACTION_OUTPUT_FLAG_KEYS,
+    ["revision", "kind", "corrects", "body", "file", "idempotency-key"],
   ),
   "action:complete": roomFlagSet(
     ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS,
@@ -1962,6 +1983,7 @@ async function roomCreate(
   ).replace(/\/$/, "");
   const question = flags.ask ?? flags.question;
   const about = await resolveCreateAbout(flags, question, io);
+  const context = await resolveDecisionContext(flags, io);
   const deferFirstDecision =
     flags["defer-first-decision"] !== undefined
       ? parseOptionalBool(flags["defer-first-decision"])
@@ -1978,7 +2000,7 @@ async function roomCreate(
   const body = withoutUndefined({
     about,
     question,
-    context: question ? flags.context : undefined,
+    context: question ? context : undefined,
     options: question || flags.options !== undefined ? options : undefined,
     password: access.password,
     defer_first_decision: deferFirstDecision,
@@ -2070,6 +2092,18 @@ async function readAll(input: NodeJS.ReadableStream): Promise<string> {
     out += typeof value === "string" ? value : Buffer.from(value).toString("utf8");
   }
   return out;
+}
+
+async function resolveDecisionContext(
+  flags: Record<string, string>,
+  io: RoomCliIo,
+): Promise<string | undefined> {
+  if (flags.context !== undefined && flags["context-file"] !== undefined) {
+    throw new Error("pass either --context=TEXT or --context-file=PATH, not both");
+  }
+  const path = flags["context-file"];
+  if (path === undefined) return flags.context;
+  return path === "-" ? readAll(io.stdin) : readFileSync(path, "utf8");
 }
 
 function rememberCreatedRoom(
@@ -2200,7 +2234,7 @@ async function roomRead(
   const since = resolveReadSince(flags, ref, io.env);
   const options = readRequestOptions(ref, flags, io.env);
   if (since !== undefined) options.query = { ...(options.query ?? {}), since };
-  const response = await requestJson<Record<string, unknown>>(
+  let response = await requestJson<Record<string, unknown>>(
     ref.baseUrl,
     `/api/rooms/${encodeURIComponent(ref.slug)}`,
     io,
@@ -2211,53 +2245,64 @@ async function roomRead(
   // anchored delta (its `new` array); old hosts ignore the unknown query
   // param and return the snapshot agent view.
   if (since !== undefined && Array.isArray(response.new)) {
+    const complete = await fetchCompleteRoomDelta(ref, flags, io, since, response);
+    response = complete.response;
     if (isJson(flags)) {
       const currentThrough = numberOrNull(response.current_through);
+      io.stdout(
+        renderJson(
+          readJsonEnvelope(response, {
+            kind: "catch_up",
+            storedBefore: rememberedLastSeenSeq(ref, io.env) ?? null,
+            displayedThrough: currentThrough,
+            acknowledged: acknowledge,
+            pagesFetched: complete.pagesFetched,
+          }),
+        ),
+      );
       if (acknowledge && currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
-      // JSON exports the complete anchored delta; unlike the paged human
-      // rendering, it does not hide a suffix from the caller.
       persistObservedStateRevisionFromRead(ref, response, io.env);
-      io.stdout(renderJson(response));
       return;
     }
-    // Spec 193 — a human delta is acknowledged page by page. Long room
-    // deltas drove agents to `head`/`tail`; the downstream filter hid a
-    // suffix after the CLI had already persisted the host's high-water mark.
-    // Keep messages whole, bound the ordinary page, and persist only through
-    // the final entry that this page actually includes. JSON remains the
-    // explicit complete structured export.
-    const page = humanDeltaPage(response, ref, io.env);
-    const currentThrough = numberOrNull(page.response.current_through);
-    if (acknowledge && currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
-    if (!page.moreUnread) {
-      persistObservedStateRevisionFromRead(ref, response, io.env);
-    } else {
-      persistCoordinationCapabilityFromRead(ref, response, io.env);
-    }
+    const pages = humanDeltaPages(response, ref, io.env);
+    const currentThrough = numberOrNull(response.current_through);
     if (acknowledge && io.stdoutIsTTY === false) {
       io.stderr(
-        "Warning: grp read is already paginated. Shell filters can hide displayed content after the read cursor advances.\n",
+        "Warning: grp read emits the complete catch-up before advancing. Shell filters can still hide content already emitted upstream.\n",
       );
     }
-    io.stdout(
-      withPersonaReadHeader(
-        renderRoomDelta(page.response, ref, io.env, {
-          moreUnread: page.moreUnread,
+    const rendered = pages
+      .map((page, index) =>
+        renderRoomDelta(page, ref, io.env, {
+          moreUnread: index < pages.length - 1,
+          continuesInline: index < pages.length - 1,
           acknowledged: acknowledge,
-        }),
-        io.env,
-      ),
-    );
+        }).trimEnd(),
+      )
+      .join("\n\n");
+    io.stdout(withPersonaReadHeader(`${rendered}\n`, io.env));
+    if (acknowledge && currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
+    persistObservedStateRevisionFromRead(ref, response, io.env);
     return;
   }
   // Spec 248 — reads are observational by default. `--ack` retains the
   // explicit WR11-1 escape hatch for callers that incorporated the displayed
   // snapshot and want subsequent reads/watches to begin after it.
   const currentThrough = numberOrNull(response.current_through);
-  if (acknowledge && currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
-  persistObservedStateRevisionFromRead(ref, response, io.env);
   if (isJson(flags)) {
-    io.stdout(renderJson(response));
+    io.stdout(
+      renderJson(
+        readJsonEnvelope(response, {
+          kind: "snapshot",
+          storedBefore: rememberedLastSeenSeq(ref, io.env) ?? null,
+          displayedThrough: currentThrough,
+          acknowledged: acknowledge,
+          pagesFetched: 1,
+        }),
+      ),
+    );
+    if (acknowledge && currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
+    persistObservedStateRevisionFromRead(ref, response, io.env);
     return;
   }
   const deltaUnsupportedNote =
@@ -2272,6 +2317,8 @@ async function roomRead(
         io.env,
       ) + deltaUnsupportedNote,
     );
+    if (acknowledge && currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
+    persistObservedStateRevisionFromRead(ref, response, io.env);
     return;
   }
   const decisions = Array.isArray(response.decisions) ? response.decisions.length : 0;
@@ -2293,6 +2340,8 @@ async function roomRead(
   );
   io.stdout("\n");
   if (deltaUnsupportedNote) io.stdout(deltaUnsupportedNote);
+  if (acknowledge && currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
+  persistObservedStateRevisionFromRead(ref, response, io.env);
 }
 
 async function roomWhoAmI(
@@ -2337,6 +2386,51 @@ async function roomWhoAmI(
       ].join("\n")}\n`,
     );
   }
+}
+
+async function roomYield(
+  target: string,
+  flags: Record<string, string>,
+  io: RoomCliIo,
+): Promise<void> {
+  const ref = resolveRoomRef(target, flags, io.env);
+  const revoke = flags.revoke === "true";
+  const response = await experimentalResourceRequest(
+    ref,
+    "/floor-release",
+    flags,
+    io,
+    revoke ? "DELETE" : "PUT",
+    {},
+  );
+  if (isJson(flags)) {
+    io.stdout(renderJson(response));
+    return;
+  }
+  if (flags.quiet === "true") return;
+  const record = isRecord(response) ? response : {};
+  if (revoke) {
+    io.stdout(
+      `${record.changed === false ? "No floor release was active." : "Floor release revoked."}\n`,
+    );
+    return;
+  }
+  const release = isRecord(record.floor_release) ? record.floor_release : null;
+  const scope = release && isRecord(release.scope) ? release.scope : {};
+  const displayName = stringOrNull(release?.display_name) ?? "you";
+  const room = roomHintArg(ref.slug, ref, io.env);
+  io.stdout(
+    `${[
+      record.changed === false
+        ? `Floor release already active for ${displayName} at this exact state.`
+        : `Floor released by ${displayName} at this exact state.`,
+      "Meaning: no further contribution or unresolved objection from this participant at the stated room state.",
+      "It does not approve work, waive authority, advance the room, or bind anyone else.",
+      `Scope: conversation ${String(scope.conversation_state_revision ?? "?")}; foreground ${String(scope.foreground_epoch ?? "?")}; decision ${String(scope.decision_id ?? "none")}; action ${String(scope.action_id ?? "none")}; artifact revision ${String(scope.artifact_revision_id ?? "none")}.`,
+      "",
+      `Revoke explicitly: ${grpCommand(`yield --revoke${room}`)}`,
+    ].join("\n")}\n`,
+  );
 }
 
 function withPersonaReadHeader(rendered: string, env: Record<string, string | undefined>): string {
@@ -2781,7 +2875,14 @@ function renderFocusedDecision(
   flags: Record<string, string>,
   _io: RoomCliIo,
 ): string {
-  const decision = requireDecisionBySeq(full, seq);
+  const selectedDecision = requireDecisionBySeq(full, seq);
+  const projectedDecision = activeDecision(full);
+  const decision =
+    projectedDecision &&
+    stringOrNull(projectedDecision.id) === stringOrNull(selectedDecision.id) &&
+    isRecord(projectedDecision.response_state)
+      ? { ...selectedDecision, response_state: projectedDecision.response_state }
+      : selectedDecision;
   const decisionId = stringOrNull(decision.id);
   const participants = Array.isArray(full.participants) ? full.participants.filter(isRecord) : [];
   const nameById = new Map(
@@ -2806,6 +2907,8 @@ function renderFocusedDecision(
   const status = stringOrNull(decision.status) ?? "unknown";
   const question = stringOrNull(decision.question) ?? "";
   const lines: string[] = [`Decision ${seq}: "${question}"`, `Status: ${status}`];
+  appendDecisionContext(lines, decision);
+  appendDecisionResponseState(lines, decision);
   const options = Array.isArray(decision.options) ? decision.options : [];
   if (options.length > 0) {
     lines.push("", "Options:");
@@ -2923,7 +3026,12 @@ function renderRoomDelta(
   response: Record<string, unknown>,
   ref: RoomRef,
   env: Record<string, string | undefined>,
-  options: { moreUnread?: boolean; acknowledged?: boolean; elideBodies?: boolean } = {},
+  options: {
+    moreUnread?: boolean;
+    continuesInline?: boolean;
+    acknowledged?: boolean;
+    elideBodies?: boolean;
+  } = {},
 ): string {
   if (foregroundFromResponse(response)) {
     return renderPhasedRoomDelta(response, ref, env, options);
@@ -2961,9 +3069,11 @@ function renderRoomDelta(
 
   lines.push(
     "",
-    options.acknowledged
-      ? `Position acknowledged through event ${throughEvent}.`
-      : `Position unchanged. Acknowledge through event ${throughEvent}: ${grpCommand(`read --ack${room}`)}`,
+    options.acknowledged && options.continuesInline
+      ? `Position will advance after the complete catch-up below; this page ends at event ${throughEvent}.`
+      : options.acknowledged
+        ? `Position acknowledged through event ${throughEvent}.`
+        : `Position unchanged. Acknowledge through event ${throughEvent}: ${grpCommand(`read --ack${room}`)}`,
   );
 
   const isObserver = callerRole(response, ref, env) === "observer";
@@ -2972,7 +3082,9 @@ function renderRoomDelta(
   lines.push("", "Next:");
   if (options.moreUnread) {
     lines.push(
-      `  More unread activity remains: ${grpCommand(`read${options.acknowledged ? "" : " --ack"}${room}`)}`,
+      options.continuesInline
+        ? "  Catch-up continues below."
+        : `  More unread activity remains: ${grpCommand(`read${options.acknowledged ? "" : " --ack"}${room}`)}`,
     );
     return `${lines.join("\n")}\n`;
   }
@@ -3059,6 +3171,7 @@ function renderPhasedRoomDelta(
   );
   if (options.moreUnread) lines.push("", "More unread activity remains.");
   appendAuthoritativeResult(lines, response, ref, env);
+  appendFloorReleases(lines, response);
   return `${lines.join("\n")}\n`;
 }
 
@@ -3119,6 +3232,136 @@ function humanDeltaPage(
       },
     },
     moreUnread: true,
+  };
+}
+
+async function fetchCompleteRoomDelta(
+  ref: RoomRef,
+  flags: Record<string, string>,
+  io: RoomCliIo,
+  requestedSince: number,
+  first: Record<string, unknown>,
+): Promise<{ response: Record<string, unknown>; pagesFetched: number }> {
+  const entries: Record<string, unknown>[] = [];
+  const seenSeq = new Set<number>();
+  let page = first;
+  let pagesFetched = 0;
+  let cursor = requestedSince;
+  while (true) {
+    pagesFetched += 1;
+    const currentEntries = Array.isArray(page.new) ? page.new.filter(isRecord) : [];
+    for (const entry of currentEntries) {
+      const seq = numberOrNull(entry.seq);
+      if (seq !== null) {
+        if (seenSeq.has(seq)) continue;
+        seenSeq.add(seq);
+      }
+      entries.push(entry);
+    }
+    const metadata = isRecord(page.page) ? page.page : {};
+    if (metadata.complete !== false) break;
+    const next = numberOrNull(metadata.next_since) ?? numberOrNull(page.current_through);
+    if (next === null || next <= cursor) {
+      throw new Error(
+        `host returned an incomplete catch-up page without a forward cursor after event ${cursor}`,
+      );
+    }
+    if (pagesFetched >= 1_000 || entries.length > 500_000) {
+      throw new Error("catch-up exceeded the CLI safety bound before the host reported completion");
+    }
+    cursor = next;
+    const options = readRequestOptions(ref, flags, io.env);
+    options.query = { ...(options.query ?? {}), since: cursor };
+    const nextPage = await requestJson<Record<string, unknown>>(
+      ref.baseUrl,
+      `/api/rooms/${encodeURIComponent(ref.slug)}`,
+      io,
+      options,
+    );
+    if (!Array.isArray(nextPage.new)) {
+      throw new Error("host stopped returning catch-up pages before the advertised room head");
+    }
+    page = nextPage;
+  }
+  const finalMetadata = isRecord(page.page) ? page.page : {};
+  const firstMetadata = isRecord(first.page) ? first.page : {};
+  return {
+    response: {
+      ...first,
+      ...page,
+      new: entries,
+      current_through:
+        numberOrNull(page.current_through) ?? numberOrNull(finalMetadata.through_event) ?? cursor,
+      page: {
+        ...finalMetadata,
+        displayed_from_event:
+          numberOrNull(firstMetadata.displayed_from_event) ?? numberOrNull(entries[0]?.seq) ?? null,
+        displayed_through_event:
+          numberOrNull(finalMetadata.displayed_through_event) ??
+          numberOrNull(entries.at(-1)?.seq) ??
+          null,
+        complete: true,
+        next_since: undefined,
+      },
+    },
+    pagesFetched,
+  };
+}
+
+function humanDeltaPages(
+  response: Record<string, unknown>,
+  ref: RoomRef,
+  env: Record<string, string | undefined>,
+): Record<string, unknown>[] {
+  const entries = Array.isArray(response.new) ? response.new.filter(isRecord) : [];
+  if (entries.length === 0) return [response];
+  const pages: Record<string, unknown>[] = [];
+  let remaining = entries;
+  while (remaining.length > 0) {
+    const candidate = { ...response, new: remaining };
+    const page = humanDeltaPage(candidate, ref, env);
+    const selected = Array.isArray(page.response.new)
+      ? page.response.new.filter(isRecord).length
+      : 0;
+    if (selected < 1) throw new Error("could not make progress while rendering catch-up pages");
+    pages.push(page.response);
+    remaining = remaining.slice(selected);
+  }
+  return pages;
+}
+
+function readJsonEnvelope(
+  response: Record<string, unknown>,
+  options: {
+    kind: "snapshot" | "catch_up";
+    storedBefore: number | null;
+    displayedThrough: number | null;
+    acknowledged: boolean;
+    pagesFetched: number;
+  },
+): Record<string, unknown> {
+  const page = isRecord(response.page) ? response.page : {};
+  const roomHead = numberOrNull(page.room_event) ?? options.displayedThrough;
+  const complete = page.complete !== false;
+  return {
+    ...response,
+    _cli: {
+      schema: "grp.read.v1",
+      kind: options.kind,
+      complete,
+      pages_fetched: options.pagesFetched,
+      bodies_elided: page.bodies_elided === true,
+      cursor: {
+        stored_before: options.storedBefore,
+        displayed_through: options.displayedThrough,
+        room_head: roomHead,
+        advanced: options.acknowledged && options.displayedThrough !== null,
+        stored_after:
+          options.acknowledged && options.displayedThrough !== null
+            ? options.displayedThrough
+            : options.storedBefore,
+      },
+    },
   };
 }
 
@@ -3374,6 +3617,7 @@ async function roomAsk(
   const ref = resolveRoomRef(target, flags, io.env);
   const eligible = splitCsv(flags.eligible ?? "");
   const question = requireQuestion(flags);
+  const context = await resolveDecisionContext(flags, io);
   let response: unknown;
   try {
     response = await actionRequest(
@@ -3383,7 +3627,7 @@ async function roomAsk(
       io,
       {
         question,
-        context: flags.context,
+        context,
         options: seedOptions(flags, repeatedOptions),
         eligible: eligible.length > 0 ? eligible : undefined,
         voting_window: parseOptionalNumber(flags["voting-window"]),
@@ -3714,6 +3958,7 @@ async function roomAction(
     "handoff",
     "request-review",
     "review",
+    "review-note",
     "complete",
     "resume",
     "fail",
@@ -3728,7 +3973,7 @@ async function roomAction(
   }
   if (!actionOperations.includes(operation ?? "") || !id) {
     throw new Error(
-      "usage: grp act start|read|reviews|take|handoff|request-review|review|complete|resume|fail|cancel|takeover ...",
+      "usage: grp act start|read|reviews|take|handoff|request-review|review|review-note|complete|resume|fail|cancel|takeover ...",
     );
   }
   const ref = resolveRoomRef(targetOrCurrent(room, flags, io), flags, io.env);
@@ -3758,6 +4003,56 @@ async function roomAction(
     if (isJson(flags)) io.stdout(renderJson(filtered));
     else
       io.stdout(renderActionReviewHistory(filtered, id, ref, io.env, flags.version !== undefined));
+    return;
+  }
+  if (operation === "review-note") {
+    const artifactRevisionId = requireFlag(flags, "revision").trim();
+    const correctsReviewId = flags.corrects?.trim();
+    const kind = flags.kind?.trim() ?? (correctsReviewId ? "correction" : "late");
+    if (kind !== "late" && kind !== "correction") {
+      throw new Error("--kind must be late or correction");
+    }
+    if (kind === "correction" && !correctsReviewId) {
+      throw new Error("a correction requires --corrects=REVIEW_ID");
+    }
+    if (kind === "late" && correctsReviewId) {
+      throw new Error("--corrects is only used with --kind=correction");
+    }
+    const body = reviewBodyFromFlags(flags);
+    if (!body?.trim()) {
+      throw new Error("review-note requires --body=TEXT or --file=PATH");
+    }
+    validateReviewBody(body, "review-note body");
+    const response = await experimentalResourceRequest(
+      ref,
+      `/actions/${encodeURIComponent(id)}/review-notes`,
+      flags,
+      io,
+      "POST",
+      {
+        artifact_revision_id: artifactRevisionId,
+        kind,
+        corrects_review_id: correctsReviewId,
+        body,
+      },
+      false,
+    );
+    if (isJson(flags)) {
+      io.stdout(renderJson(response));
+    } else if (flags.quiet !== "true") {
+      const record = isRecord(response) ? response : {};
+      const note = isRecord(record.review_note) ? record.review_note : {};
+      const noteId = stringOrNull(note.id);
+      io.stdout(
+        `${[
+          kind === "correction"
+            ? `Append-only review correction recorded${noteId ? ` (${noteId})` : ""}.`
+            : `Late review supplement recorded${noteId ? ` (${noteId})` : ""}.`,
+          `Exact artifact revision: ${artifactRevisionId}.`,
+          "This note is non-dispositive: it preserves the audit record and does not change the settled round or action state.",
+        ].join("\n")}\n`,
+      );
+    }
     return;
   }
   const currentAction = actionFromResponse(current);
@@ -3799,8 +4094,41 @@ async function roomAction(
     const review = isRecord(currentAction.review) ? currentAction.review : null;
     const artifactId = stringOrNull(currentAction.target_artifact_id);
     const revisionId = review ? stringOrNull(review.artifact_revision_id) : null;
+    const approve = flags.approve === "true";
+    const requestChanges = flags["request-changes"] === "true";
+    if (approve && requestChanges) {
+      throw new Error("choose either --approve or --request-changes");
+    }
+    const hasDisposition = approve || requestChanges;
+    const pinnedRevision = flags.revision?.trim();
+    if (hasDisposition && !pinnedRevision) {
+      throw new Error(
+        "formal review responses must pin the exact artifact revision with --revision=REVISION_ID",
+      );
+    }
     if (!review || !artifactId || !revisionId || stringOrNull(review.state) !== "pending") {
+      if (hasDisposition && pinnedRevision) {
+        const bodyFlag = flags.file
+          ? ` --file=${JSON.stringify(flags.file)}`
+          : flags.body
+            ? ` --body=${JSON.stringify(flags.body)}`
+            : " --file=review.md";
+        throw new Error(
+          [
+            "this action no longer has a pending exact artifact review; no formal disposition was changed",
+            "Preserve the exact-revision work as an explicitly non-dispositive late supplement:",
+            grpCommand(
+              `act review-note ${id} --revision=${pinnedRevision} --kind=late${bodyFlag}${roomHintArg(ref.slug, ref, io.env)}`,
+            ),
+          ].join("\n"),
+        );
+      }
       throw new Error("this action has no pending exact artifact review");
+    }
+    if (pinnedRevision && pinnedRevision !== revisionId) {
+      throw new Error(
+        `review revision mismatch: the pending round targets ${revisionId}, not ${pinnedRevision}`,
+      );
     }
     const exact = await experimentalResourceRequest(
       ref,
@@ -3812,11 +4140,6 @@ async function roomAction(
       false,
       { revision: revisionId },
     );
-    const approve = flags.approve === "true";
-    const requestChanges = flags["request-changes"] === "true";
-    if (approve && requestChanges) {
-      throw new Error("choose either --approve or --request-changes");
-    }
     if (!approve && !requestChanges) {
       const history = await experimentalResourceRequest(
         ref,
@@ -3828,34 +4151,54 @@ async function roomAction(
         false,
         { reviews: 1 },
       );
+      const presentation = actionReviewPresentationFrom(current, history);
+      const baseRevisionId = presentation
+        ? stringOrNull(isRecord(presentation.base) ? presentation.base.id : null)
+        : null;
+      const baseExact =
+        artifactId && baseRevisionId
+          ? await experimentalResourceRequest(
+              ref,
+              `/artifacts/${encodeURIComponent(artifactId)}`,
+              flags,
+              io,
+              "GET",
+              undefined,
+              false,
+              { revision: baseRevisionId },
+            )
+          : null;
       if (isJson(flags)) {
         io.stdout(
-          renderJson({ action: currentAction, exact_artifact: exact, review_history: history }),
+          renderJson({
+            action: currentAction,
+            exact_artifact: exact,
+            ...(baseExact ? { base_artifact: baseExact } : {}),
+            review_history: history,
+            review_presentation: presentation,
+          }),
         );
-      } else if (foregroundFromResponse(current) || foregroundFromResponse(exact)) {
-        io.stdout(renderArtifactRead(exact, ref, io.env));
       } else {
         io.stdout(
-          `${renderArtifactRead(exact, ref, io.env).trimEnd()}\n\n${renderActionReviewChoice(currentAction, exact, ref, io.env, history, current)}`,
+          renderActionReviewSurface(
+            currentAction,
+            exact,
+            baseExact,
+            presentation,
+            ref,
+            io.env,
+            history,
+            current,
+          ),
         );
       }
       return;
     }
-    let body: string | undefined;
-    if (flags.file) {
-      if (flags.body) throw new Error("pass either --file or --body, not both");
-      body = readFileSync(flags.file, "utf8");
-    } else {
-      body = flags.body;
-    }
+    const body = reviewBodyFromFlags(flags);
     if (requestChanges && !body?.trim()) {
       throw new Error("--request-changes requires --body=TEXT or --file=PATH");
     }
-    if (body !== undefined && body.length > REVIEW_BODY_MAX_CHARACTERS) {
-      throw new Error(
-        `review body must be between 1 and ${REVIEW_BODY_MAX_CHARACTERS.toLocaleString("en-US")} characters; this one is ${body.length.toLocaleString("en-US")}`,
-      );
-    }
+    if (body !== undefined) validateReviewBody(body, "review body");
     if (approve && body !== undefined && !body.trim()) {
       throw new Error("approval commentary must be non-empty when --body or --file is supplied");
     }
@@ -3865,22 +4208,48 @@ async function roomAction(
     const ownReview = callerId
       ? reviews.find((candidate) => stringOrNull(candidate.reviewer_id) === callerId)
       : undefined;
-    const response = await experimentalResourceRequest(
-      ref,
-      `/actions/${encodeURIComponent(id)}/review`,
-      flags,
-      io,
-      "PUT",
-      {
-        expected_action_revision: expectedRevision,
-        disposition: approve ? "approve" : "changes_requested",
-        body,
-        expected_review_revision: ownReview
-          ? (stringOrNull(ownReview.revision) ?? undefined)
-          : undefined,
-      },
-      false,
-    );
+    let response: unknown;
+    try {
+      response = await experimentalResourceRequest(
+        ref,
+        `/actions/${encodeURIComponent(id)}/review`,
+        flags,
+        io,
+        "PUT",
+        {
+          expected_action_revision: expectedRevision,
+          artifact_revision_id: revisionId,
+          disposition: approve ? "approve" : "changes_requested",
+          body,
+          expected_review_revision: ownReview
+            ? (stringOrNull(ownReview.revision) ?? undefined)
+            : undefined,
+        },
+        false,
+      );
+    } catch (error) {
+      const closedRound =
+        error instanceof CliHttpError &&
+        (error.status === 409 ||
+          /no pending exact artifact review|review revision mismatch|review round/i.test(
+            error.serverMessage ?? error.message,
+          ));
+      if (!closedRound) throw error;
+      const bodyFlag = flags.file
+        ? ` --file=${JSON.stringify(flags.file)}`
+        : body
+          ? ` --body=${JSON.stringify(body)}`
+          : " --file=review.md";
+      throw new Error(
+        [
+          "the exact review round settled while this response was being submitted; no formal disposition was changed",
+          "Preserve the exact-revision work as a non-dispositive late supplement:",
+          grpCommand(
+            `act review-note ${id} --revision=${revisionId} --kind=late${bodyFlag}${roomHintArg(ref.slug, ref, io.env)}`,
+          ),
+        ].join("\n"),
+      );
+    }
     await writeActionResponse(
       response,
       ref,
@@ -4018,6 +4387,21 @@ function actionFromResponse(response: unknown): Record<string, unknown> {
   const action = isRecord(record.action) ? record.action : null;
   if (!action) throw new Error("host did not return an action record");
   return action;
+}
+
+function reviewBodyFromFlags(flags: Record<string, string>): string | undefined {
+  if (flags.file !== undefined && flags.body !== undefined) {
+    throw new Error("pass either --file or --body, not both");
+  }
+  return flags.file !== undefined ? readFileSync(flags.file, "utf8") : flags.body;
+}
+
+function validateReviewBody(body: string, label: string): void {
+  if (body.length > REVIEW_BODY_MAX_CHARACTERS) {
+    throw new Error(
+      `${label} must be between 1 and ${REVIEW_BODY_MAX_CHARACTERS.toLocaleString("en-US")} characters; this one is ${body.length.toLocaleString("en-US")}`,
+    );
+  }
 }
 
 function requireActionRevision(action: Record<string, unknown>): string {
@@ -4288,6 +4672,151 @@ function completionActionGuidance(
   return lines;
 }
 
+function actionReviewPresentationFrom(...sources: unknown[]): Record<string, unknown> | null {
+  let fallback: Record<string, unknown> | null = null;
+  for (const source of sources) {
+    const record = isRecord(source) ? source : {};
+    const candidate = isRecord(record.review_presentation)
+      ? record.review_presentation
+      : isRecord(record.review_round)
+        ? record.review_round
+        : null;
+    if (!candidate) continue;
+    if (stringOrNull(candidate.mode)) return candidate;
+    fallback ??= candidate;
+  }
+  return fallback;
+}
+
+function renderActionReviewSurface(
+  action: Record<string, unknown>,
+  exactArtifact: unknown,
+  baseArtifact: unknown,
+  presentation: Record<string, unknown> | null,
+  ref: RoomRef,
+  env: Record<string, string | undefined>,
+  history: unknown,
+  projection: unknown,
+): string {
+  const actionId = stringOrNull(action.id) ?? "ACTION_ID";
+  const exactRecord = isRecord(exactArtifact) ? exactArtifact : {};
+  const artifact = isRecord(exactRecord.artifact) ? exactRecord.artifact : {};
+  const artifactId =
+    stringOrNull(artifact.id) ?? stringOrNull(action.target_artifact_id) ?? "ARTIFACT_ID";
+  const current = presentation && isRecord(presentation.current) ? presentation.current : {};
+  const base = presentation && isRecord(presentation.base) ? presentation.base : null;
+  const currentRevision = isRecord(exactRecord.revision) ? exactRecord.revision : {};
+  const currentId = stringOrNull(current.id) ?? stringOrNull(currentRevision.id) ?? "unknown";
+  const currentOrdinal = numberOrNull(current.ordinal) ?? numberOrNull(currentRevision.ordinal);
+  const currentSha = stringOrNull(current.sha256) ?? stringOrNull(currentRevision.sha256);
+  const baseId = stringOrNull(base?.id);
+  const baseOrdinal = numberOrNull(base?.ordinal);
+  const baseSha = stringOrNull(base?.sha256);
+  const round = numberOrNull(presentation?.round);
+  const requestedMode = stringOrNull(presentation?.mode);
+  const fullText = renderArtifactRead(exactArtifact, ref, env).trimEnd();
+  const diffText = baseArtifact ? renderArtifactDiff(baseArtifact, exactArtifact).trimEnd() : null;
+  const useDiff =
+    requestedMode === "diff" && diffText !== null && diffText.length < fullText.length;
+  const room = roomHintArg(ref.slug, ref, env);
+  const lines = [
+    useDiff
+      ? `Review round ${round ?? "?"} — changes since your last formally reviewed revision`
+      : `Review round ${round ?? "?"} — full exact revision`,
+    `Current: ${currentOrdinal === null ? "version ?" : `v${currentOrdinal}`}; revision ${currentId}${currentSha ? `; SHA-256 ${currentSha}` : ""}.`,
+  ];
+  if (baseId) {
+    lines.push(
+      `Base: ${baseOrdinal === null ? "version ?" : `v${baseOrdinal}`}; revision ${baseId}${baseSha ? `; SHA-256 ${baseSha}` : ""}.`,
+    );
+  }
+  if (requestedMode === "diff" && !useDiff) {
+    lines.push(
+      "Full revision shown because the generated diff was not smaller than the exact text.",
+    );
+  } else if (requestedMode !== "diff") {
+    const reason = stringOrNull(presentation?.fallback_reason)?.replaceAll("_", " ");
+    if (reason) lines.push(`Full-revision basis: ${reason}.`);
+  }
+  const changed =
+    presentation && Array.isArray(presentation.changed_blocks)
+      ? presentation.changed_blocks.filter(isRecord)
+      : [];
+  if (changed.length > 0) {
+    lines.push("Changed blocks (stable ID; revision-local numbering):");
+    for (const block of changed) {
+      const id = stringOrNull(block.id) ?? "unknown";
+      const change = stringOrNull(block.change) ?? "changed";
+      const currentNumber = numberOrNull(block.current_number);
+      const baseNumber = numberOrNull(block.base_number);
+      lines.push(
+        `  ${id} — ${change}; current ${currentNumber === null ? "absent" : `¶${currentNumber}`}; base ${baseNumber === null ? "absent" : `¶${baseNumber}`}.`,
+      );
+    }
+  }
+  lines.push("", useDiff && diffText ? diffText : fullText);
+  lines.push(
+    "",
+    "Exact retrieval:",
+    `  Full frozen revision: ${grpCommand(`artifact read ${artifactId} --revision-id=${currentId}${room}`)}`,
+    `  Complete review history: ${grpCommand(`act reviews ${actionId}${room}`)}`,
+  );
+  appendReviewRoster(lines, presentation);
+  appendConvergenceCheckpoint(lines, presentation);
+  lines.push(
+    "",
+    renderActionReviewChoice(action, exactArtifact, ref, env, history, projection).trimEnd(),
+  );
+  return `${lines.join("\n")}\n`;
+}
+
+function appendReviewRoster(lines: string[], presentation: Record<string, unknown> | null): void {
+  const roster =
+    presentation && Array.isArray(presentation.roster) ? presentation.roster.filter(isRecord) : [];
+  if (roster.length > 0) {
+    lines.push("Review roster:");
+    for (const participant of roster) {
+      const name =
+        stringOrNull(participant.display_name) ??
+        stringOrNull(participant.participant_id) ??
+        "unknown";
+      lines.push(`  ${name} — ${participant.responded === true ? "responded" : "outstanding"}`);
+    }
+  }
+  if (stringOrNull(presentation?.your_obligation) === "review") {
+    lines.push("Your obligation: review this exact revision.");
+  }
+}
+
+function appendConvergenceCheckpoint(
+  lines: string[],
+  presentation: Record<string, unknown> | null,
+): void {
+  const checkpoint =
+    presentation && isRecord(presentation.checkpoint) ? presentation.checkpoint : null;
+  if (!checkpoint) return;
+  const threshold = numberOrNull(checkpoint.threshold);
+  const elapsed = numberOrNull(checkpoint.elapsed_seconds);
+  const total = numberOrNull(checkpoint.total_rounds);
+  const artifactBytes = numberOrNull(checkpoint.artifact_bytes);
+  const growthBytes = numberOrNull(checkpoint.growth_bytes);
+  const changedBlocks = numberOrNull(checkpoint.changed_block_count);
+  const prior = isRecord(checkpoint.prior_round) ? checkpoint.prior_round : null;
+  lines.push(
+    "",
+    `Convergence checkpoint${threshold === null ? "" : ` — round ${threshold}`}:`,
+    `  Observed: ${total ?? "?"} review rounds; ${elapsed ?? "?"}s elapsed; artifact ${artifactBytes ?? "?"} bytes${growthBytes === null ? "" : ` (${growthBytes >= 0 ? "+" : ""}${growthBytes} from round 1)`}; ${changedBlocks ?? "?"} changed blocks in this presentation.`,
+  );
+  if (prior) {
+    lines.push(
+      `  Prior round: ${numberOrNull(prior.approvals) ?? 0} approvals; ${numberOrNull(prior.changes_requested) ?? 0} changes requested.`,
+    );
+  }
+  lines.push(
+    "  This is neutral state information only; it changes no deadline, review obligation, authority, or completion rule.",
+  );
+}
+
 function renderActionReviewChoice(
   action: Record<string, unknown>,
   exactArtifact: unknown,
@@ -4355,11 +4884,12 @@ function renderActionReviewChoice(
     lines.push("Required: record one review response for these exact bytes.");
   }
   lines.push(
-    `Approve these exact bytes: ${grpCommand(`act review ${id} --approve${room}`)}`,
-    `Approve with commentary: ${grpCommand(`act review ${id} --approve --file=review.md${room}`)}`,
-    `Request changes: ${grpCommand(`act review ${id} --request-changes --file=review.md${room}`)}`,
+    `Approve these exact bytes: ${grpCommand(`act review ${id} --revision=${revisionId} --approve${room}`)}`,
+    `Approve with commentary: ${grpCommand(`act review ${id} --revision=${revisionId} --approve --file=review.md${room}`)}`,
+    `Request changes: ${grpCommand(`act review ${id} --revision=${revisionId} --request-changes --file=review.md${room}`)}`,
     `Review body limit: ${REVIEW_BODY_MAX_CHARACTERS.toLocaleString("en-US")} characters.`,
     "A response may be updated while this review round remains open.",
+    `If the round settles while you compose, preserve the text without changing the result: ${grpCommand(`act review-note ${id} --revision=${revisionId} --kind=late --file=review.md${room}`)}`,
   );
   return `${lines.join("\n")}\n`;
 }
@@ -4386,16 +4916,22 @@ function filterActionReviewHistory(
     rounds = rounds
       .map((round) => {
         const reviews = Array.isArray(round.reviews) ? round.reviews.filter(isRecord) : [];
+        const notes = Array.isArray(round.notes) ? round.notes.filter(isRecord) : [];
+        const matches = (entry: Record<string, unknown>) =>
+          [stringOrNull(entry.reviewer_name), stringOrNull(entry.reviewer_id)].some(
+            (value) => value?.trim().toLocaleLowerCase() === selector,
+          );
         return {
           ...round,
-          reviews: reviews.filter((review) =>
-            [stringOrNull(review.reviewer_name), stringOrNull(review.reviewer_id)].some(
-              (value) => value?.trim().toLocaleLowerCase() === selector,
-            ),
-          ),
+          reviews: reviews.filter(matches),
+          notes: notes.filter(matches),
         };
       })
-      .filter((round) => Array.isArray(round.reviews) && round.reviews.length > 0);
+      .filter(
+        (round) =>
+          (Array.isArray(round.reviews) && round.reviews.length > 0) ||
+          (Array.isArray(round.notes) && round.notes.length > 0),
+      );
   }
   return { ...record, rounds };
 }
@@ -4421,6 +4957,7 @@ function renderActionReviewHistory(
     const sha256 = stringOrNull(revision.sha256);
     const event = numberOrNull(round.event);
     const reviews = Array.isArray(round.reviews) ? round.reviews.filter(isRecord) : [];
+    const notes = Array.isArray(round.notes) ? round.notes.filter(isRecord) : [];
     lines.push(
       "",
       `Artifact version ${version ?? "?"} — revision ${revisionId}${event === null ? "" : `; requested at event ${event}`}${sha256 ? `; SHA-256 ${sha256}` : ""}`,
@@ -4432,9 +4969,41 @@ function renderActionReviewHistory(
         stringOrNull(review.reviewer_id) ??
         "unknown reviewer";
       const disposition = stringOrNull(review.disposition)?.replaceAll("_", " ") ?? "reviewed";
-      lines.push(`  ${reviewer} — ${disposition}`);
+      const reviewId = stringOrNull(review.id);
+      lines.push(
+        `  ${reviewer} — ${disposition}${reviewId ? ` [review ${reviewId}]` : ""}${review.later_corrected === true ? " — later corrected" : ""}`,
+      );
       if (detailed) {
         const body = stringOrNull(review.body);
+        if (body) for (const line of body.split("\n")) lines.push(`    ${line}`);
+      }
+      const corrections = Array.isArray(review.corrections)
+        ? review.corrections.filter(isRecord)
+        : [];
+      for (const correction of corrections) {
+        const correctionId = stringOrNull(correction.id);
+        const correctionBy =
+          stringOrNull(correction.reviewer_name) ??
+          stringOrNull(correction.reviewer_id) ??
+          "unknown reviewer";
+        lines.push(
+          `    Append-only correction${correctionId ? ` ${correctionId}` : ""} by ${correctionBy} (non-dispositive).`,
+        );
+        if (detailed) {
+          const body = stringOrNull(correction.body);
+          if (body) for (const line of body.split("\n")) lines.push(`      ${line}`);
+        }
+      }
+    }
+    for (const note of notes.filter((candidate) => stringOrNull(candidate.kind) !== "correction")) {
+      const reviewer =
+        stringOrNull(note.reviewer_name) ?? stringOrNull(note.reviewer_id) ?? "unknown reviewer";
+      const noteId = stringOrNull(note.id);
+      lines.push(
+        `  ${reviewer} — ${stringOrNull(note.kind) ?? "review"} supplement${noteId ? ` [note ${noteId}]` : ""} (non-dispositive)`,
+      );
+      if (detailed) {
+        const body = stringOrNull(note.body);
         if (body) for (const line of body.split("\n")) lines.push(`    ${line}`);
       }
     }
@@ -4443,6 +5012,9 @@ function renderActionReviewHistory(
         `  Full bodies: ${grpCommand(`act reviews ${actionId} --version=${version}${room}`)}`,
       );
     }
+    lines.push(
+      `  Append a correction: ${grpCommand(`act review-note ${actionId} --revision=${revisionId} --kind=correction --corrects=REVIEW_ID --file=correction.md${room}`)}`,
+    );
   }
   return `${lines.join("\n")}\n`;
 }
@@ -4697,6 +5269,10 @@ function appendFocusedActionProjection(
     lines.push(
       `Review round for action ${actionId} can no longer approve: a required reviewer requested changes.`,
     );
+  }
+  if (round) {
+    appendReviewRoster(lines, round);
+    appendConvergenceCheckpoint(lines, round);
   }
 }
 
@@ -5786,6 +6362,7 @@ async function roomOutcome(
         outcome: outcome
           ? {
               question: outcome.question,
+              context: outcome.context,
               winner: outcome.winner,
               outcome: outcome.outcome,
               status: outcome.winner === null && outcome.outcome === "tied" ? "tied" : "complete",
@@ -5844,6 +6421,15 @@ async function roomOutcome(
           `Chosen: ${outcome.winner}`,
           "Status: complete",
         ];
+  if (outcome.context) {
+    const questionIndex = lines.findIndex((line) => line.startsWith("Question:"));
+    lines.splice(
+      questionIndex + 1,
+      0,
+      "Context:",
+      ...outcome.context.split("\n").map((line) => `  ${line}`),
+    );
+  }
   // Spec 125 — receipts verify under the hood on every outcome read; the
   // surface stays quiet when the record checks out and gets loud only when
   // it does not (browser-padlock posture; principal decision narrowing the
@@ -8737,6 +9323,8 @@ function renderRoomRead(
     // question, phase, and progress; the body adds only what the brief
     // doesn't (the numbered options, eligibility, discussion, next steps).
     lines.push("", `Question: ${stringOrNull(decision.question) ?? "unknown"}`);
+    appendDecisionContext(lines, decision);
+    appendDecisionResponseState(lines, decision);
     if (choicesCast !== null && eligibleVoters !== null && choicesCast < eligibleVoters) {
       waitingForChoices = true;
     }
@@ -8853,6 +9441,7 @@ function renderPhasedRoomRead(
     );
   }
   appendAuthoritativeResult(lines, response, ref, env);
+  appendFloorReleases(lines, response);
   return `${lines.join("\n")}\n`;
 }
 
@@ -8895,6 +9484,29 @@ function appendAuthoritativeResult(
   }
 }
 
+function appendFloorReleases(lines: string[], response: Record<string, unknown>): void {
+  const releases = Array.isArray(response.floor_releases)
+    ? response.floor_releases.filter(isRecord)
+    : [];
+  if (releases.length === 0) return;
+  lines.push("", "Intentional silence at this exact state:");
+  for (const release of releases) {
+    const name =
+      stringOrNull(release.display_name) ?? stringOrNull(release.participant_id) ?? "unknown";
+    const scope = isRecord(release.scope) ? release.scope : {};
+    const scopedTo = [
+      stringOrNull(scope.decision_id) ? `decision ${stringOrNull(scope.decision_id)}` : null,
+      stringOrNull(scope.action_id) ? `action ${stringOrNull(scope.action_id)}` : null,
+      stringOrNull(scope.artifact_revision_id)
+        ? `artifact revision ${stringOrNull(scope.artifact_revision_id)}`
+        : null,
+    ].filter((value): value is string => value !== null);
+    lines.push(
+      `  ${name} yielded${scopedTo.length > 0 ? ` for ${scopedTo.join(", ")}` : ""}; this is not approval and has no authority effect.`,
+    );
+  }
+}
+
 /** Spec 224 candidate — bounded shared-work state carried by ordinary reads. */
 function appendCoordinationState(
   lines: string[],
@@ -8903,6 +9515,7 @@ function appendCoordinationState(
   env: Record<string, string | undefined>,
 ): void {
   appendAuthoritativeResult(lines, response, ref, env);
+  appendFloorReleases(lines, response);
   const composing = Array.isArray(response.composing) ? response.composing.filter(isRecord) : [];
   if (composing.length > 0) {
     const names = composing.map(
@@ -9385,8 +9998,67 @@ function decisionOptions(decision: Record<string, unknown>): string[] {
     .filter((option): option is string => Boolean(option));
 }
 
+function appendDecisionContext(lines: string[], decision: Record<string, unknown>): void {
+  const context = stringOrNull(decision.context);
+  if (!context) return;
+  lines.push("Context:", ...context.split("\n").map((line) => `  ${line}`));
+}
+
+function appendDecisionResponseState(lines: string[], decision: Record<string, unknown>): void {
+  const state = isRecord(decision.response_state) ? decision.response_state : null;
+  if (!state) return;
+  const eligible = stringArray(state.eligible);
+  const responded = stringArray(state.responded);
+  const outstanding = stringArray(state.outstanding);
+  const eligibleCount = numberOrNull(state.eligible_count) ?? eligible.length;
+  const respondedCount = numberOrNull(state.responded_count) ?? responded.length;
+  const outstandingCount = numberOrNull(state.outstanding_count) ?? outstanding.length;
+  lines.push(
+    `Responses: ${respondedCount}/${eligibleCount} received; ${outstandingCount} outstanding.`,
+  );
+  if (eligible.length > 0) lines.push(`Eligible: ${eligible.join(", ")}.`);
+  if (responded.length > 0) lines.push(`Responded: ${responded.join(", ")}.`);
+  if (outstanding.length > 0) lines.push(`Outstanding: ${outstanding.join(", ")}.`);
+  const quorum = isRecord(state.quorum) ? state.quorum : null;
+  if (quorum) {
+    lines.push(
+      `Quorum: ${numberOrNull(quorum.required) ?? "host default"}; ${quorum.met === true ? "met" : "not met"}.`,
+    );
+  }
+  const threshold = isRecord(state.threshold) ? state.threshold : null;
+  if (threshold) {
+    const kind = stringOrNull(threshold.kind)?.replaceAll("_", " ") ?? "mechanism defined";
+    const value = numberOrNull(threshold.value);
+    const comparison = stringOrNull(threshold.comparison);
+    lines.push(
+      `Threshold: ${kind}${value === null ? "" : ` ${value}`}${comparison ? ` (${comparison})` : ""}.`,
+    );
+  }
+  const choosingOpens = stringOrNull(state.choosing_opens_at);
+  const settleUntil = stringOrNull(state.settle_until);
+  const closesAt = stringOrNull(state.closes_at);
+  if (choosingOpens) lines.push(`Choosing opens: ${choosingOpens}.`);
+  if (settleUntil) lines.push(`Provisional outcome settles until: ${settleUntil}.`);
+  if (closesAt) lines.push(`Choice window closes: ${closesAt}.`);
+  const caller = isRecord(state.caller) ? state.caller : null;
+  if (caller) {
+    const abilities = [
+      caller.may_submit === true ? "submit" : null,
+      caller.may_revise === true ? "revise" : null,
+    ].filter((value): value is string => value !== null);
+    lines.push(
+      caller.eligible === false
+        ? "You are not eligible to respond to this decision."
+        : caller.responded === true
+          ? `Your response is recorded${abilities.length > 0 ? `; you may ${abilities.join(" or ")}` : ""}.`
+          : `Your response is outstanding${abilities.length > 0 ? `; you may ${abilities.join(" or ")}` : ""}.`,
+    );
+  }
+}
+
 function latestOutcome(response: Record<string, unknown>): {
   question: string;
+  context: string | null;
   winner: string | null;
   outcome: string | null;
   receipt: string | null;
@@ -9404,6 +10076,7 @@ function latestOutcome(response: Record<string, unknown>): {
       if (winner !== null)
         return {
           question: stringOrNull(latest.question) ?? "unknown",
+          context: stringOrNull(latest.context),
           winner,
           outcome,
           receipt,
@@ -9412,6 +10085,7 @@ function latestOutcome(response: Record<string, unknown>): {
       if (outcome !== null && (outcome === "tied" || outcome === "no_pass" || outcome === "pass")) {
         return {
           question: stringOrNull(latest.question) ?? "unknown",
+          context: stringOrNull(latest.context),
           winner: null,
           outcome,
           receipt,
@@ -9420,6 +10094,7 @@ function latestOutcome(response: Record<string, unknown>): {
       }
       return {
         question: stringOrNull(latest.question) ?? "unknown",
+        context: stringOrNull(latest.context),
         winner: outcome,
         outcome: null,
         receipt,
@@ -9445,6 +10120,9 @@ function latestOutcome(response: Record<string, unknown>): {
         .find((decision) => stringOrNull(decision.receipt_hash) !== null);
       return {
         question: stringOrNull(response.question) ?? "unknown",
+        context:
+          stringOrNull(response.context) ??
+          (receiptEntry ? stringOrNull(receiptEntry.context) : null),
         winner: stringOrNull(response.resolved_winner) ?? stringOrNull(response.resolvedWinner),
         outcome: stringOrNull(response.resolved_outcome) ?? stringOrNull(response.resolvedOutcome),
         receipt: receiptEntry
@@ -9469,6 +10147,7 @@ function latestOutcome(response: Record<string, unknown>): {
       const outcome = stringOrNull(latest.resolvedOutcome) ?? stringOrNull(latest.resolved_outcome);
       return {
         question: stringOrNull(latest.question) ?? "unknown",
+        context: stringOrNull(latest.context),
         winner,
         outcome,
         receipt: stringOrNull(latest.receipt_hash) ?? stringOrNull(latest.receiptHash),
@@ -9654,6 +10333,7 @@ function renderQuestionOpened(
       ? `Question opened (agreement): "${question}"${writeDestinationNote(ref, env)}`
       : `Question opened: "${question}"${writeDestinationNote(ref, env)}`,
   ];
+  appendDecisionContext(lines, decision);
   if (agreement) {
     lines.push(
       `It resolves only when every voter accepts the same option — disagreement never ends it early. Propose, discuss, revise; ${grpCommand(`accept N${room}`)} when an option works.`,
@@ -10646,9 +11326,9 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "--decision=N     one decision's thread — question, options, outcome, its discussion (never moves your position)",
       "--since=N        everything after event N (does not move your position without --ack)",
       "--since=last     everything after your stored position",
-      "--ack            acknowledge the displayed page through its final event",
+      "--ack            acknowledge only after the complete catch-up has been emitted",
       "--expand         include exact discussion bodies in a working-state snapshot",
-      "--json           raw JSON (snapshot or delta)",
+      "--json           wire data plus _cli.schema=grp.read.v1 completeness and cursor metadata",
     ],
     example: "grp read",
   },
@@ -10658,6 +11338,13 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "Show the participant name, role, and ID the room associates with the current credential. This identity read never moves your room position.",
     flags: ["--json           structured identity", "--quiet          participant ID only"],
     example: "grp whoami",
+  },
+  yield: {
+    usage: "grp yield [room] [--revoke]",
+    summary:
+      "Record that you have no further contribution or unresolved objection at the exact current state. This is intentional silence, not approval, authority, or a state-machine override. It invalidates when relevant state changes; --revoke removes it explicitly.",
+    flags: ["--revoke         revoke your active floor release"],
+    example: "grp yield",
   },
   enter: {
     usage: "grp enter <room-url|slug>",
@@ -10698,6 +11385,8 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "--agreement           resolves only when every voter accepts the same option;",
       "                      disagreement keeps it open (grp accept N to accept)",
       "--eligible=A,B        limit who can choose on this question",
+      "--context=TEXT        durable decision context",
+      "--context-file=PATH   durable multiline context from a file; - reads stdin",
     ],
     example: 'grp ask "Choose one dinner plan"',
   },
@@ -10749,7 +11438,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
   },
   action: {
     usage:
-      "grp act start|read|reviews|take|handoff|request-review|review|complete|resume|fail|cancel|takeover ...",
+      "grp act start|read|reviews|take|handoff|request-review|review|review-note|complete|resume|fail|cancel|takeover ...",
     summary:
       "Use an action when you are going to do something and the room should track who has it, what you report back, and what counts as complete.\n\nBy default, starting an action means you hold it and your completion report finishes it. Use --completion=group when the room must agree before GRP marks a single or handoff action complete. Use all when every required participant must report.\n\nThe action record lives in GRP. The work may happen elsewhere, or the holder may edit an optional native GRP artifact.",
     flags: [
@@ -10769,12 +11458,14 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "request-review ID [room]",
       "  for a group-completion action with an artifact: freeze its exact current revision",
       "  your approval is recorded; every other eligible participant reviews the same bytes",
-      "review ID [room] [--approve | --request-changes] [--body=TEXT|--file=PATH]",
+      "review ID [room] [--revision=REVISION_ID] [--approve | --request-changes] [--body=TEXT|--file=PATH]",
       "  with no disposition, read the exact frozen revision and the available responses",
-      "  each required participant records approve or request-changes for the exact revision",
+      "  each formal response pins --revision=REVISION_ID",
       "  all responses are collected; any requested changes return the action to its editor",
       "  unanimous exact-revision approval completes the action",
       "  optional formal review commentary is limited to 32,000 characters",
+      "review-note ID [room] --revision=REVISION_ID [--kind=late|correction] [--corrects=REVIEW_ID] --file=PATH",
+      "  append non-dispositive late commentary or a correction without rewriting history",
       "complete ID [room] [--result-text=TEXT]",
       "  holder: report done and complete the action",
       "  group without an artifact: freeze exact result text and ask whether to complete",
@@ -10792,7 +11483,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       '  grp act start --title="Revise the shared plan" --mode=handoff --completion=group --artifact-name="Shared plan" --artifact-file=plan.md',
       "  grp artifact patch ARTIFACT_ID --action=ACTION_ID --file=changes.json",
       "  grp act request-review ACTION_ID",
-      "  grp act review ACTION_ID --approve",
+      "  grp act review ACTION_ID --revision=REVISION_ID --approve",
       '  grp act start --title="Consult our principals" --mode=all --required=Neon,Cobalt',
       '  grp act start --title="Amend the reviewed result" --supersedes=ACTION_ID',
     ],
@@ -10810,9 +11501,15 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
   },
   "action:review": {
     usage:
-      "grp act review <action-id> [room] [--approve | --request-changes] [--body=TEXT|--file=PATH]",
+      "grp act review <action-id> [room] [--revision=REVISION_ID] [--approve | --request-changes] [--body=TEXT|--file=PATH]",
     summary:
-      "Read and respond to one action's exact pending artifact revision. With no disposition, this prints the frozen bytes and available responses. Record approve or request-changes against those bytes. Either disposition may include formal commentary with --body or --file (maximum 32,000 characters); requesting changes requires it. A response may be updated while the round remains open.",
+      "Read and respond to one action's exact pending artifact revision. The first round leads with full bytes; later rounds lead with your reviewer-relative diff when that is smaller. With no disposition, this prints the review surface and available responses. A formal response must pin --revision=REVISION_ID. Either disposition may include formal commentary with --body or --file (maximum 32,000 characters); requesting changes requires it.",
+  },
+  "action:review-note": {
+    usage:
+      "grp act review-note <action-id> [room] --revision=REVISION_ID [--kind=late|correction] [--corrects=REVIEW_ID] (--body=TEXT|--file=PATH)",
+    summary:
+      "Append exact-revision review commentary without changing a settled round or action state. Use kind late for work that crossed a round settlement. Use kind correction with --corrects to repudiate or correct one immutable prior formal review. Notes are append-only and explicitly non-dispositive.",
   },
   "action:reviews": {
     usage: "grp act reviews <action-id> [room] [--version=N] [--reviewer=NAME]",
@@ -11001,6 +11698,7 @@ function printRoomHelp(write: (text: string) => void): void {
       "  ask            record a group choice",
       "  read           catch up on shared state",
       "  whoami         show your authenticated identity in the room",
+      "  yield          signal intentional silence at the exact current state",
       "  watch          wait for relevant room activity",
       "",
       "Commands:",
@@ -11019,6 +11717,7 @@ function printRoomHelp(write: (text: string) => void): void {
       "  start choosing open choices for a collect-first question",
       "  choose         submit or revise your choice",
       "  abstain        participate without supporting an option",
+      "  yield          set or revoke your state-scoped floor release",
       "  outcome        show the latest decided outcome",
       "  history        print room timeline history",
       "  invite         create or list named room invites",
@@ -11040,7 +11739,7 @@ function printRoomHelp(write: (text: string) => void): void {
       "  --bearer=TOKEN   bearer token for OAuth/restricted-key calls",
       "  --json           formatted JSON output",
       "  --snapshot       fresh current-state snapshot on read (not full history or artifact bytes)",
-      "  --ack            acknowledge the displayed read page through its final event",
+      "  --ack            acknowledge only after the complete catch-up is emitted",
       "  --expand         include exact discussion bodies in a snapshot",
       "  --since=N|last   read activity after an event / your stored position",
       "  --jsonl          one JSON event per line for timeline/watch",

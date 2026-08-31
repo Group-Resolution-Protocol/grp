@@ -228,6 +228,104 @@ export interface DecisionSummary {
   /** Spec 118 — proposer display names aligned with `options`; null entries
    * are creator-seeded. Present on full room reads. */
   option_proposers?: (string | null)[] | null;
+  /** Choice-independent response progress. Individual choices remain governed
+   * by the room's choice_visibility policy. */
+  response_state?: DecisionResponseState;
+}
+
+export interface DecisionResponseState {
+  eligible_count: number;
+  eligible: string[];
+  eligible_participant_ids: string[];
+  responded_count: number;
+  responded: string[];
+  responded_participant_ids: string[];
+  outstanding_count: number;
+  outstanding: string[];
+  outstanding_participant_ids: string[];
+  quorum: { required: number; met: boolean };
+  threshold:
+    | { kind: "unanimity"; value: 1; comparison: "inclusive" }
+    | { kind: "share"; value: number; comparison: "strict" | "inclusive" }
+    | { kind: "mechanism_defined"; mechanism: string };
+  choosing_opens_at: string;
+  settle_until: string | null;
+  closes_at: string;
+  caller: {
+    eligible: boolean;
+    responded: boolean;
+    may_submit: boolean;
+    may_revise: boolean;
+  };
+}
+
+export interface RoomReadPage {
+  displayed_from_event: number | null;
+  displayed_through_event: number | null;
+  through_event: number;
+  room_event: number;
+  complete: boolean;
+  next_since?: number;
+  bodies_elided?: boolean;
+  content?: Record<string, unknown>;
+}
+
+export interface FloorRelease {
+  id: string;
+  participant_id: string;
+  display_name: string;
+  scope: {
+    conversation_state_revision: string;
+    foreground_epoch: string;
+    decision_id: string | null;
+    action_id: string | null;
+    artifact_revision_id: string | null;
+  };
+  meaning: string;
+  authority_effect: "none";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ActionReviewChangedBlock {
+  id: string;
+  change: "inserted" | "modified" | "deleted";
+  current_number: number | null;
+  base_number: number | null;
+}
+
+export interface ActionReviewPresentation {
+  mode: "full" | "diff";
+  fallback_reason: "first_revision" | "no_trusted_base" | "external_artifact" | null;
+  current: { id: string; ordinal: number; sha256: string };
+  base: { id: string; ordinal: number; sha256: string } | null;
+  changed_blocks: ActionReviewChangedBlock[] | null;
+  round: number;
+  roster: Array<{ participant_id: string; display_name: string; responded: boolean }>;
+  your_obligation: "review" | null;
+  checkpoint: {
+    threshold: 3 | 5 | 8 | 13;
+    elapsed_seconds: number;
+    current_round: number;
+    total_rounds: number;
+    artifact_bytes: number | null;
+    growth_bytes: number | null;
+    changed_block_count: number | null;
+    prior_round: { approvals: number; changes_requested: number } | null;
+    outstanding_participant_ids: string[];
+  } | null;
+}
+
+export interface ArtifactReviewNote {
+  id: string;
+  action_id: string;
+  artifact_revision_id: string;
+  reviewer_id: string;
+  kind: "late" | "correction";
+  corrects_review_id: string | null;
+  body: string;
+  non_dispositive: true;
+  created_at: string;
 }
 
 export interface RoomState {
@@ -254,6 +352,7 @@ export interface RoomState {
   /** Spec 119 — the room's head event seq at read time: this read is a
    * complete picture through this seq (advance any delta mark here). */
   current_through?: number;
+  page?: RoomReadPage;
   active_decision_id: string | null;
   decisions: DecisionSummary[];
   participants: Array<{
@@ -291,6 +390,9 @@ export interface RoomState {
     reason: string;
     declared_at: string;
   }>;
+  /** State-scoped declarations of intentional silence. They carry no
+   * authority and invalidate when their exact scope changes. */
+  floor_releases?: FloorRelease[];
 }
 
 /** Spec 113 — one rendered activity entry in a delta read (`new`). */
@@ -328,7 +430,30 @@ export interface RoomDelta {
   your_status?: string;
   new: RoomDeltaEntry[];
   current_through: number;
+  page?: RoomReadPage;
   more: Record<string, string>;
+  floor_releases?: FloorRelease[];
+}
+
+export interface AppendActionReviewNoteRequest {
+  slug: string;
+  action_id: string;
+  artifact_revision_id: string;
+  kind: "late" | "correction";
+  body: string;
+  corrects_review_id?: string;
+  auth?: GrpAuth;
+}
+
+export interface AppendActionReviewNoteResponse {
+  review_note: ArtifactReviewNote;
+  state_revision: string;
+}
+
+export interface FloorReleaseResponse {
+  floor_release: FloorRelease | null;
+  changed: boolean;
+  state_revision: string;
 }
 
 export interface AskRequest {
@@ -693,6 +818,39 @@ export class GrpClient {
     });
   }
 
+  setFloorRelease(input: { slug: string; auth?: GrpAuth }): Promise<FloorReleaseResponse> {
+    return this.request(`/api/rooms/${encodeURIComponent(input.slug)}/floor-release`, {
+      method: "PUT",
+      auth: input.auth,
+      body: {},
+    });
+  }
+
+  revokeFloorRelease(input: { slug: string; auth?: GrpAuth }): Promise<FloorReleaseResponse> {
+    return this.request(`/api/rooms/${encodeURIComponent(input.slug)}/floor-release`, {
+      method: "DELETE",
+      auth: input.auth,
+    });
+  }
+
+  appendActionReviewNote(
+    input: AppendActionReviewNoteRequest,
+  ): Promise<AppendActionReviewNoteResponse> {
+    return this.request(
+      `/api/rooms/${encodeURIComponent(input.slug)}/actions/${encodeURIComponent(input.action_id)}/review-notes`,
+      {
+        method: "POST",
+        auth: input.auth,
+        body: withoutUndefined({
+          artifact_revision_id: input.artifact_revision_id,
+          kind: input.kind,
+          body: input.body,
+          corrects_review_id: input.corrects_review_id,
+        }),
+      },
+    );
+  }
+
   ask(input: AskRequest): Promise<AskResponse> {
     return this.request(`/api/rooms/${encodeURIComponent(input.slug)}/ask`, {
       method: "POST",
@@ -1025,7 +1183,7 @@ function safeRequestTarget(url: URL): string {
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   form?: Record<string, unknown>;
   query?: Record<string, unknown> | undefined;

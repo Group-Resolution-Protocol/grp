@@ -2578,8 +2578,20 @@ describe("room CLI requests", () => {
             current_through: 2,
             page: { through_event: 2, room_event: 4, complete: false, next_since: 2 },
             new: [
-              { seq: 1, type: "discussion", at: "2026-08-25T12:00:00.000Z", who: "Silica", said: "First" },
-              { seq: 2, type: "discussion", at: "2026-08-25T12:01:00.000Z", who: "Cobalt", said: "Second" },
+              {
+                seq: 1,
+                type: "discussion",
+                at: "2026-08-25T12:00:00.000Z",
+                who: "Silica",
+                said: "First",
+              },
+              {
+                seq: 2,
+                type: "discussion",
+                at: "2026-08-25T12:01:00.000Z",
+                who: "Cobalt",
+                said: "Second",
+              },
             ],
           });
         }
@@ -2588,8 +2600,20 @@ describe("room CLI requests", () => {
           current_through: 4,
           page: { through_event: 4, room_event: 4, complete: true },
           new: [
-            { seq: 3, type: "discussion", at: "2026-08-25T12:02:00.000Z", who: "Argon", said: "Third" },
-            { seq: 4, type: "discussion", at: "2026-08-25T12:03:00.000Z", who: "Neon", said: "Fourth" },
+            {
+              seq: 3,
+              type: "discussion",
+              at: "2026-08-25T12:02:00.000Z",
+              who: "Argon",
+              said: "Third",
+            },
+            {
+              seq: 4,
+              type: "discussion",
+              at: "2026-08-25T12:03:00.000Z",
+              who: "Neon",
+              said: "Fourth",
+            },
           ],
         });
       },
@@ -9367,10 +9391,7 @@ describe("spec 228 action-centered coordination", () => {
         fetch: withCoordinationDiscovery(async (input, init) => {
           const request = new Request(input, init);
           const url = new URL(request.url);
-          if (
-            url.pathname.endsWith("/actions/act_1") &&
-            url.searchParams.get("reviews") === "1"
-          ) {
+          if (url.pathname.endsWith("/actions/act_1") && url.searchParams.get("reviews") === "1") {
             return jsonResponse({ action, rounds: [] });
           }
           if (url.pathname.endsWith("/actions/act_1")) return jsonResponse({ action });
@@ -9383,8 +9404,8 @@ describe("spec 228 action-centered coordination", () => {
     expect(stdout).toContain("# Exact terms");
     expect(stdout).toContain("targets exact artifact revision rev_uuid_5");
     expect(stdout).toContain("Required: record one review response for these exact bytes");
-    expect(stdout).toContain("grp act review act_1 --approve");
-    expect(stdout).toContain("grp act review act_1 --request-changes");
+    expect(stdout).toContain("grp act review act_1 --revision=rev_uuid_5 --approve");
+    expect(stdout).toContain("grp act review act_1 --revision=rev_uuid_5 --request-changes");
     expect(stdout).toContain("--file=review.md");
     expect(stdout).toContain("Review body limit: 32,000 characters");
     expect(stdout).toContain("A response may be updated while this review round remains open");
@@ -9392,21 +9413,31 @@ describe("spec 228 action-centered coordination", () => {
     let oversizedError = "";
     let oversizedWrites = 0;
     expect(
-      await runRoomCli(["act", "review", "act_1", "--approve", `--body=${"x".repeat(32_001)}`], {
-        stdout: () => {},
-        stderr: (text) => {
-          oversizedError += text;
+      await runRoomCli(
+        [
+          "act",
+          "review",
+          "act_1",
+          "--revision=rev_uuid_5",
+          "--approve",
+          `--body=${"x".repeat(32_001)}`,
+        ],
+        {
+          stdout: () => {},
+          stderr: (text) => {
+            oversizedError += text;
+          },
+          fetch: withCoordinationDiscovery(async (input, init) => {
+            const request = new Request(input, init);
+            const url = new URL(request.url);
+            if (request.method === "PUT") oversizedWrites += 1;
+            if (url.pathname.endsWith("/actions/act_1")) return jsonResponse({ action });
+            if (url.pathname.endsWith("/artifacts/doc_1")) return jsonResponse(exact);
+            throw new Error(`unexpected request ${request.method} ${url.pathname}`);
+          }),
+          env,
         },
-        fetch: withCoordinationDiscovery(async (input, init) => {
-          const request = new Request(input, init);
-          const url = new URL(request.url);
-          if (request.method === "PUT") oversizedWrites += 1;
-          if (url.pathname.endsWith("/actions/act_1")) return jsonResponse({ action });
-          if (url.pathname.endsWith("/artifacts/doc_1")) return jsonResponse(exact);
-          throw new Error(`unexpected request ${request.method} ${url.pathname}`);
-        }),
-        env,
-      }),
+      ),
     ).toBe(1);
     expect(oversizedError).toContain("between 1 and 32,000 characters");
     expect(oversizedWrites).toBe(0);
@@ -9428,38 +9459,42 @@ describe("spec 228 action-centered coordination", () => {
       },
     };
     expect(
-      await runRoomCli(["act", "review", "act_1", "--approve", "--body=Looks exact"], {
-        stdout: (text) => {
-          stdout += text;
+      await runRoomCli(
+        ["act", "review", "act_1", "--revision=rev_uuid_5", "--approve", "--body=Looks exact"],
+        {
+          stdout: (text) => {
+            stdout += text;
+          },
+          stderr: () => {},
+          fetch: withCoordinationDiscovery(async (input, init) => {
+            const request = new Request(input, init);
+            const url = new URL(request.url);
+            if (url.pathname.endsWith("/actions/act_1") && request.method === "GET") {
+              return jsonResponse({ action });
+            }
+            if (url.pathname.endsWith("/artifacts/doc_1") && request.method === "GET") {
+              return jsonResponse(exact);
+            }
+            if (url.pathname.endsWith("/actions/act_1/review") && request.method === "PUT") {
+              postedBody = await request.json();
+              return jsonResponse({ action: completed, ...exact });
+            }
+            if (url.pathname === "/api/rooms/abc123") {
+              return jsonResponse({
+                participants,
+                actions: [completed],
+                artifacts: [exact.artifact],
+              });
+            }
+            throw new Error(`unexpected request ${request.method} ${url.pathname}`);
+          }),
+          env,
         },
-        stderr: () => {},
-        fetch: withCoordinationDiscovery(async (input, init) => {
-          const request = new Request(input, init);
-          const url = new URL(request.url);
-          if (url.pathname.endsWith("/actions/act_1") && request.method === "GET") {
-            return jsonResponse({ action });
-          }
-          if (url.pathname.endsWith("/artifacts/doc_1") && request.method === "GET") {
-            return jsonResponse(exact);
-          }
-          if (url.pathname.endsWith("/actions/act_1/review") && request.method === "PUT") {
-            postedBody = await request.json();
-            return jsonResponse({ action: completed, ...exact });
-          }
-          if (url.pathname === "/api/rooms/abc123") {
-            return jsonResponse({
-              participants,
-              actions: [completed],
-              artifacts: [exact.artifact],
-            });
-          }
-          throw new Error(`unexpected request ${request.method} ${url.pathname}`);
-        }),
-        env,
-      }),
+      ),
     ).toBe(0);
     expect(postedBody).toEqual({
       expected_action_revision: "ar_10",
+      artifact_revision_id: "rev_uuid_5",
       disposition: "approve",
       body: "Looks exact",
     });
@@ -10327,7 +10362,7 @@ describe("spec 228 action-centered coordination", () => {
     expect(help).toContain("Retract your pending group-completion proposal");
     expect(help).toContain("grp artifact patch ARTIFACT_ID --action=ACTION_ID --file=changes.json");
     expect(help).toContain("grp act request-review ACTION_ID");
-    expect(help).toContain("grp act review ACTION_ID --approve");
+    expect(help).toContain("grp act review ACTION_ID --revision=REVISION_ID --approve");
     expect(help).not.toContain("grp act submit");
     expect(help).not.toContain("grp act withdraw");
     expect(help).not.toContain("--defer");
@@ -10580,7 +10615,7 @@ describe("spec 228 action-centered coordination", () => {
         expect(stderr).toContain("Did you mean: grp act read act_1");
       } else {
         expect(stderr).toContain(
-          "usage: grp act start|read|reviews|take|handoff|request-review|review|complete|resume|fail|cancel|takeover",
+          "usage: grp act start|read|reviews|take|handoff|request-review|review|review-note|complete|resume|fail|cancel|takeover",
         );
       }
       expect(fetches).toBe(0);
@@ -12314,7 +12349,7 @@ describe("spec 193 — safe room-read pagination", () => {
     });
   };
 
-  it("acknowledges only complete events on page one and leaves the suffix for the next read", async () => {
+  it("emits every complete event across local pages before advancing once", async () => {
     const env = providerEnv(roomConfig());
     let firstPage = "";
     expect(
@@ -12329,32 +12364,12 @@ describe("spec 193 — safe room-read pagination", () => {
     ).toBe(0);
 
     expect(firstPage).toContain("first complete event line 60");
-    expect(firstPage).not.toContain("second complete event line 1");
-    expect(firstPage).not.toContain("later event remains readable");
-    expect(firstPage).toContain("More unread activity remains: grp read");
+    expect(firstPage).toContain("second complete event line 60");
+    expect(firstPage).toContain("later event remains readable");
+    expect(firstPage).toContain("Catch-up continues below.");
     expect(firstPage).toContain("PARTIAL CATCH-UP — 1 update shown, through event 11");
-    let saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
-    expect(saved.currentRoom.lastSeenSeq).toBe(11);
-    expect(saved.currentRoom.observedStateRevision).toBe("opaque-10");
-
-    let secondPage = "";
-    expect(
-      await runRoomCli(["read", "--ack"], {
-        stdout: (text) => {
-          secondPage += text;
-        },
-        stderr: () => {},
-        fetch: deltaFetch,
-        env,
-      }),
-    ).toBe(0);
-
-    expect(secondPage).not.toContain("first complete event line 1");
-    expect(secondPage).toContain("second complete event line 60");
-    expect(secondPage).toContain("later event remains readable");
-    expect(secondPage).not.toContain("More unread activity remains");
-    expect(secondPage).toContain("COMPLETE CATCH-UP — 2 updates shown, through event 13");
-    saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
+    expect(firstPage).toContain("COMPLETE CATCH-UP — 2 updates shown, through event 13");
+    const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(13);
     expect(saved.currentRoom.observedStateRevision).toBe("opaque-13");
   });
@@ -12416,10 +12431,12 @@ describe("spec 193 — safe room-read pagination", () => {
 
     expect(code).toBe(0);
     expect(stdout).toContain(`first-${"a".repeat(60_000)}`);
-    expect(stdout).not.toContain("second-");
+    expect(stdout).toContain(`second-${"b".repeat(60_000)}`);
     expect(stdout).toContain("PARTIAL CATCH-UP — 1 update shown, through event 11");
+    expect(stdout).toContain("Catch-up continues below.");
+    expect(stdout).toContain("COMPLETE CATCH-UP — 1 update shown, through event 12");
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
-    expect(saved.currentRoom.lastSeenSeq).toBe(11);
+    expect(saved.currentRoom.lastSeenSeq).toBe(12);
   });
 
   it("keeps JSON reads complete and acknowledges the host high-water mark", async () => {
@@ -12435,7 +12452,14 @@ describe("spec 193 — safe room-read pagination", () => {
     });
 
     expect(code).toBe(0);
-    expect(JSON.parse(stdout).new).toHaveLength(3);
+    const parsed = JSON.parse(stdout);
+    expect(parsed.new).toHaveLength(3);
+    expect(parsed._cli).toMatchObject({
+      schema: "grp.read.v1",
+      kind: "catch_up",
+      complete: true,
+      cursor: { stored_before: 10, displayed_through: 13, advanced: true, stored_after: 13 },
+    });
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(13);
   });
