@@ -112,6 +112,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
     [
       "read",
       "whoami",
+      "yield",
       "create",
       "join",
       "enter",
@@ -192,6 +193,7 @@ function printHelp(programName: string): void {
     "  members [ROOM]        list room members",
     "  settings [ROOM]       show room settings",
     "  whoami [ROOM]         show the participant identity this room sees",
+    "  yield [ROOM]          signal intentional silence at the exact current state",
     "",
     "Shared resources:",
     "  artifact create|read|patch …  use an optional action-owned versioned resource",

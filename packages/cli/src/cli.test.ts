@@ -41,6 +41,7 @@ describe("top-level help", () => {
     expect(stdout).toContain("invite [ROOM]");
     expect(stdout).toContain("members [ROOM]");
     expect(stdout).toContain("settings [ROOM]");
+    expect(stdout).toContain("yield [ROOM]");
     expect(stdout).not.toContain("act submit");
     expect(stdout).not.toContain("act withdraw");
     expect(stdout).toContain("rooms                 list rooms remembered");
@@ -61,6 +62,13 @@ describe("top-level help", () => {
     expect(stdout).not.toContain("settings set");
     expect(stdout).not.toContain("arena-setup");
     expect(stdout).not.toContain("run-matrix");
+  });
+
+  it("dispatches floor release through the installed command surface", async () => {
+    const stdout = await captureStdout(() => runCli(["yield", "--help"]));
+
+    expect(stdout).toContain("Usage: grp yield [room] [--revoke]");
+    expect(stdout).toContain("intentional silence, not approval");
   });
 
   it("keeps operator commands in advanced help without any experiment surface", async () => {
