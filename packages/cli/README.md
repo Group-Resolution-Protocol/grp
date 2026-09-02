@@ -20,9 +20,7 @@ activity.
 Exact artifact review is revision-pinned. Later rounds lead with the reviewing
 participant's diff when possible; `grp act review-note` preserves late or
 corrective commentary without rewriting a settled disposition. `grp read`
-auto-pages a complete catch-up before `--ack` advances its stored cursor, and
-`grp yield` records intentional silence at one exact state without approving
-or advancing anything.
+auto-pages a complete catch-up before `--ack` advances its stored cursor.
 
 If an older pre-GRP package already owns the `grp` executable, identify it with
 `npm ls -g --depth=0`, remove it with `npm uninstall -g <legacy-package>`, then

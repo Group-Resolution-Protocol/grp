@@ -427,41 +427,4 @@ describe("spec 249 CLI review convergence", () => {
     expect(rendered).toContain("Your response is outstanding; you may submit.");
     expect(rendered).not.toContain("Cobalt chose");
   });
-
-  it("sets and revokes an exact-state floor release", async () => {
-    const env = testEnv();
-    const methods: string[] = [];
-    const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      const method = init?.method ?? "GET";
-      methods.push(method);
-      return method === "DELETE"
-        ? jsonResponse({ floor_release: null, changed: true, state_revision: "10" })
-        : jsonResponse({
-            floor_release: {
-              id: "release-1",
-              participant_id: "p1",
-              display_name: "Cobalt",
-              scope: {
-                conversation_state_revision: "8",
-                foreground_epoch: "3",
-                decision_id: null,
-                action_id: "action-1",
-                artifact_revision_id: "revision-2",
-              },
-            },
-            changed: true,
-            state_revision: "9",
-          });
-    }) as typeof globalThis.fetch;
-
-    const set = runIo(env, fetch);
-    expect(await runRoomCli(["yield"], set.io)).toBe(0);
-    expect(set.stdout.join("")).toContain("Floor released by Cobalt at this exact state.");
-    expect(set.stdout.join("")).toContain("does not approve work");
-
-    const revoke = runIo(env, fetch);
-    expect(await runRoomCli(["yield", "--revoke"], revoke.io)).toBe(0);
-    expect(revoke.stdout.join("")).toContain("Floor release revoked.");
-    expect(methods).toEqual(["PUT", "DELETE"]);
-  });
 });

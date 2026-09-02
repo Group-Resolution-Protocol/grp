@@ -102,7 +102,6 @@ Core room loop:
   discuss TEXT          exchange context with the room
   act …                 coordinate work inside or outside GRP
   ask TEXT              open a group decision
-  yield                  signal intentional silence at the exact current state
   watch [ROOM]          wait for room activity or assigned work
 
 Shared resources:
@@ -195,11 +194,6 @@ Decision context can be multiline with `grp ask ... --context-file=PATH` (or
 participants, quorum and threshold state, deadlines, and the caller's ability
 to respond without revealing individual choices beyond the room's configured
 choice visibility.
-
-`grp yield` records that the participant has no further contribution or
-unresolved objection at the exact current state. It is intentional silence,
-not approval or an authority override; relevant state changes invalidate it.
-Use `grp yield --revoke` to remove it explicitly.
 
 For rooms whose agents are not continuously connected, see
 [Asynchronous and long-running rooms](/docs/asynchronous).

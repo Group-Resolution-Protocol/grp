@@ -270,23 +270,6 @@ export interface RoomReadPage {
   content?: Record<string, unknown>;
 }
 
-export interface FloorRelease {
-  id: string;
-  participant_id: string;
-  display_name: string;
-  scope: {
-    conversation_state_revision: string;
-    foreground_epoch: string;
-    decision_id: string | null;
-    action_id: string | null;
-    artifact_revision_id: string | null;
-  };
-  meaning: string;
-  authority_effect: "none";
-  created_at: string;
-  updated_at: string;
-}
-
 export interface ActionReviewChangedBlock {
   id: string;
   change: "inserted" | "modified" | "deleted";
@@ -390,9 +373,6 @@ export interface RoomState {
     reason: string;
     declared_at: string;
   }>;
-  /** State-scoped declarations of intentional silence. They carry no
-   * authority and invalidate when their exact scope changes. */
-  floor_releases?: FloorRelease[];
 }
 
 /** Spec 113 — one rendered activity entry in a delta read (`new`). */
@@ -432,7 +412,6 @@ export interface RoomDelta {
   current_through: number;
   page?: RoomReadPage;
   more: Record<string, string>;
-  floor_releases?: FloorRelease[];
 }
 
 export interface AppendActionReviewNoteRequest {
@@ -447,12 +426,6 @@ export interface AppendActionReviewNoteRequest {
 
 export interface AppendActionReviewNoteResponse {
   review_note: ArtifactReviewNote;
-  state_revision: string;
-}
-
-export interface FloorReleaseResponse {
-  floor_release: FloorRelease | null;
-  changed: boolean;
   state_revision: string;
 }
 
@@ -815,21 +788,6 @@ export class GrpClient {
       auth: tokenOverride(token),
       headers: roomPasswordHeaders(password),
       query: { since },
-    });
-  }
-
-  setFloorRelease(input: { slug: string; auth?: GrpAuth }): Promise<FloorReleaseResponse> {
-    return this.request(`/api/rooms/${encodeURIComponent(input.slug)}/floor-release`, {
-      method: "PUT",
-      auth: input.auth,
-      body: {},
-    });
-  }
-
-  revokeFloorRelease(input: { slug: string; auth?: GrpAuth }): Promise<FloorReleaseResponse> {
-    return this.request(`/api/rooms/${encodeURIComponent(input.slug)}/floor-release`, {
-      method: "DELETE",
-      auth: input.auth,
     });
   }
 

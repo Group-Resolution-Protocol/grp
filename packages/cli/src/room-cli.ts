@@ -646,13 +646,6 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
           resolvedIo,
         );
         return 0;
-      case "yield":
-        await roomYield(
-          targetOrCurrent(maybeTarget, parsed.flags, resolvedIo),
-          parsed.flags,
-          resolvedIo,
-        );
-        return 0;
       case "join":
         await roomJoin(requiredTarget(maybeTarget), parsed.flags, resolvedIo);
         return 0;
@@ -1160,9 +1153,6 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
     "since",
   ]),
   whoami: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, ["json", "quiet"]),
-  yield: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, ROOM_ACTION_OUTPUT_FLAG_KEYS, [
-    "revoke",
-  ]),
   join: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, ROOM_ACTION_OUTPUT_FLAG_KEYS, [
     "invite",
     "as",
@@ -2388,51 +2378,6 @@ async function roomWhoAmI(
   }
 }
 
-async function roomYield(
-  target: string,
-  flags: Record<string, string>,
-  io: RoomCliIo,
-): Promise<void> {
-  const ref = resolveRoomRef(target, flags, io.env);
-  const revoke = flags.revoke === "true";
-  const response = await experimentalResourceRequest(
-    ref,
-    "/floor-release",
-    flags,
-    io,
-    revoke ? "DELETE" : "PUT",
-    {},
-  );
-  if (isJson(flags)) {
-    io.stdout(renderJson(response));
-    return;
-  }
-  if (flags.quiet === "true") return;
-  const record = isRecord(response) ? response : {};
-  if (revoke) {
-    io.stdout(
-      `${record.changed === false ? "No floor release was active." : "Floor release revoked."}\n`,
-    );
-    return;
-  }
-  const release = isRecord(record.floor_release) ? record.floor_release : null;
-  const scope = release && isRecord(release.scope) ? release.scope : {};
-  const displayName = stringOrNull(release?.display_name) ?? "you";
-  const room = roomHintArg(ref.slug, ref, io.env);
-  io.stdout(
-    `${[
-      record.changed === false
-        ? `Floor release already active for ${displayName} at this exact state.`
-        : `Floor released by ${displayName} at this exact state.`,
-      "Meaning: no further contribution or unresolved objection from this participant at the stated room state.",
-      "It does not approve work, waive authority, advance the room, or bind anyone else.",
-      `Scope: conversation ${String(scope.conversation_state_revision ?? "?")}; foreground ${String(scope.foreground_epoch ?? "?")}; decision ${String(scope.decision_id ?? "none")}; action ${String(scope.action_id ?? "none")}; artifact revision ${String(scope.artifact_revision_id ?? "none")}.`,
-      "",
-      `Revoke explicitly: ${grpCommand(`yield --revoke${room}`)}`,
-    ].join("\n")}\n`,
-  );
-}
-
 function withPersonaReadHeader(rendered: string, env: Record<string, string | undefined>): string {
   const persona = resolvePersonaContext(env);
   return persona ? `${renderPersonaIdentity(persona)}\n\n${rendered}` : rendered;
@@ -3171,7 +3116,6 @@ function renderPhasedRoomDelta(
   );
   if (options.moreUnread) lines.push("", "More unread activity remains.");
   appendAuthoritativeResult(lines, response, ref, env);
-  appendFloorReleases(lines, response);
   return `${lines.join("\n")}\n`;
 }
 
@@ -9441,7 +9385,6 @@ function renderPhasedRoomRead(
     );
   }
   appendAuthoritativeResult(lines, response, ref, env);
-  appendFloorReleases(lines, response);
   return `${lines.join("\n")}\n`;
 }
 
@@ -9484,29 +9427,6 @@ function appendAuthoritativeResult(
   }
 }
 
-function appendFloorReleases(lines: string[], response: Record<string, unknown>): void {
-  const releases = Array.isArray(response.floor_releases)
-    ? response.floor_releases.filter(isRecord)
-    : [];
-  if (releases.length === 0) return;
-  lines.push("", "Intentional silence at this exact state:");
-  for (const release of releases) {
-    const name =
-      stringOrNull(release.display_name) ?? stringOrNull(release.participant_id) ?? "unknown";
-    const scope = isRecord(release.scope) ? release.scope : {};
-    const scopedTo = [
-      stringOrNull(scope.decision_id) ? `decision ${stringOrNull(scope.decision_id)}` : null,
-      stringOrNull(scope.action_id) ? `action ${stringOrNull(scope.action_id)}` : null,
-      stringOrNull(scope.artifact_revision_id)
-        ? `artifact revision ${stringOrNull(scope.artifact_revision_id)}`
-        : null,
-    ].filter((value): value is string => value !== null);
-    lines.push(
-      `  ${name} yielded${scopedTo.length > 0 ? ` for ${scopedTo.join(", ")}` : ""}; this is not approval and has no authority effect.`,
-    );
-  }
-}
-
 /** Spec 224 candidate — bounded shared-work state carried by ordinary reads. */
 function appendCoordinationState(
   lines: string[],
@@ -9515,7 +9435,6 @@ function appendCoordinationState(
   env: Record<string, string | undefined>,
 ): void {
   appendAuthoritativeResult(lines, response, ref, env);
-  appendFloorReleases(lines, response);
   const composing = Array.isArray(response.composing) ? response.composing.filter(isRecord) : [];
   if (composing.length > 0) {
     const names = composing.map(
@@ -11339,13 +11258,6 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
     flags: ["--json           structured identity", "--quiet          participant ID only"],
     example: "grp whoami",
   },
-  yield: {
-    usage: "grp yield [room] [--revoke]",
-    summary:
-      "Record that you have no further contribution or unresolved objection at the exact current state. This is intentional silence, not approval, authority, or a state-machine override. It invalidates when relevant state changes; --revoke removes it explicitly.",
-    flags: ["--revoke         revoke your active floor release"],
-    example: "grp yield",
-  },
   enter: {
     usage: "grp enter <room-url|slug>",
     summary: "Set the current room without joining it.",
@@ -11698,7 +11610,6 @@ function printRoomHelp(write: (text: string) => void): void {
       "  ask            record a group choice",
       "  read           catch up on shared state",
       "  whoami         show your authenticated identity in the room",
-      "  yield          signal intentional silence at the exact current state",
       "  watch          wait for relevant room activity",
       "",
       "Commands:",
@@ -11717,7 +11628,6 @@ function printRoomHelp(write: (text: string) => void): void {
       "  start choosing open choices for a collect-first question",
       "  choose         submit or revise your choice",
       "  abstain        participate without supporting an option",
-      "  yield          set or revoke your state-scoped floor release",
       "  outcome        show the latest decided outcome",
       "  history        print room timeline history",
       "  invite         create or list named room invites",

@@ -140,13 +140,6 @@
             "description": "Spec 119 — the room's head event seq at read time. A snapshot or full read is a complete picture through this seq: clients keeping a delta mark may advance it here.",
             "type": "integer"
           },
-          "floor_releases": {
-            "description": "Current, state-scoped declarations of intentional silence. They have no authority effect and satisfy no obligation.",
-            "items": {
-              "$ref": "#/components/schemas/FloorRelease"
-            },
-            "type": "array"
-          },
           "decided": {
             "description": "Recent resolved decisions (short tail).",
             "items": {
@@ -1846,13 +1839,6 @@
             "description": "Highest event seq this delta covers (the room's head when `new` is empty). Pass it as the next `since`.",
             "type": "integer"
           },
-          "floor_releases": {
-            "description": "Current, state-scoped declarations of intentional silence. They have no authority effect and satisfy no obligation.",
-            "items": {
-              "$ref": "#/components/schemas/FloorRelease"
-            },
-            "type": "array"
-          },
           "more": {
             "additionalProperties": {
               "type": "string"
@@ -2309,13 +2295,6 @@
             "description": "Spec 119 — the room's head event seq at read time; the full read is a complete picture through this seq.",
             "type": "integer"
           },
-          "floor_releases": {
-            "description": "Current, state-scoped declarations of intentional silence. They have no authority effect and satisfy no obligation.",
-            "items": {
-              "$ref": "#/components/schemas/FloorRelease"
-            },
-            "type": "array"
-          },
           "decisions": {
             "items": {
               "$ref": "#/components/schemas/DecisionSummary"
@@ -2575,57 +2554,6 @@
           "room_event",
           "complete"
         ],
-        "type": "object"
-      },
-      "FloorRelease": {
-        "description": "A participant's powerless declaration of intentional silence at one exact room state.",
-        "properties": {
-          "id": { "type": "string" },
-          "participant_id": { "type": "string" },
-          "display_name": { "type": "string" },
-          "scope": {
-            "properties": {
-              "conversation_state_revision": { "type": "string" },
-              "foreground_epoch": { "type": "string" },
-              "decision_id": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
-              "action_id": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
-              "artifact_revision_id": { "oneOf": [{ "type": "string" }, { "type": "null" }] }
-            },
-            "required": [
-              "conversation_state_revision",
-              "foreground_epoch",
-              "decision_id",
-              "action_id",
-              "artifact_revision_id"
-            ],
-            "type": "object"
-          },
-          "meaning": { "type": "string" },
-          "authority_effect": { "const": "none" },
-          "created_at": { "format": "date-time", "type": "string" },
-          "updated_at": { "format": "date-time", "type": "string" }
-        },
-        "required": [
-          "id",
-          "participant_id",
-          "display_name",
-          "scope",
-          "meaning",
-          "authority_effect",
-          "created_at",
-          "updated_at"
-        ],
-        "type": "object"
-      },
-      "FloorReleaseResponse": {
-        "properties": {
-          "floor_release": {
-            "oneOf": [{ "$ref": "#/components/schemas/FloorRelease" }, { "type": "null" }]
-          },
-          "changed": { "type": "boolean" },
-          "state_revision": { "type": "string" }
-        },
-        "required": ["floor_release", "changed", "state_revision"],
         "type": "object"
       },
       "ActionReviewPresentation": {
@@ -3978,125 +3906,6 @@
           }
         ],
         "summary": "Post a discussion message",
-        "tags": ["actions"]
-      }
-    },
-    "/api/rooms/{slug}/floor-release": {
-      "put": {
-        "description": "Declare intentional silence at the current exact room state. This is revocable, satisfies no obligation, and has no authority effect.",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Slug"
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": false,
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FloorReleaseResponse"
-                }
-              }
-            },
-            "description": "Floor release recorded or already current"
-          },
-          "400": {
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
-            },
-            "description": "Bad request"
-          },
-          "401": {
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
-            },
-            "description": "Unauthorized"
-          },
-          "403": {
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
-            },
-            "description": "Forbidden or outstanding obligation"
-          },
-          "404": {
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
-            },
-            "description": "Not found"
-          },
-          "409": {
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
-            },
-            "description": "Conflict"
-          }
-        },
-        "security": [{ "bearerAuth": [] }, { "mandate": [] }],
-        "summary": "Yield the conversational floor at the current state",
-        "tags": ["actions"]
-      },
-      "delete": {
-        "description": "Explicitly revoke the caller's current floor release.",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Slug"
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FloorReleaseResponse"
-                }
-              }
-            },
-            "description": "Floor release revoked or already absent"
-          },
-          "400": {
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
-            },
-            "description": "Bad request"
-          },
-          "401": {
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
-            },
-            "description": "Unauthorized"
-          },
-          "403": {
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
-            },
-            "description": "Forbidden"
-          },
-          "404": {
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
-            },
-            "description": "Not found"
-          },
-          "409": {
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
-            },
-            "description": "Conflict"
-          }
-        },
-        "security": [{ "bearerAuth": [] }, { "mandate": [] }],
-        "summary": "Revoke the caller's floor release",
         "tags": ["actions"]
       }
     },
