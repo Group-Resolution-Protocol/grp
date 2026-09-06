@@ -20,6 +20,21 @@ import {
   runRoomCli,
 } from "./room-cli.js";
 
+async function acknowledgeThrough(env: Record<string, string | undefined>, through: number) {
+  const fetch = vi.fn(async () => {
+    throw new Error("acknowledgment must not fetch");
+  });
+  expect(
+    await runRoomCli(["read", `--ack-through=${through}`], {
+      env,
+      fetch,
+      stdout: () => {},
+      stderr: () => {},
+    }),
+  ).toBe(0);
+  expect(fetch).not.toHaveBeenCalled();
+}
+
 describe("foreground watch timeout", () => {
   it("bounds a bare watch by default while preserving explicit overrides", () => {
     expect(parseWatchTimeout(undefined, DEFAULT_FOREGROUND_WATCH_TIMEOUT_SECONDS)).toBe(110);
@@ -5022,7 +5037,7 @@ describe("spec 113 delta reads", () => {
     const env = providerEnv(roomConfig({ lastSeenSeq: 5 }));
     let stdout = "";
     let sinceParam: string | null = null;
-    const code = await runRoomCli(["read", "--ack"], {
+    const code = await runRoomCli(["read"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -5047,6 +5062,7 @@ describe("spec 113 delta reads", () => {
     );
     expect(stdout).not.toContain("every participant has chosen");
     expect(stdout).toContain("COMPLETE CATCH-UP — 3 updates shown, through event 8 of 8.");
+    await acknowledgeThrough(env, 8);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(8);
   });
@@ -5655,7 +5671,7 @@ describe("spec 113 unified watch", () => {
       },
     })}\n\n`;
 
-  it("wakes on discussion by someone else and pre-positions the mark", async () => {
+  it("wakes on discussion without consuming any content", async () => {
     const env = providerEnv(wakeConfig(4));
     let stdout = "";
     const code = await runRoomCli(["watch"], {
@@ -5685,7 +5701,8 @@ describe("spec 113 unified watch", () => {
     expect(stdout).toContain("grp read");
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     // Mark parks just before the wake event so the follow-up read includes it.
-    expect(saved.currentRoom.lastSeenSeq).toBe(5);
+    expect(saved.currentRoom.lastSeenSeq).toBe(4);
+    expect(saved.currentRoom.lastNotifiedSeq).toBe(6);
   });
 
   it("names a direct handoff when bare watch wakes its exact recipient", async () => {
@@ -5768,7 +5785,8 @@ describe("spec 113 unified watch", () => {
     expect(code).toBe(0);
     // Woke on seq 6 (the other participant), not the caller's own seq 5.
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
-    expect(saved.currentRoom.lastSeenSeq).toBe(5);
+    expect(saved.currentRoom.lastSeenSeq).toBe(4);
+    expect(saved.currentRoom.lastNotifiedSeq).toBe(6);
     expect(stdout).toContain("Neon posted discussion.");
   });
 
@@ -6119,7 +6137,8 @@ describe("spec 114 surface", () => {
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     // Spec 125 (WR12-2) — the wake line carries the whole payload, so the
     // event is CONSUMED (mark through seq 6), never re-fired.
-    expect(saved.currentRoom.lastSeenSeq).toBe(6);
+    expect(saved.currentRoom.lastSeenSeq).toBe(4);
+    expect(saved.currentRoom.lastNotifiedSeq).toBe(6);
   });
 });
 
@@ -9279,7 +9298,7 @@ describe("spec 228 action-centered coordination", () => {
     let stdout = "";
 
     expect(
-      await runRoomCli(["act", "request-review", "act_1"], {
+      await runRoomCli(["act", "request-review", "act_1", "--revision=rev_uuid_5"], {
         stdout: (text) => {
           stdout += text;
         },
@@ -10727,7 +10746,7 @@ describe("spec 116 — run-8 edge pass", () => {
     expect(saved.currentRoom.participantId).toBe("p_creator");
   });
 
-  it("a resolution wake consumes its event (WR8-2: watch-after-watch never re-fires)", async () => {
+  it("a resolution wake records notification progress without consuming content", async () => {
     const env = providerEnv({ providers: {} });
     const config = JSON.parse(readFileSync(env.GRP_CONFIG as string, "utf8"));
     config.currentRoom = {
@@ -10763,10 +10782,11 @@ describe("spec 116 — run-8 edge pass", () => {
     // The wake block carried the full outcome, so the mark advances THROUGH
     // the event: the next watch must not re-fire on seq 9.
     const after = JSON.parse(readFileSync(env.GRP_CONFIG as string, "utf8"));
-    expect(after.currentRoom.lastSeenSeq).toBe(9);
+    expect(after.currentRoom.lastSeenSeq).toBe(4);
+    expect(after.currentRoom.lastNotifiedSeq).toBe(9);
   });
 
-  it("a discussion wake still parks before its event (delta carries the text)", async () => {
+  it("a discussion wake only updates its notification bookmark", async () => {
     const env = providerEnv({ providers: {} });
     const config = JSON.parse(readFileSync(env.GRP_CONFIG as string, "utf8"));
     config.currentRoom = {
@@ -10799,7 +10819,8 @@ describe("spec 116 — run-8 edge pass", () => {
     });
     expect(code).toBe(0);
     const after = JSON.parse(readFileSync(env.GRP_CONFIG as string, "utf8"));
-    expect(after.currentRoom.lastSeenSeq).toBe(6);
+    expect(after.currentRoom.lastSeenSeq).toBe(4);
+    expect(after.currentRoom.lastNotifiedSeq).toBe(7);
   });
 
   it("watch --timeout exits 0 with a nothing-new line (WR8-4)", async () => {
@@ -11649,16 +11670,17 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
     expect(streamUrl?.searchParams.get("since_event_id")).toBeNull();
     expect(stdout).toContain('Decision opened by creator: "Choose a different legal move"');
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
-    expect(saved.currentRoom.lastSeenSeq).toBe(224);
+    expect(saved.currentRoom.lastSeenSeq).toBe(223);
+    expect(saved.currentRoom.lastNotifiedSeq).toBe(224);
   });
 
-  it("--snapshot --ack advances the mark through current_through (WR11-1)", async () => {
+  it("acknowledges the exact previously delivered snapshot without fetching", async () => {
     // Run 11's stale wakes: wake parks the mark at seq-1, the follow-up
     // `read --snapshot` used to leave it there, and the next bare watch
     // re-fired the same event. A full picture now advances the mark.
     const env = providerEnv(roomConfig({ lastSeenSeq: 30 }));
     let sinceParam: string | null = "unset";
-    const code = await runRoomCli(["read", "--snapshot", "--ack"], {
+    const code = await runRoomCli(["read", "--snapshot"], {
       stdout: () => {},
       stderr: () => {},
       fetch: async (input, init) => {
@@ -11669,6 +11691,7 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
     });
     expect(code).toBe(0);
     expect(sinceParam).toBeNull();
+    await acknowledgeThrough(env, 42);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(42);
   });
@@ -11730,7 +11753,8 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
     ).toBe(0);
     expect(firstWake).toContain("Choosing started by Neon");
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
-    expect(saved.currentRoom.lastSeenSeq).toBe(46); // consumed, not parked at 45
+    expect(saved.currentRoom.lastSeenSeq).toBe(44);
+    expect(saved.currentRoom.lastNotifiedSeq).toBe(46);
 
     // The seat votes without reading (no CLI read runs), then watches again.
     let secondWatch = "";
@@ -11809,7 +11833,8 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
     let saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     // Spec 125 (WR12-2) — decision.opened wakes are consumed (mark through
     // the wake seq), not parked: the wake line already carried the payload.
-    expect(saved.currentRoom.lastSeenSeq).toBe(42);
+    expect(saved.currentRoom.lastSeenSeq).toBe(30);
+    expect(saved.currentRoom.lastNotifiedSeq).toBe(42);
 
     expect(
       await runRoomCli(["read", "--snapshot"], {
@@ -11820,7 +11845,8 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
       }),
     ).toBe(0);
     saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
-    expect(saved.currentRoom.lastSeenSeq).toBe(42);
+    expect(saved.currentRoom.lastSeenSeq).toBe(30);
+    expect(saved.currentRoom.lastNotifiedSeq).toBe(42);
 
     let secondWake = "";
     expect(
@@ -11839,13 +11865,14 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
 
   it("an acknowledged first-contact snapshot sets the mark for the next delta", async () => {
     const env = providerEnv(roomConfig());
-    const code = await runRoomCli(["read", "--ack"], {
+    const code = await runRoomCli(["read"], {
       stdout: () => {},
       stderr: () => {},
       fetch: async () => jsonResponse(snapshotBody(17)),
       env,
     });
     expect(code).toBe(0);
+    await acknowledgeThrough(env, 17);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(17);
   });
@@ -12353,7 +12380,7 @@ describe("spec 193 — safe room-read pagination", () => {
     const env = providerEnv(roomConfig());
     let firstPage = "";
     expect(
-      await runRoomCli(["read", "--ack"], {
+      await runRoomCli(["read"], {
         stdout: (text) => {
           firstPage += text;
         },
@@ -12369,6 +12396,7 @@ describe("spec 193 — safe room-read pagination", () => {
     expect(firstPage).toContain("Catch-up continues below.");
     expect(firstPage).toContain("PARTIAL CATCH-UP — 1 update shown, through event 11");
     expect(firstPage).toContain("COMPLETE CATCH-UP — 2 updates shown, through event 13");
+    await acknowledgeThrough(env, 13);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(13);
     expect(saved.currentRoom.observedStateRevision).toBe("opaque-13");
@@ -12381,7 +12409,7 @@ describe("spec 193 — safe room-read pagination", () => {
       (_, index) => `oversized event line ${index + 1}`,
     ).join("\n");
     let stdout = "";
-    const code = await runRoomCli(["read", "--ack"], {
+    const code = await runRoomCli(["read"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -12401,6 +12429,7 @@ describe("spec 193 — safe room-read pagination", () => {
     expect(code).toBe(0);
     expect(stdout).toContain("oversized event line 120");
     expect(stdout).not.toContain("More unread activity remains");
+    await acknowledgeThrough(env, 11);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(11);
   });
@@ -12412,7 +12441,7 @@ describe("spec 193 — safe room-read pagination", () => {
       { seq: 12, type: "discussion", who: "Cobalt", said: `second-${"b".repeat(60_000)}` },
     ];
     let stdout = "";
-    const code = await runRoomCli(["read", "--ack"], {
+    const code = await runRoomCli(["read"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -12435,6 +12464,7 @@ describe("spec 193 — safe room-read pagination", () => {
     expect(stdout).toContain("PARTIAL CATCH-UP — 1 update shown, through event 11");
     expect(stdout).toContain("Catch-up continues below.");
     expect(stdout).toContain("COMPLETE CATCH-UP — 1 update shown, through event 12");
+    await acknowledgeThrough(env, 12);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(12);
   });
@@ -12442,7 +12472,7 @@ describe("spec 193 — safe room-read pagination", () => {
   it("keeps JSON reads complete and acknowledges the host high-water mark", async () => {
     const env = providerEnv(roomConfig());
     let stdout = "";
-    const code = await runRoomCli(["read", "--json", "--ack"], {
+    const code = await runRoomCli(["read", "--json"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -12458,8 +12488,9 @@ describe("spec 193 — safe room-read pagination", () => {
       schema: "grp.read.v1",
       kind: "catch_up",
       complete: true,
-      cursor: { stored_before: 10, displayed_through: 13, advanced: true, stored_after: 13 },
+      cursor: { stored_before: 10, displayed_through: 13, advanced: false, stored_after: 10 },
     });
+    await acknowledgeThrough(env, 13);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(13);
   });

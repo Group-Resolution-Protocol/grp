@@ -133,9 +133,9 @@ describe("spec 248 CLI projections and read economy", () => {
     expect(await runRoomCli(["read", "--snapshot"], first.io)).toBe(0);
     const compact = first.stdout.join("");
     expect(compact).toContain("You are Server Name (participant; p1).");
-    expect(compact).toContain("Discussion (bodies elided):");
-    expect(compact).toContain("Reviewer posted 26 characters about action a-new.");
-    expect(compact).not.toContain(body);
+    expect(compact).toContain("Discussion:");
+    expect(compact).toContain("Reviewer about action a-new");
+    expect(compact).toContain(body);
     expect(compact).toContain("Authoritative result:");
     expect(compact).toContain(
       "Action a-old; artifact artifact-1; revision revision-7; SHA-256 abc123.",
@@ -148,7 +148,7 @@ describe("spec 248 CLI projections and read economy", () => {
     expect(expanded.stdout.join("")).toContain(`Reviewer about action a-new: ${body}`);
 
     const acknowledged = runIo(env, fetch);
-    expect(await runRoomCli(["read", "--snapshot", "--ack"], acknowledged.io)).toBe(0);
+    expect(await runRoomCli(["read", "--ack-through=12"], acknowledged.io)).toBe(0);
     expect(JSON.parse(readFileSync(env.GRP_CONFIG, "utf8")).currentRoom.lastSeenSeq).toBe(12);
   });
 
@@ -252,13 +252,14 @@ describe("spec 248 CLI projections and read economy", () => {
     expect(JSON.parse(readFileSync(env.GRP_CONFIG, "utf8")).currentRoom.lastSeenSeq).toBe(5);
 
     const second = runIo(env, fetch);
-    expect(await runRoomCli(["read", "--ack"], second.io)).toBe(0);
-    expect(second.stdout.join("").match(/COMPLETE CATCH-UP/g)).toHaveLength(1);
+    expect(await runRoomCli(["read", "--ack-through=6"], second.io)).toBe(0);
+    expect(second.stdout.join("")).not.toContain("CATCH-UP");
+    expect(fetch).toHaveBeenCalledTimes(1);
     expect(second.stdout.join("")).toContain("Position acknowledged through event 6.");
     expect(JSON.parse(readFileSync(env.GRP_CONFIG, "utf8")).currentRoom.lastSeenSeq).toBe(6);
   });
 
-  it("elides discussion bodies in automatic stale-write catch-up", async () => {
+  it("delivers discussion bodies before adopting the stale-write catch-up revision", async () => {
     const env = testEnv({
       coordinationStateCapability: "experimental",
       observedStateRevision: "state-5",
@@ -296,9 +297,12 @@ describe("spec 248 CLI projections and read economy", () => {
     expect(await runRoomCli(["discuss", "stale post"], io)).toBe(1);
     const rendered = stderr.join("");
     expect(rendered.match(/COMPLETE CATCH-UP/g)).toHaveLength(1);
-    expect(rendered).toContain("Reviewer posted 26 characters.");
-    expect(rendered).toContain("grp read --since=5 --expand");
-    expect(rendered).not.toContain(secret);
+    expect(rendered).toContain("Reviewer: full stale discussion body");
+    expect(rendered).toContain("grp read --ack-through=6");
+    expect(rendered).toContain(secret);
+    expect(JSON.parse(readFileSync(env.GRP_CONFIG, "utf8")).currentRoom.observedStateRevision).toBe(
+      "state-6",
+    );
     expect(JSON.parse(readFileSync(env.GRP_CONFIG, "utf8")).currentRoom.lastSeenSeq).toBe(5);
   });
 

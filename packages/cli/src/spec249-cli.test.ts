@@ -329,11 +329,14 @@ describe("spec 249 CLI review convergence", () => {
     }) as typeof globalThis.fetch;
     const { io, stdout } = runIo(env, fetch);
 
-    expect(await runRoomCli(["read", "--ack"], io)).toBe(0);
+    expect(await runRoomCli(["read"], io)).toBe(0);
     expect(seenSince).toEqual([5, 6]);
     expect(stdout.join("")).toContain("first");
     expect(stdout.join("")).toContain("second");
     expect(stdout.join("")).toContain("third");
+    expect(JSON.parse(readFileSync(env.GRP_CONFIG, "utf8")).currentRoom.lastSeenSeq).toBe(5);
+    expect(await runRoomCli(["read", "--ack-through=8"], io)).toBe(0);
+    expect(seenSince).toEqual([5, 6]);
     expect(JSON.parse(readFileSync(env.GRP_CONFIG, "utf8")).currentRoom.lastSeenSeq).toBe(8);
   });
 
@@ -353,7 +356,7 @@ describe("spec 249 CLI review convergence", () => {
     const errors: string[] = [];
 
     expect(
-      await runRoomCli(["read", "--ack"], {
+      await runRoomCli(["read"], {
         env,
         fetch,
         stdin: Readable.from([]),

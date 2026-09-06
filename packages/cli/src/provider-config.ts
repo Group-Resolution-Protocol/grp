@@ -36,14 +36,14 @@ export interface RoomContext {
   /** Spec 113 — the caller's own participant id from the join response, so
    * watch can tell its own events from everyone else's. */
   participantId?: string;
-  /** Spec 113 — the per-room high-water mark: the highest event seq this
-   * session has already read. Absent = no mark (first contact reads the full
-   * snapshot). Advanced by delta reads, explicit --since reads, and the
-   * FOREGROUND wake-mode watch — NEVER by `grp watch --jsonl` (a background
-   * flight recorder must not eat the foreground's delta; that would be the
-   * client-side version of the shared-cursor bug spec 113 refused to build
-   * server-side). */
+  /** Highest explicitly acknowledged content boundary. Reads and every watch
+   * mode are non-consuming. Absence means no acknowledged baseline yet. */
   lastSeenSeq?: number;
+  /** Exact interval emitted by the last eligible room read. No new fetch is
+   * performed when this interval is explicitly acknowledged. */
+  readDelivery?: { from: number; through: number; kind: "catch_up" | "snapshot" };
+  /** Notification progress only; never consumes room content. */
+  lastNotifiedSeq?: number;
   /** Spec 224 candidate — the opaque canonical room revision observed by the
    * last room-wide read (or returned by a successful guarded mutation).
    * This is intentionally independent from lastSeenSeq: watching events is
@@ -431,6 +431,47 @@ export function listRememberedRooms(config: ProviderConfig): RoomContext[] {
  * minimal rooms-map entry so the mark survives (credentials are not stored
  * from this path).
  */
+export function setRoomDeliveryState(
+  config: ProviderConfig,
+  slug: string,
+  baseUrl: string | undefined,
+  change: Pick<RoomContext, "readDelivery" | "lastNotifiedSeq">,
+): ProviderConfig {
+  const next = normalizeProviderConfig(config);
+  const targetBase = baseUrl ? normalizeBaseUrl(baseUrl) : undefined;
+  const update = (room: RoomContext): RoomContext =>
+    normalizeRoomContext({
+      ...room,
+      ...change,
+      ...(change.lastNotifiedSeq !== undefined
+        ? {
+            lastNotifiedSeq: Math.max(room.lastNotifiedSeq ?? 0, change.lastNotifiedSeq),
+          }
+        : {}),
+    });
+  const rooms = { ...(next.rooms ?? {}) };
+  let touched = false;
+  for (const [key, room] of Object.entries(rooms)) {
+    if (!roomMatches(next, room, slug, targetBase)) continue;
+    rooms[key] = update(room);
+    touched = true;
+  }
+  let currentRoom = next.currentRoom;
+  if (currentRoom && roomMatches(next, currentRoom, slug, targetBase)) {
+    currentRoom = update(currentRoom);
+    touched = true;
+  }
+  if (!touched) {
+    const room = update({ slug, ...(baseUrl ? { baseUrl } : {}) });
+    rooms[roomContextKey(room)] = room;
+  }
+  return {
+    ...next,
+    ...(currentRoom ? { currentRoom } : {}),
+    ...(Object.keys(rooms).length ? { rooms } : {}),
+  };
+}
+
 export function setRoomLastSeenSeq(
   config: ProviderConfig,
   slug: string,
@@ -990,6 +1031,17 @@ function normalizeRoomContext(raw: Partial<RoomContext>): RoomContext {
     ...(typeof raw.observedStateRevision === "string" && raw.observedStateRevision.trim().length > 0
       ? { observedStateRevision: normalizeObservedStateRevision(raw.observedStateRevision) }
       : {}),
+    ...(raw.readDelivery &&
+    Number.isSafeInteger(raw.readDelivery.from) &&
+    raw.readDelivery.from >= 0 &&
+    Number.isSafeInteger(raw.readDelivery.through) &&
+    raw.readDelivery.through >= raw.readDelivery.from &&
+    (raw.readDelivery.kind === "catch_up" || raw.readDelivery.kind === "snapshot")
+      ? { readDelivery: raw.readDelivery }
+      : {}),
+    ...(Number.isSafeInteger(raw.lastNotifiedSeq) && (raw.lastNotifiedSeq ?? -1) >= 0
+      ? { lastNotifiedSeq: raw.lastNotifiedSeq }
+      : {}),
     ...(raw.coordinationStateCapability === "experimental" ||
     raw.coordinationStateCapability === "absent"
       ? { coordinationStateCapability: raw.coordinationStateCapability }
@@ -1107,6 +1159,12 @@ function mergeRoomContexts(
   if (role) merged.role = role;
   if (participantId) merged.participantId = participantId;
   if (lastSeenSeq !== undefined) merged.lastSeenSeq = lastSeenSeq;
+  if (incoming.lastNotifiedSeq !== undefined || remembered.lastNotifiedSeq !== undefined) {
+    merged.lastNotifiedSeq = Math.max(
+      incoming.lastNotifiedSeq ?? 0,
+      remembered.lastNotifiedSeq ?? 0,
+    );
+  }
   if (observedStateRevision !== undefined) merged.observedStateRevision = observedStateRevision;
   if (foregroundPolicy !== undefined) merged.foregroundPolicy = foregroundPolicy;
   if (observedForegroundEpoch !== undefined) {

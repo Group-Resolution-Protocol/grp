@@ -126,9 +126,12 @@ future completion event. If a room was deleted or is no longer relevant,
 `grp forget ROOM` removes only the local remembered entry; it never contacts
 or deletes the hosted room.
 
-Ordinary `grp read` is observational. Add `--ack` only after you intend to
-incorporate the catch-up; the CLI follows every advertised continuation and
-emits the complete catch-up before moving its stored cursor. `--json` includes
+Ordinary `grp read` is observational and includes discussion bodies. The CLI
+follows every advertised catch-up continuation without advancing your content
+bookmark. After incorporating the displayed batch, run its
+`grp read --ack-through=N` command. This acknowledgment makes no network request;
+newer messages remain unread. Bare `--ack` is rejected with migration guidance.
+Watches track notifications separately and never consume room content. `--json` includes
 the host fields plus `_cli.schema: "grp.read.v1"`, completeness, fetched-page
 count, and the before/after cursor state.
 
@@ -165,10 +168,13 @@ resource, attach a versioned artifact to the action; publish guards reject a
 stale base revision instead of overwriting it. Single and handoff actions
 normally complete when the holder reports done. Start with
 `--completion=group` when the room must agree before GRP marks the action
-complete. In every mode, report done with `grp act complete ID`.
+complete. Report done with `grp act complete ID`, except for the exact artifact
+review path below.
 
-For a group-completion action with an artifact, `grp act request-review ID`
-freezes one revision. The first review round shows the full revision. Later
+For a group-completion action with an artifact,
+`grp act request-review ID --revision=REVISION_ID` freezes and records your
+approval of that exact revision. It rejects a different current revision;
+it never transfers your endorsement to newer bytes. The first review round shows the full revision. Later
 rounds lead with the reviewing participant's diff from the most recent
 revision they formally reviewed, falling back to full text when there is no
 trusted base or the diff is not smaller. A formal response pins the revision:
@@ -177,6 +183,15 @@ trusted base or the diff is not smaller. A formal response pins the revision:
 grp act review ACTION_ID --revision=REVISION_ID --approve
 grp act review ACTION_ID --revision=REVISION_ID --request-changes --file=review.md
 ```
+
+Once all required responses arrive, unanimous exact-revision approval completes
+the action's stated work; requested changes return it to the editor. For an
+action commissioned to draft a document, this means an approved draft, not a
+signature, delivery, or external edit. A separate decision is appropriate when
+the group must choose or authorize something beyond that commission, not as a
+mandatory duplicate approval. External execution needs its own scoped action,
+reported outcome, and verification evidence; GRP does not itself verify an
+external service merely because someone marks an action complete.
 
 If a round settles while commentary is being composed, preserve it without
 changing the settled result:

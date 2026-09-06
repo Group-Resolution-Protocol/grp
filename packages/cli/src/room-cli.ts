@@ -29,6 +29,7 @@ import {
   resolveProviderBaseUrl,
   setCurrentRoom,
   setRoomCoordinationStateCapability,
+  setRoomDeliveryState,
   setRoomForegroundObservation,
   setRoomLastSeenSeq,
   setRoomObservedStateRevision,
@@ -95,6 +96,8 @@ class RoomStateChangedError extends Error {
   readonly posted = false;
   forceAvailable = false;
   catchUp?: {
+    ref?: RoomRef;
+    from?: number;
     response?: Record<string, unknown>;
     rendered?: string;
     complete: boolean;
@@ -892,6 +895,15 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
             : `${message}\n`,
         );
       }
+      // Fetching recovery content is not delivery. Adopt its write precondition
+      // only after the output sink accepted the complete, unelided catch-up.
+      if (err.catchUp?.complete && err.catchUp.ref && err.catchUp.response) {
+        persistObservedStateRevisionFromRead(
+          err.catchUp.ref,
+          { ...err.catchUp.response, _cli_delivery_from: err.catchUp.from },
+          resolvedIo.env,
+        );
+      }
       return 1;
     }
     if (err instanceof CliHttpError) {
@@ -1147,6 +1159,7 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
     "json",
     "quiet",
     "ack",
+    "ack-through",
     "expand",
     "snapshot",
     "decision",
@@ -1230,7 +1243,7 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
   "action:request-review": roomFlagSet(
     ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS,
     ROOM_ACTION_OUTPUT_FLAG_KEYS,
-    ["idempotency-key"],
+    ["revision", "idempotency-key"],
   ),
   "action:review": roomFlagSet(
     ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS,
@@ -2200,10 +2213,41 @@ async function roomRead(
   // thread must not eat the other threads' wakes. Only an explicitly
   // acknowledged full-room read moves the cursor.
   const focusedSeq = parseDecisionFlag(flags.decision);
-  if (focusedSeq !== undefined) {
-    if (flags.ack === "true") {
-      throw new Error("--ack is not used with --decision; focused reads never move your position");
+  if (flags.ack === "true") {
+    throw new Error(
+      "Use --ack-through=N from the read you incorporated. Acknowledgment does not fetch newer activity.",
+    );
+  }
+  if (flags["ack-through"] !== undefined) {
+    if (focusedSeq !== undefined || flags.since !== undefined || flags.snapshot === "true") {
+      throw new Error(
+        "--ack-through acknowledges an existing batch; do not combine it with a new or focused read",
+      );
     }
+    const through = Number(flags["ack-through"]);
+    const remembered = findRememberedRoom(readProviderConfig(io.env), ref.slug, ref.baseUrl);
+    const delivery = remembered?.readDelivery;
+    if (
+      !Number.isSafeInteger(through) ||
+      through < 0 ||
+      !delivery ||
+      through < delivery.from ||
+      through > delivery.through ||
+      (delivery.kind === "catch_up" && delivery.from > (remembered?.lastSeenSeq ?? 0))
+    ) {
+      throw new Error(
+        "That event is not covered by an eligible delivered batch. Read the complete catch-up first, then use its --ack-through=N command.",
+      );
+    }
+    persistLastSeenSeq(ref, through, io.env);
+    io.stdout(
+      isJson(flags)
+        ? renderJson({ acknowledged_through: rememberedLastSeenSeq(ref, io.env), fetched: false })
+        : `Position acknowledged through event ${rememberedLastSeenSeq(ref, io.env)}. No new activity was fetched.\n`,
+    );
+    return;
+  }
+  if (focusedSeq !== undefined) {
     const focusedOptions = readRequestOptions(ref, flags, io.env);
     focusedOptions.query = { ...(focusedOptions.query ?? {}), include: "full" };
     const full = await requestJson<Record<string, unknown>>(
@@ -2230,7 +2274,6 @@ async function roomRead(
     io,
     options,
   );
-  const acknowledge = flags.ack === "true";
   // Feature detection: a delta-capable host answers a `since` read with the
   // anchored delta (its `new` array); old hosts ignore the unknown query
   // param and return the snapshot agent view.
@@ -2245,39 +2288,30 @@ async function roomRead(
             kind: "catch_up",
             storedBefore: rememberedLastSeenSeq(ref, io.env) ?? null,
             displayedThrough: currentThrough,
-            acknowledged: acknowledge,
+            acknowledged: false,
             pagesFetched: complete.pagesFetched,
           }),
         ),
       );
-      if (acknowledge && currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
-      persistObservedStateRevisionFromRead(ref, response, io.env);
+      persistObservedStateRevisionFromRead(ref, { ...response, _cli_delivery_from: since }, io.env);
       return;
     }
     const pages = humanDeltaPages(response, ref, io.env);
-    const currentThrough = numberOrNull(response.current_through);
-    if (acknowledge && io.stdoutIsTTY === false) {
-      io.stderr(
-        "Warning: grp read emits the complete catch-up before advancing. Shell filters can still hide content already emitted upstream.\n",
-      );
-    }
     const rendered = pages
       .map((page, index) =>
         renderRoomDelta(page, ref, io.env, {
           moreUnread: index < pages.length - 1,
           continuesInline: index < pages.length - 1,
-          acknowledged: acknowledge,
+          acknowledged: false,
         }).trimEnd(),
       )
       .join("\n\n");
     io.stdout(withPersonaReadHeader(`${rendered}\n`, io.env));
-    if (acknowledge && currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
-    persistObservedStateRevisionFromRead(ref, response, io.env);
+    persistObservedStateRevisionFromRead(ref, { ...response, _cli_delivery_from: since }, io.env);
     return;
   }
-  // Spec 248 — reads are observational by default. `--ack` retains the
-  // explicit WR11-1 escape hatch for callers that incorporated the displayed
-  // snapshot and want subsequent reads/watches to begin after it.
+  // Reads deliver content; a separate --ack-through command acknowledges
+  // only a previously delivered batch, without another network request.
   const currentThrough = numberOrNull(response.current_through);
   if (isJson(flags)) {
     io.stdout(
@@ -2286,12 +2320,11 @@ async function roomRead(
           kind: "snapshot",
           storedBefore: rememberedLastSeenSeq(ref, io.env) ?? null,
           displayedThrough: currentThrough,
-          acknowledged: acknowledge,
+          acknowledged: false,
           pagesFetched: 1,
         }),
       ),
     );
-    if (acknowledge && currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
     persistObservedStateRevisionFromRead(ref, response, io.env);
     return;
   }
@@ -2301,13 +2334,12 @@ async function roomRead(
     io.stdout(
       withPersonaReadHeader(
         renderRoomRead(response, ref, io.env, {
-          acknowledged: acknowledge,
-          expandBodies: flags.expand === "true",
+          acknowledged: false,
+          expandBodies: true,
         }),
         io.env,
       ) + deltaUnsupportedNote,
     );
-    if (acknowledge && currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
     persistObservedStateRevisionFromRead(ref, response, io.env);
     return;
   }
@@ -2330,8 +2362,7 @@ async function roomRead(
   );
   io.stdout("\n");
   if (deltaUnsupportedNote) io.stdout(deltaUnsupportedNote);
-  if (acknowledge && currentThrough !== null) persistLastSeenSeq(ref, currentThrough, io.env);
-  persistObservedStateRevisionFromRead(ref, response, io.env);
+  persistObservedStateRevisionFromRead(ref, { ...response, _cli_bodies_hidden: true }, io.env);
 }
 
 async function roomWhoAmI(
@@ -2435,14 +2466,47 @@ function persistLastSeenSeq(
   updateProviderConfig((current) => setRoomLastSeenSeq(current, ref.slug, ref.baseUrl, seq), env);
 }
 
-/** A room-wide canonical read is the only read surface that may advance this. */
+function isCompleteReadDelivery(response: Record<string, unknown>): boolean {
+  const page = isRecord(response.page) ? response.page : {};
+  const content = isRecord(page.content) ? page.content : {};
+  return (
+    page.complete !== false &&
+    page.bodies_elided !== true &&
+    content.discussion_complete !== false &&
+    !response._cli_bodies_hidden
+  );
+}
+
+/** Only delivered room-wide content may establish a write observation. */
 function persistObservedStateRevisionFromRead(
   ref: RoomRef,
   response: Record<string, unknown>,
   env: Record<string, string | undefined>,
 ): void {
+  const through = numberOrNull(response.current_through);
+  if (through !== null && isCompleteReadDelivery(response)) {
+    updateProviderConfig(
+      (current) =>
+        setRoomDeliveryState(current, ref.slug, ref.baseUrl, {
+          readDelivery: {
+            from: numberOrNull(response._cli_delivery_from) ?? rememberedLastSeenSeq(ref, env) ?? 0,
+            through,
+            kind: Array.isArray(response.new) ? "catch_up" : "snapshot",
+          },
+        }),
+      env,
+    );
+  }
   const revision = stringOrNull(response.state_revision);
   persistCoordinationCapability(ref, revision ? "experimental" : "absent", env);
+  if (!isCompleteReadDelivery(response)) return;
+  // An explicit --since may omit content between the acknowledged position
+  // and this batch. It cannot establish a whole-room write observation.
+  if (
+    Array.isArray(response.new) &&
+    (numberOrNull(response._cli_delivery_from) ?? 0) > (rememberedLastSeenSeq(ref, env) ?? 0)
+  )
+    return;
   if (!revision) return;
   persistObservedStateRevision(ref, revision, env);
   const recovery = findRememberedRoom(
@@ -2642,36 +2706,35 @@ async function catchUpAfterStaleWrite(
     );
     if (since !== undefined && Array.isArray(response.new)) {
       const page = humanDeltaPage(response, ref, io.env);
-      if (page.moreUnread) {
-        persistCoordinationCapabilityFromRead(ref, response, io.env);
-      } else {
-        persistObservedStateRevisionFromRead(ref, response, io.env);
-      }
+      persistCoordinationCapabilityFromRead(ref, response, io.env);
       return {
+        ref,
+        from: since,
         response: page.response,
         rendered: renderForegroundCatchUp(
           page.response,
           renderRoomDelta(page.response, ref, io.env, {
             moreUnread: page.moreUnread,
             acknowledged: false,
-            elideBodies: true,
+            elideBodies: false,
           }),
           ref,
           io.env,
         ),
-        complete: !page.moreUnread,
+        complete: !page.moreUnread && isCompleteReadDelivery(page.response),
       };
     }
-    persistObservedStateRevisionFromRead(ref, response, io.env);
+    persistCoordinationCapabilityFromRead(ref, response, io.env);
     return {
+      ref,
       response,
       rendered: renderForegroundCatchUp(
         response,
-        renderRoomRead(response, ref, io.env, { acknowledged: false, expandBodies: false }),
+        renderRoomRead(response, ref, io.env, { acknowledged: false, expandBodies: true }),
         ref,
         io.env,
       ),
-      complete: true,
+      complete: isCompleteReadDelivery(response),
     };
   } catch (error) {
     return {
@@ -3018,7 +3081,7 @@ function renderRoomDelta(
       ? `Position will advance after the complete catch-up below; this page ends at event ${throughEvent}.`
       : options.acknowledged
         ? `Position acknowledged through event ${throughEvent}.`
-        : `Position unchanged. Acknowledge through event ${throughEvent}: ${grpCommand(`read --ack${room}`)}`,
+        : `Position unchanged. Acknowledge this batch: ${grpCommand(`read --ack-through=${throughEvent}${room}`)}`,
   );
 
   const isObserver = callerRole(response, ref, env) === "observer";
@@ -3029,7 +3092,7 @@ function renderRoomDelta(
     lines.push(
       options.continuesInline
         ? "  Catch-up continues below."
-        : `  More unread activity remains: ${grpCommand(`read${options.acknowledged ? "" : " --ack"}${room}`)}`,
+        : `  More unread activity remains: ${grpCommand(`read${room}`)}`,
     );
     return `${lines.join("\n")}\n`;
   }
@@ -3112,7 +3175,7 @@ function renderPhasedRoomDelta(
     "",
     options.acknowledged
       ? `Position acknowledged through event ${throughEvent}.`
-      : `Position unchanged. Acknowledge through event ${throughEvent}: ${grpCommand(`read --ack${room}`)}`,
+      : `Position unchanged. Acknowledge this batch: ${grpCommand(`read --ack-through=${throughEvent}${room}`)}`,
   );
   if (options.moreUnread) lines.push("", "More unread activity remains.");
   appendAuthoritativeResult(lines, response, ref, env);
@@ -3191,6 +3254,7 @@ async function fetchCompleteRoomDelta(
   let page = first;
   let pagesFetched = 0;
   let cursor = requestedSince;
+  let allBodiesDelivered = true;
   while (true) {
     pagesFetched += 1;
     const currentEntries = Array.isArray(page.new) ? page.new.filter(isRecord) : [];
@@ -3203,6 +3267,8 @@ async function fetchCompleteRoomDelta(
       entries.push(entry);
     }
     const metadata = isRecord(page.page) ? page.page : {};
+    const content = isRecord(metadata.content) ? metadata.content : {};
+    allBodiesDelivered &&= metadata.bodies_elided !== true && content.discussion_complete !== false;
     if (metadata.complete !== false) break;
     const next = numberOrNull(metadata.next_since) ?? numberOrNull(page.current_through);
     if (next === null || next <= cursor) {
@@ -3245,6 +3311,7 @@ async function fetchCompleteRoomDelta(
           numberOrNull(entries.at(-1)?.seq) ??
           null,
         complete: true,
+        bodies_elided: !allBodiesDelivered,
         next_since: undefined,
       },
     },
@@ -4002,6 +4069,12 @@ async function roomAction(
   const currentAction = actionFromResponse(current);
   const expectedRevision = requireActionRevision(currentAction);
   if (operation === "request-review") {
+    const pinnedRevision = flags.revision?.trim();
+    if (!pinnedRevision) {
+      throw new Error(
+        "request-review records your approval. Read the intended artifact, then pin it with --revision=REVISION_ID; no review was requested.",
+      );
+    }
     const artifactId = stringOrNull(currentAction.target_artifact_id);
     if (!artifactId) throw new Error("this action has no artifact to review");
     if (actionCompletionFromWire(currentAction.completion) !== "group") {
@@ -4018,6 +4091,11 @@ async function roomAction(
     if (!descriptor?.resourceRevision || !descriptor.revisionId) {
       throw new Error("host did not return the exact current artifact revision");
     }
+    if (descriptor.revisionId !== pinnedRevision) {
+      throw new Error(
+        `review revision mismatch: current artifact is ${descriptor.revisionId}, not ${pinnedRevision}; no approval was recorded. Read the new bytes before choosing whether to endorse them.`,
+      );
+    }
     const response = await experimentalResourceRequest(
       ref,
       `/actions/${encodeURIComponent(id)}/request-review`,
@@ -4027,7 +4105,7 @@ async function roomAction(
       {
         expected_action_revision: expectedRevision,
         expected_artifact_revision: descriptor.resourceRevision,
-        artifact_revision_id: descriptor.revisionId,
+        artifact_revision_id: pinnedRevision,
       },
       false,
     );
@@ -4174,10 +4252,8 @@ async function roomAction(
     } catch (error) {
       const closedRound =
         error instanceof CliHttpError &&
-        (error.status === 409 ||
-          /no pending exact artifact review|review revision mismatch|review round/i.test(
-            error.serverMessage ?? error.message,
-          ));
+        (error.code === "action.review_closed" ||
+          /no pending exact artifact review/i.test(error.serverMessage ?? error.message));
       if (!closedRound) throw error;
       const bodyFlag = flags.file
         ? ` --file=${JSON.stringify(flags.file)}`
@@ -5164,7 +5240,7 @@ function renderActionState(
       "You hold this handoff action.",
       "Available:",
       completion === "group" && target
-        ? `Request exact artifact review: ${grpCommand(`act request-review ${id}${room}`)}`
+        ? `Request exact artifact review: ${grpCommand(`act request-review ${id} --revision=REVISION_ID${room}`)}`
         : completion === "group"
           ? `Propose completion with the exact result: ${grpCommand(`act complete ${id}${completionResultFlag}${room}`)}`
           : `Finish on your report: ${grpCommand(`act complete ${id}${room}`)}`,
@@ -5183,7 +5259,7 @@ function renderActionState(
       "You hold this single action. GRP records your report, not proof of external execution.",
       "This action does not block unrelated room work.",
       completion === "group" && target
-        ? `Request exact artifact review: ${grpCommand(`act request-review ${id}${room}`)}`
+        ? `Request exact artifact review: ${grpCommand(`act request-review ${id} --revision=REVISION_ID${room}`)}`
         : completion === "group"
           ? `Propose completion with the exact result: ${grpCommand(`act complete ${id}${completionResultFlag}${room}`)}`
           : `Finish on your report: ${grpCommand(`act complete ${id}${room}`)}`,
@@ -5518,7 +5594,7 @@ async function roomArtifact(
     );
     const finishGuidance =
       actionCompletionFromWire(actionAfterEdit.completion) === "group"
-        ? `  Request exact review: ${grpCommand(`act request-review ${actionId}${roomArg}`)}`
+        ? `  Request exact review: ${grpCommand(`act request-review ${actionId} --revision=${next.revisionId}${roomArg}`)}`
         : `  Complete the owning action: ${grpCommand(`act complete ${actionId}${roomArg}`)}`;
     io.stdout(
       `${[
@@ -5782,7 +5858,7 @@ function writeArtifactResponse(
   const actionId = stringOrNull(owningAction?.id) ?? stringOrNull(artifact.action_id);
   const finishGuidance =
     actionId && actionCompletionFromWire(owningAction?.completion) === "group"
-      ? `Request exact review: ${grpCommand(`act request-review ${actionId}${room}`)}`
+      ? `Request exact review: ${grpCommand(`act request-review ${actionId} --revision=${descriptor.revisionId}${room}`)}`
       : actionId
         ? `Complete the owning action: ${grpCommand(`act complete ${actionId}${room}`)}`
         : "Continue from the owning action after reviewing these bytes.";
@@ -7086,7 +7162,13 @@ async function roomWatch(
   // awaiting the caller's choice always wakes the watcher, whatever filter is
   // armed — the right watch mode must never be a judgment call again.
   const wakeMode = flags.until === undefined;
-  const mark = rememberedLastSeenSeq(ref, io.env);
+  const remembered = findRememberedRoom(readProviderConfig(io.env), ref.slug, ref.baseUrl);
+  const positions = [
+    remembered?.lastSeenSeq,
+    remembered?.lastNotifiedSeq,
+    remembered?.readDelivery?.through,
+  ].filter((value): value is number => value !== undefined);
+  const mark = positions.length > 0 ? Math.max(...positions) : undefined;
   // Spec 109 (WR2-11) — the stream backfills history; only events past the
   // baseline may stop the watch. Wake mode baselines on the stored mark when
   // one exists (unseen activity wakes immediately), else the head at connect.
@@ -7199,27 +7281,19 @@ async function roomWatch(
     );
     return;
   }
-  // Spec 113 — for pointer-only wakes (discussion, option: the wake line
-  // names WHO but the text lives in the delta) the mark parks JUST BEFORE
-  // the wake event, so the follow-up `grp read` includes it. The cost is
-  // deliberate: a seat that acts without reading is re-woken until it reads.
-  // Spec 116 (WR8-2) — full-content wakes are consumed: the mark advances
-  // THROUGH the event, so a watch-after-watch with no read between never
-  // re-fires the same event. Originally decision.completed/room.concluded
-  // (run 8's duplicate wakes); spec 125 (WR12-2) adds decision.opened and
-  // decision.voting_phase_started — since spec 117 their wake lines carry
-  // the event's whole payload (actor + question), and run 12's Argon seat
-  // was re-woken by the same choosing-started event after it voted without
-  // reading (the wake had already said everything the delta would).
-  if (wake.event) {
-    const fullContentWake =
-      wake.event.event_type === "decision.completed" ||
-      wake.event.event_type === "room.concluded" ||
-      wake.event.event_type === "decision.opened" ||
-      wake.event.event_type === "decision.voting_phase_started";
-    persistLastSeenSeq(ref, fullContentWake ? wake.event.seq : wake.event.seq - 1, io.env);
-  }
+  // Notification progress is not content acknowledgment. The next read
+  // still includes this event until its delivered batch is acknowledged.
   io.stdout(await renderEventWake(wake, ref, flags, io, room));
+  if (wake.event) {
+    const seq = wake.event.seq;
+    updateProviderConfig(
+      (current) =>
+        setRoomDeliveryState(current, ref.slug, ref.baseUrl, {
+          lastNotifiedSeq: seq,
+        }),
+      io.env,
+    );
+  }
 }
 
 type FilteredWatchWake =
@@ -8577,6 +8651,20 @@ async function requestJson<T>(
         errorCode: requestErrorCode(error, responseStatus),
       });
     }
+    if (
+      (options.method ?? "GET") !== "GET" &&
+      !(error instanceof CliHttpError) &&
+      !(error instanceof RoomStateChangedError)
+    ) {
+      throw new Error(
+        `Mutation outcome unknown: ${error instanceof Error ? error.message : String(error)}. The server may have committed the operation. Inspect the target state before retrying; ${
+          headers.has("idempotency-key")
+            ? "reuse the same idempotency key with the exact same request if retrying."
+            : "do not assume that submitting a new request is safe."
+        }`,
+        { cause: error },
+      );
+    }
     throw error;
   }
 }
@@ -9226,7 +9314,9 @@ function renderRoomRead(
   appendViewerIdentity(lines, response);
   if (!options.acknowledged) {
     lines.push(
-      `Acknowledge this snapshot through event ${roomEvent}: ${grpCommand(`read --snapshot --ack${roomHintArg(String(response.slug ?? ref.slug), ref, env)}`)}`,
+      isCompleteReadDelivery(response)
+        ? `Acknowledge this snapshot: ${grpCommand(`read --ack-through=${roomEvent}${roomHintArg(String(response.slug ?? ref.slug), ref, env)}`)}`
+        : `Snapshot omits content; catch up before acknowledging or posting: ${grpCommand(`read --since=${rememberedLastSeenSeq(ref, env) ?? 0}${roomHintArg(String(response.slug ?? ref.slug), ref, env)}`)}`,
     );
   }
   if (earlierDiscussion > 0) {
@@ -9348,7 +9438,9 @@ function renderPhasedRoomRead(
   const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
   if (!options.acknowledged) {
     lines.push(
-      `Acknowledge this snapshot through event ${roomEvent}: ${grpCommand(`read --snapshot --ack${room}`)}`,
+      isCompleteReadDelivery(response)
+        ? `Acknowledge this snapshot: ${grpCommand(`read --ack-through=${roomEvent}${room}`)}`
+        : `Snapshot omits content; catch up before acknowledging or posting: ${grpCommand(`read --since=${rememberedLastSeenSeq(ref, env) ?? 0}${room}`)}`,
     );
   }
   const about = stringOrNull(response.about);
@@ -9403,27 +9495,32 @@ function appendAuthoritativeResult(
   ref: RoomRef,
   env: Record<string, string | undefined>,
 ): void {
-  const result = isRecord(response.authoritative_result) ? response.authoritative_result : null;
-  if (!result) return;
-  const actionId = stringOrNull(result.action_id);
-  const artifactId = stringOrNull(result.artifact_id);
-  const revisionId = stringOrNull(result.revision_id);
-  const sha256 = stringOrNull(result.sha256);
-  if (!actionId || !artifactId || !revisionId || !sha256) return;
-  const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
-  const openSuccessor = stringOrNull(result.open_successor_action_id);
-  lines.push(
-    "",
-    "Authoritative result:",
-    `  Action ${actionId}; artifact ${artifactId}; revision ${revisionId}; SHA-256 ${sha256}.`,
-    `  Read action: ${grpCommand(`act read ${actionId}${room}`)}`,
-    `  Read exact artifact: ${grpCommand(`artifact read ${artifactId} --revision-id=${revisionId}${room}`)}`,
-  );
-  if (openSuccessor) {
+  const results = Array.isArray(response.authoritative_results)
+    ? response.authoritative_results.filter(isRecord)
+    : isRecord(response.authoritative_result)
+      ? [response.authoritative_result]
+      : [];
+  for (const result of results) {
+    const actionId = stringOrNull(result.action_id);
+    const artifactId = stringOrNull(result.artifact_id);
+    const revisionId = stringOrNull(result.revision_id);
+    const sha256 = stringOrNull(result.sha256);
+    if (!actionId || !artifactId || !revisionId || !sha256) continue;
+    const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
+    const openSuccessor = stringOrNull(result.open_successor_action_id);
     lines.push(
-      `  Open successor ${openSuccessor} is amending this result.`,
-      `  Read successor: ${grpCommand(`act read ${openSuccessor}${room}`)}`,
+      "",
+      "Authoritative result:",
+      `  Action ${actionId}; artifact ${artifactId}; revision ${revisionId}; SHA-256 ${sha256}.`,
+      `  Read action: ${grpCommand(`act read ${actionId}${room}`)}`,
+      `  Read exact artifact: ${grpCommand(`artifact read ${artifactId} --revision-id=${revisionId}${room}`)}`,
     );
+    if (openSuccessor) {
+      lines.push(
+        `  Open successor ${openSuccessor} is amending this result.`,
+        `  Read successor: ${grpCommand(`act read ${openSuccessor}${room}`)}`,
+      );
+    }
   }
 }
 
@@ -9558,7 +9655,7 @@ function appendCoordinationState(
       } else if (isActive && mode === "handoff" && isHolder) {
         lines.push(
           completion === "group" && target
-            ? `    Request exact review: ${grpCommand(`act request-review ${id}${room}`)}`
+            ? `    Request exact review: ${grpCommand(`act request-review ${id} --revision=REVISION_ID${room}`)}`
             : completion === "group"
               ? `    Propose completion: ${grpCommand(`act complete ${id}${completionResult}${room}`)}`
               : `    Finish on your report: ${grpCommand(`act complete ${id}${room}`)}`,
@@ -9569,7 +9666,7 @@ function appendCoordinationState(
       } else if (isActive && mode === "single" && isHolder) {
         lines.push(
           completion === "group" && target
-            ? `    Request exact review: ${grpCommand(`act request-review ${id}${room}`)}`
+            ? `    Request exact review: ${grpCommand(`act request-review ${id} --revision=REVISION_ID${room}`)}`
             : completion === "group"
               ? `    Propose completion: ${grpCommand(`act complete ${id}${completionResult}${room}`)}`
               : `    Finish on your report: ${grpCommand(`act complete ${id}${room}`)}`,
@@ -11239,14 +11336,14 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
   read: {
     usage: "grp read [room]",
     summary:
-      "Read the room without moving your stored position. Use --ack when the displayed snapshot or catch-up page has been incorporated; later reads then continue after that acknowledged event.",
+      "Read without consuming activity. After incorporating the displayed batch, use its --ack-through=N command; acknowledgment is local and never fetches newer messages.",
     flags: [
       "--snapshot       fresh current-state snapshot; skips catch-up (not full history or artifact bytes)",
       "--decision=N     one decision's thread — question, options, outcome, its discussion (never moves your position)",
-      "--since=N        everything after event N (does not move your position without --ack)",
+      "--since=N        everything after event N (does not move your position)",
       "--since=last     everything after your stored position",
-      "--ack            acknowledge only after the complete catch-up has been emitted",
-      "--expand         include exact discussion bodies in a working-state snapshot",
+      "--ack-through=N  acknowledge an already delivered batch; makes no network request",
+      "--expand         exact discussion bodies (also the default for room reads)",
       "--json           wire data plus _cli.schema=grp.read.v1 completeness and cursor metadata",
     ],
     example: "grp read",
@@ -11367,7 +11464,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "reviews ID [room] [--version=N] [--reviewer=NAME]  read formal review history",
       "take ID [room]  become holder of an available handoff action",
       "handoff ID [room] --to=NAME|ID|group [--note=TEXT]",
-      "request-review ID [room]",
+      "request-review ID --revision=REVISION_ID [room]",
       "  for a group-completion action with an artifact: freeze its exact current revision",
       "  your approval is recorded; every other eligible participant reviews the same bytes",
       "review ID [room] [--revision=REVISION_ID] [--approve | --request-changes] [--body=TEXT|--file=PATH]",
@@ -11394,7 +11491,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       '  grp act complete ACTION_ID --result-text="Checked; no blocker found"',
       '  grp act start --title="Revise the shared plan" --mode=handoff --completion=group --artifact-name="Shared plan" --artifact-file=plan.md',
       "  grp artifact patch ARTIFACT_ID --action=ACTION_ID --file=changes.json",
-      "  grp act request-review ACTION_ID",
+      "  grp act request-review ACTION_ID --revision=REVISION_ID",
       "  grp act review ACTION_ID --revision=REVISION_ID --approve",
       '  grp act start --title="Consult our principals" --mode=all --required=Neon,Cobalt',
       '  grp act start --title="Amend the reviewed result" --supersedes=ACTION_ID',
@@ -11407,9 +11504,9 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "Report that your action work is done.\n\nFor holder completion, GRP records your report and completes the action. For group completion without an artifact, provide exact --result-text; GRP asks the room whether to complete the action. For group completion with an artifact, use grp act request-review instead. For all-participant actions, this completes only your required part; the last required report completes the action.",
   },
   "action:request-review": {
-    usage: "grp act request-review <action-id> [room]",
+    usage: "grp act request-review <action-id> --revision=REVISION_ID [room]",
     summary:
-      "Request a complete review set for the exact current revision of this action's artifact.\n\nThe current holder's approval is recorded immediately. The artifact cannot change while review is pending. Every other eligible participant receives one approve-or-request-changes obligation for the same bytes. Any requested changes return the action to its editor; unanimous approval completes it.",
+      "Submit and endorse one exact artifact revision with --revision=REVISION_ID. The command rejects a different current revision without approving it.\n\nThe current holder's approval is recorded immediately. The artifact cannot change while review is pending. Every other required reviewer receives an approve-or-request-changes obligation for the same bytes. Once all required responses arrive, any requested changes return the action to its editor; unanimous approval completes it. Approval completes the action's stated work, not proof of an external signature, delivery, or execution.",
   },
   "action:review": {
     usage:

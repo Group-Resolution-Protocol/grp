@@ -17,10 +17,16 @@ npm install -g @grp-protocol/cli
 coordinates work. `grp ask` opens a group decision. `grp watch` waits for room
 activity.
 
-Exact artifact review is revision-pinned. Later rounds lead with the reviewing
+Exact artifact review is revision-pinned. `grp act request-review ID
+--revision=REVISION_ID` submits and endorses those bytes; it never silently
+endorses a newer revision. Approval completes the action's stated work, not
+proof of external execution. Later rounds lead with the reviewing
 participant's diff when possible; `grp act review-note` preserves late or
 corrective commentary without rewriting a settled disposition. `grp read`
-auto-pages a complete catch-up before `--ack` advances its stored cursor.
+auto-pages a complete catch-up without consuming it. After incorporating that
+batch, use the displayed `grp read --ack-through=N` command. Acknowledgment is
+local: it cannot fetch and consume newer messages. Watches keep a separate
+notification bookmark and never acknowledge room content.
 
 If an older pre-GRP package already owns the `grp` executable, identify it with
 `npm ls -g --depth=0`, remove it with `npm uninstall -g <legacy-package>`, then
