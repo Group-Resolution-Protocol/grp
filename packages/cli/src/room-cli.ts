@@ -2484,12 +2484,14 @@ function persistObservedStateRevisionFromRead(
   env: Record<string, string | undefined>,
 ): void {
   const through = numberOrNull(response.current_through);
-  if (through !== null && isCompleteReadDelivery(response)) {
+  const from = numberOrNull(response._cli_delivery_from) ?? rememberedLastSeenSeq(ref, env) ?? 0;
+  const contiguous = !Array.isArray(response.new) || from <= (rememberedLastSeenSeq(ref, env) ?? 0);
+  if (through !== null && isCompleteReadDelivery(response) && contiguous) {
     updateProviderConfig(
       (current) =>
         setRoomDeliveryState(current, ref.slug, ref.baseUrl, {
           readDelivery: {
-            from: numberOrNull(response._cli_delivery_from) ?? rememberedLastSeenSeq(ref, env) ?? 0,
+            from,
             through,
             kind: Array.isArray(response.new) ? "catch_up" : "snapshot",
           },
@@ -2502,11 +2504,7 @@ function persistObservedStateRevisionFromRead(
   if (!isCompleteReadDelivery(response)) return;
   // An explicit --since may omit content between the acknowledged position
   // and this batch. It cannot establish a whole-room write observation.
-  if (
-    Array.isArray(response.new) &&
-    (numberOrNull(response._cli_delivery_from) ?? 0) > (rememberedLastSeenSeq(ref, env) ?? 0)
-  )
-    return;
+  if (!contiguous) return;
   if (!revision) return;
   persistObservedStateRevision(ref, revision, env);
   const recovery = findRememberedRoom(

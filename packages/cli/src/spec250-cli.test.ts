@@ -104,6 +104,7 @@ describe("coordination correctness", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(f.state().lastSeenSeq).toBe(5);
     expect(f.state().observedStateRevision).toBe("state-5");
+    expect(f.state().readDelivery).toBeUndefined();
   });
 
   it("does not hide earlier-page body elision behind a complete final page", async () => {
