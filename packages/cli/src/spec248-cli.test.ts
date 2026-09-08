@@ -259,7 +259,7 @@ describe("spec 248 CLI projections and read economy", () => {
     expect(JSON.parse(readFileSync(env.GRP_CONFIG, "utf8")).currentRoom.lastSeenSeq).toBe(6);
   });
 
-  it("delivers discussion bodies before adopting the stale-write catch-up revision", async () => {
+  it("does not fetch or adopt catch-up on rejection; a separate read delivers the bodies", async () => {
     const env = testEnv({
       coordinationStateCapability: "experimental",
       observedStateRevision: "state-5",
@@ -292,14 +292,19 @@ describe("spec 248 CLI projections and read economy", () => {
         more: {},
       });
     }) as typeof globalThis.fetch;
-    const { io, stderr } = runIo(env, fetch);
+    const { io, stderr, stdout } = runIo(env, fetch);
 
     expect(await runRoomCli(["discuss", "stale post"], io)).toBe(1);
     const rendered = stderr.join("");
-    expect(rendered.match(/COMPLETE CATCH-UP/g)).toHaveLength(1);
-    expect(rendered).toContain("Reviewer: full stale discussion body");
-    expect(rendered).toContain("grp read --ack-through=6");
-    expect(rendered).toContain(secret);
+    expect(rendered).not.toContain(secret);
+    expect(rendered).toContain("Read the changed conversation: grp read");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(readFileSync(env.GRP_CONFIG, "utf8")).currentRoom.observedStateRevision).toBe(
+      "state-5",
+    );
+    expect(await runRoomCli(["read"], io)).toBe(0);
+    expect(stdout.join("")).toContain("Reviewer: full stale discussion body");
+    expect(stdout.join("")).toContain("grp read --ack-through=6");
     expect(JSON.parse(readFileSync(env.GRP_CONFIG, "utf8")).currentRoom.observedStateRevision).toBe(
       "state-6",
     );

@@ -126,14 +126,20 @@ future completion event. If a room was deleted or is no longer relevant,
 `grp forget ROOM` removes only the local remembered entry; it never contacts
 or deletes the hosted room.
 
-Ordinary `grp read` is observational and includes discussion bodies. The CLI
-follows every advertised catch-up continuation without advancing your content
-bookmark. After incorporating the displayed batch, run its
+Ordinary `grp read` is observational and includes discussion bodies. Text output
+is bounded to 12,000 characters. Follow `--continue=TOKEN` to retrieve remaining
+pinned fragments without fetching newer state. Oversized messages are explicitly
+fragmented, never silently elided. Default catch-up fetches one coherent host page.
+After delivering and incorporating the whole displayed batch, run its
 `grp read --ack-through=N` command. This acknowledgment makes no network request;
 newer messages remain unread. Bare `--ack` is rejected with migration guidance.
-Watches track notifications separately and never consume room content. `--json` includes
+An acknowledged prefix does not adopt a write precondition for an unseen room
+head. After acknowledgment, `read` retrieves the next batch. Watches track
+notifications separately and never consume room content. `--full` requests
+unbounded text; `--json` requests unbounded lossless data and includes
 the host fields plus `_cli.schema: "grp.read.v1"`, completeness, fetched-page
-count, and the before/after cursor state.
+count, and the before/after cursor state. A stale mutation prints `NOT POSTED`
+or `NOT CHANGED` with a separate read command; it does not fetch catch-up or retry.
 
 ## Creating a room safely
 
@@ -177,7 +183,11 @@ approval of that exact revision. It rejects a different current revision;
 it never transfers your endorsement to newer bytes. The first review round shows the full revision. Later
 rounds lead with the reviewing participant's diff from the most recent
 revision they formally reviewed, falling back to full text when there is no
-trusted base or the diff is not smaller. A formal response pins the revision:
+trusted base. Read-only review, artifact reads, and diffs use bounded output and
+explicit continuations; `--full` or `--json` requests bulk output. Continuations
+are historical bytes, not a check that the review remains pending. Retrieve an
+exact excerpt with `artifact read ID --revision-id=ID --blocks=START:END`.
+Artifact state revision counters are not content version numbers. A formal response pins the revision:
 
 ```bash
 grp act review ACTION_ID --revision=REVISION_ID --approve

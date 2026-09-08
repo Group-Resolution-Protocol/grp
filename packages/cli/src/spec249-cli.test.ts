@@ -298,7 +298,7 @@ describe("spec 249 CLI review convergence", () => {
     expect(correction.stdout.join("")).toContain("non-dispositive");
   });
 
-  it("auto-pages host catch-up and advances only after all content is emitted", async () => {
+  it("auto-pages explicit bulk catch-up and advances only after all content is emitted", async () => {
     const env = testEnv();
     const seenSince: number[] = [];
     const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -329,7 +329,7 @@ describe("spec 249 CLI review convergence", () => {
     }) as typeof globalThis.fetch;
     const { io, stdout } = runIo(env, fetch);
 
-    expect(await runRoomCli(["read"], io)).toBe(0);
+    expect(await runRoomCli(["read", "--full"], io)).toBe(0);
     expect(seenSince).toEqual([5, 6]);
     expect(stdout.join("")).toContain("first");
     expect(stdout.join("")).toContain("second");

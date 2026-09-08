@@ -6347,7 +6347,7 @@ describe.skip("obsolete spec 224 candidate — replaced by spec 228", () => {
 
     expect(code).toBe(0);
     expect(stdout).toContain("Shared artifacts:");
-    expect(stdout).toContain("artifact_1 [rev 1]");
+    expect(stdout).toContain("artifact_1 [state revision 1]");
     expect(stdout).not.toContain("Canonical resource only when that action needs one:");
     expect(stdout).not.toContain('artifact create --name="Shared output"');
   });
@@ -7923,7 +7923,7 @@ describe("spec 228 action-centered coordination", () => {
     expect(expectedHeader).toBe("41");
   });
 
-  it("catches up once after a stale post without resending and only then arms the exact bypass", async () => {
+  it("requires a separate delivered read between stale rejections before arming the exact bypass", async () => {
     const env = providerEnv(
       roomConfig({
         token: "t_1",
@@ -7981,10 +7981,13 @@ describe("spec 228 action-centered coordination", () => {
       }),
     ).toBe(1);
     expect(writes).toBe(1);
-    expect(reads).toBe(1);
-    expect(first).toContain("COMPLETE CATCH-UP");
-    expect(first).toContain("NOT POSTED — no automatic retry was attempted");
+    expect(reads).toBe(0);
+    expect(first).not.toContain("COMPLETE CATCH-UP");
+    expect(first).toContain("No automatic retry was attempted");
     expect(first).not.toContain("--force-stale-post");
+
+    expect(await runRoomCli(["read"], { stdout: () => {}, stderr: () => {}, fetch, env })).toBe(0);
+    expect(reads).toBe(1);
 
     let second = "";
     expect(
@@ -7998,7 +8001,7 @@ describe("spec 228 action-centered coordination", () => {
       }),
     ).toBe(1);
     expect(writes).toBe(2);
-    expect(reads).toBe(2);
+    expect(reads).toBe(1);
     expect(second).toContain("--force-stale-post");
 
     expect(
@@ -8010,7 +8013,7 @@ describe("spec 228 action-centered coordination", () => {
       }),
     ).toBe(0);
     expect(writes).toBe(3);
-    expect(reads).toBe(2);
+    expect(reads).toBe(1);
   });
 
   it("renders durable action review history and filters one exact version", async () => {
@@ -8838,7 +8841,7 @@ describe("spec 228 action-centered coordination", () => {
     expect(human).toContain("Version: v4");
     expect(human).toContain("1  paragraph");
     expect(human).toContain("2  paragraph");
-    expect(human).not.toContain("rev_uuid_4");
+    expect(human).toContain("Revision: rev_uuid_4");
     expect(human).not.toContain("block_internal_2");
     expect(human).not.toContain("b".repeat(64));
 
@@ -11234,11 +11237,9 @@ describe("spec 117 — collaboration defaults (CLI)", () => {
         env,
       }),
     ).toBe(1);
-    expect(stderr).toContain("Nothing was changed");
-    expect(stderr).toContain("Reading does not cancel your intended action");
-    expect(stderr).toContain(
-      "If the changed state does not affect the intended transition, rerun your original command",
-    );
+    expect(stderr).toContain("NOT CHANGED");
+    expect(stderr).toContain("Read the changed conversation: grp read");
+    expect(stderr).toContain("After incorporating it, retry your intended command");
     expect(stderr).not.toContain("--post-anyway");
 
     let stdout = "";
@@ -12393,9 +12394,8 @@ describe("spec 193 — safe room-read pagination", () => {
     expect(firstPage).toContain("first complete event line 60");
     expect(firstPage).toContain("second complete event line 60");
     expect(firstPage).toContain("later event remains readable");
-    expect(firstPage).toContain("Catch-up continues below.");
-    expect(firstPage).toContain("PARTIAL CATCH-UP — 1 update shown, through event 11");
-    expect(firstPage).toContain("COMPLETE CATCH-UP — 2 updates shown, through event 13");
+    expect(firstPage.length).toBeLessThanOrEqual(12_000);
+    expect(firstPage).toContain("COMPLETE CATCH-UP — 3 updates shown, through event 13");
     await acknowledgeThrough(env, 13);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(13);
@@ -12459,11 +12459,41 @@ describe("spec 193 — safe room-read pagination", () => {
     });
 
     expect(code).toBe(0);
-    expect(stdout).toContain(`first-${"a".repeat(60_000)}`);
-    expect(stdout).toContain(`second-${"b".repeat(60_000)}`);
-    expect(stdout).toContain("PARTIAL CATCH-UP — 1 update shown, through event 11");
-    expect(stdout).toContain("Catch-up continues below.");
-    expect(stdout).toContain("COMPLETE CATCH-UP — 1 update shown, through event 12");
+    expect(stdout).toContain("INCOMPLETE");
+    expect(stdout.length).toBeLessThanOrEqual(12_000);
+    expect(stdout).not.toContain("--ack-through=12");
+    expect(
+      await runRoomCli(["read", "--ack-through=12"], { env, stdout: () => {}, stderr: () => {} }),
+    ).toBe(1);
+    let body = "";
+    const noFetch = vi.fn(async () => {
+      throw new Error("continuation must not fetch");
+    });
+    while (stdout.includes("--continue=")) {
+      body +=
+        stdout
+          .split("Long messages/diffs may span fragments; no text is omitted.\n\n")[1]
+          ?.split("\nContinue this exact delivery:")[0] ?? "";
+      const token = /--continue=([^\s]+)/.exec(stdout)?.[1];
+      stdout = "";
+      expect(
+        await runRoomCli(["read", `--continue=${token}`], {
+          env,
+          fetch: noFetch,
+          stdout: (text) => {
+            stdout += text;
+          },
+          stderr: () => {},
+        }),
+      ).toBe(0);
+      expect(stdout.length).toBeLessThanOrEqual(12_000);
+    }
+    body +=
+      stdout
+        .split("Long messages/diffs may span fragments; no text is omitted.\n\n")[1]
+        ?.split("\nEND OF DELIVERY")[0] ?? "";
+    for (const entry of largeEntries) expect(body.includes(entry.said)).toBe(true);
+    expect(noFetch).not.toHaveBeenCalled();
     await acknowledgeThrough(env, 12);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(12);

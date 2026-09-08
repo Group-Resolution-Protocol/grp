@@ -374,10 +374,10 @@ describe("spec 247 phased foreground CLI", () => {
       expect(await runRoomCli(["discuss", "stale payload"], io)).toBe(1);
       const rendered = stderr.join("");
       expect(rendered).toContain("NOT POSTED — the room changed since your last read.");
-      expect(rendered).toContain("NOT POSTED — no automatic retry was attempted.");
+      expect(rendered).toContain("No automatic retry was attempted.");
       expect(rendered.match(/^Foreground:/gm)).toHaveLength(1);
       expect(rendered).toContain(`Foreground: ${phase.toUpperCase()}`);
-      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(fetch).toHaveBeenCalledTimes(1);
     },
   );
 

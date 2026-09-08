@@ -65,6 +65,254 @@ const action = {
 };
 
 describe("coordination correctness", () => {
+  it("acknowledges a complete host-page prefix but withholds the room-head guard until the suffix is delivered", async () => {
+    const f = fixture({ observedStateRevision: "state-5" });
+    const fetch = vi.fn(async (input: string | URL | Request) => {
+      const since = new URL(String(input)).searchParams.get("since");
+      return json(
+        since === "5"
+          ? {
+              ...delta(6),
+              state_revision: "state-7",
+              page: { complete: false, through_event: 6, room_event: 7, next_since: 6 },
+            }
+          : delta(7),
+      );
+    });
+    expect(await runRoomCli(["read"], f.io(fetch))).toBe(0);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(f.state().readDelivery.through).toBe(6);
+    expect(f.state().observedStateRevision).toBe("state-5");
+    expect(await runRoomCli(["read", "--ack-through=7"], f.io(fetch))).toBe(1);
+    expect(await runRoomCli(["read", "--ack-through=6"], f.io(fetch))).toBe(0);
+    expect(await runRoomCli(["read"], f.io(fetch))).toBe(0);
+    expect(f.state().observedStateRevision).toBe("state-7");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not rewrite user text that quotes delivery instructions", async () => {
+    const f = fixture();
+    const quoted =
+      "Acknowledge this batch: this is quoted evidence, not a CLI instruction. COMPLETE CATCH-UP";
+    expect(
+      await runRoomCli(
+        ["read"],
+        f.io(async () => json(delta(6, quoted.repeat(200)))),
+      ),
+    ).toBe(0);
+    expect(f.output[0]).toContain(quoted);
+    expect(f.state().readDelivery).toBeUndefined();
+  });
+  it("pins a long delivery, withholds observation and acknowledgment, and ignores a newer head during continuation", async () => {
+    const f = fixture({ observedStateRevision: "state-5" });
+    let seq = 6;
+    const fetch = vi.fn(async () => json(delta(seq, `${"long body\n".repeat(4_000)}END-BODY`)));
+    expect(await runRoomCli(["read"], f.io(fetch))).toBe(0);
+    expect(f.output.at(-1)).toContain("INCOMPLETE");
+    expect(f.state().coordinationStateCapability).toBe("experimental");
+    expect(f.state().observedStateRevision).toBe("state-5");
+    expect(f.state().readDelivery).toBeUndefined();
+    expect(await runRoomCli(["read", "--ack-through=6"], f.io(fetch))).toBe(1);
+    seq = 7;
+    let pages = 0;
+    while (true) {
+      const text = f.output.at(-1) ?? "";
+      expect(text.length).toBeLessThanOrEqual(12_000);
+      const token = /--continue=(\S+)/.exec(text)?.[1];
+      if (!token) break;
+      expect(text).not.toContain("--ack-through=6");
+      expect(f.state().observedStateRevision).toBe("state-5");
+      expect(await runRoomCli(["read", `--continue=${token}`], f.io(fetch))).toBe(0);
+      if (++pages > 10) throw new Error("nonterminating read");
+    }
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(f.state().observedStateRevision).toBe("state-6");
+    expect(f.state().lastSeenSeq).toBe(5);
+    expect(f.output.at(-1)).toContain("--ack-through=6");
+    expect(await runRoomCli(["read", "--ack-through=6"], f.io(fetch))).toBe(0);
+    expect(f.state().lastSeenSeq).toBe(6);
+  });
+
+  it("discovers the strict guard on a partial first read without inventing an observation", async () => {
+    const f = fixture();
+    const fetch = vi.fn(async () => json(delta(6, "x".repeat(30_000))));
+    expect(await runRoomCli(["read"], f.io(fetch))).toBe(0);
+    expect(await runRoomCli(["discuss", "not caught up"], f.io(fetch))).toBe(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(f.state().observedStateRevision).toBeUndefined();
+  });
+
+  it.each(["--full", "--json"])("keeps explicit bulk retrieval lossless (%s)", async (flag) => {
+    const f = fixture();
+    const said = "x".repeat(30_000);
+    expect(
+      await runRoomCli(
+        ["read", flag],
+        f.io(async () => json(delta(6, said))),
+      ),
+    ).toBe(0);
+    expect(f.output.join("").includes(said)).toBe(true);
+    expect(f.state().observedStateRevision).toBe("state-6");
+  });
+
+  it("does not advance on failed final output and can retry that fragment", async () => {
+    const f = fixture({ observedStateRevision: "state-5" });
+    const fetch = vi.fn(async () => json(delta(6, "x".repeat(13_000))));
+    expect(await runRoomCli(["read"], f.io(fetch))).toBe(0);
+    const token = /--continue=(\S+)/.exec(f.output.at(-1) ?? "")?.[1];
+    expect(
+      await runRoomCli(["read", `--continue=${token}`], {
+        ...f.io(fetch),
+        stdout: () => {
+          throw new Error("broken pipe");
+        },
+      }),
+    ).toBe(1);
+    expect(f.state().observedStateRevision).toBe("state-5");
+    expect(f.state().readDelivery).toBeUndefined();
+    expect(await runRoomCli(["read", `--continue=${token}`], f.io(fetch))).toBe(0);
+    expect(f.state().observedStateRevision).toBe("state-6");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("labels artifact state counters separately and never describes one's own handoff as held by another", async () => {
+    const f = fixture();
+    expect(
+      await runRoomCli(
+        ["read"],
+        f.io(async () =>
+          json({
+            ...delta(6),
+            actions: [
+              { ...action, status: "open", mode: "handoff", holder_id: "p1", title: "Draft" },
+            ],
+            artifacts: [{ id: "f1", name: "Terms", revision: "13", current_revision_id: "r2" }],
+          }),
+        ),
+      ),
+    ).toBe(0);
+    const text = f.output.join("");
+    expect(text).toContain("holder you");
+    expect(text).not.toContain("held by another participant");
+    expect(text).toContain("f1 [state revision 13]");
+    expect(text).toContain("content revision r2");
+  });
+
+  it("does not invent a pending decision in a room with only action results", async () => {
+    const f = fixture();
+    expect(
+      await runRoomCli(
+        ["outcome"],
+        f.io(async () =>
+          json({
+            slug: "room",
+            status: "open",
+            question: "",
+            decisions: [],
+            resolved_at: null,
+            resolved_outcome: null,
+          }),
+        ),
+      ),
+    ).toBe(0);
+    expect(f.output.join("")).toContain("Action results are separate");
+    expect(f.output.join("")).not.toContain("Keep monitoring");
+    expect(f.output.join("")).not.toContain("No outcome yet");
+  });
+
+  it("retrieves a marked exact block excerpt without adopting a room observation", async () => {
+    const f = fixture();
+    expect(
+      await runRoomCli(
+        ["artifact", "read", "f1", "--revision-id=r2", "--blocks=2:2"],
+        f.io(async () =>
+          json({
+            artifact: { id: "f1" },
+            revision: {
+              id: "r2",
+              ordinal: 2,
+              blocks: [
+                { number: 1, content: "omitted" },
+                { number: 2, content: "selected" },
+              ],
+            },
+          }),
+        ),
+      ),
+    ).toBe(0);
+    expect(f.output.join("")).toContain("EXCERPT");
+    expect(f.output.join("")).toContain("Revision: r2");
+    expect(f.output.join("")).toContain("selected");
+    expect(f.output.join("")).not.toContain("omitted");
+    expect(f.state().readDelivery).toBeUndefined();
+  });
+
+  it("explains missing content-version lookup without claiming the artifact itself is absent", async () => {
+    const f = fixture();
+    expect(
+      await runRoomCli(
+        ["artifact", "read", "f1", "--version=13"],
+        f.io(async () =>
+          json({ error: { code: "artifact.not_found", message: "Not found" } }, 404),
+        ),
+      ),
+    ).toBe(1);
+    expect(f.errors.join("")).toContain("requested content version v13");
+    expect(f.errors.join("")).toContain("not artifact state revision counters");
+  });
+
+  it("leads with a long trusted diff even when the new artifact is short, and continues without rechecking or endorsing", async () => {
+    const f = fixture();
+    const revision = (id: string) => ({
+      artifact: { id: "f1" },
+      revision: {
+        id,
+        ordinal: id === "r1" ? 1 : 2,
+        blocks: [
+          {
+            id: "b1",
+            number: 1,
+            kind: "paragraph",
+            content: id === "r1" ? "old long text\n".repeat(2_000) : "new short text",
+          },
+        ],
+      },
+    });
+    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const req = new Request(input, init);
+      if (req.method !== "GET") throw new Error("read must not endorse");
+      if (req.url.includes("/artifacts/"))
+        return json(revision(new URL(req.url).searchParams.get("revision") ?? "r2"));
+      return json({
+        action,
+        review_presentation: {
+          mode: "diff",
+          round: 2,
+          current: { id: "r2", ordinal: 2 },
+          base: { id: "r1", ordinal: 1 },
+        },
+      });
+    });
+    expect(await runRoomCli(["act", "review", "a1"], f.io(fetch))).toBe(0);
+    expect(f.output[0]).toContain("changes since your last formally reviewed revision");
+    expect(f.output[0]).toContain("Current: v2; revision r2");
+    expect(f.output[0]).toContain("Base: v1; revision r1");
+    expect(f.output[0]).toContain("--- artifact v1");
+    expect(f.output[0]).toContain("INCOMPLETE");
+    const calls = fetch.mock.calls.length;
+    const token = /--continue=(\S+)/.exec(f.output[0] ?? "")?.[1];
+    expect(
+      await runRoomCli(
+        ["act", "review", "a1", `--continue=${token}`, "--approve", "--revision=r2"],
+        f.io(fetch),
+      ),
+    ).toBe(1);
+    expect(await runRoomCli(["act", "review", "a1", `--continue=${token}`], f.io(fetch))).toBe(0);
+    expect(fetch).toHaveBeenCalledTimes(calls);
+    expect(f.state().readDelivery).toBeUndefined();
+    expect(f.state().observedStateRevision).toBeUndefined();
+  });
+
   it("acknowledges delivered bytes without fetching a newer message", async () => {
     const f = fixture();
     let newest = 6;

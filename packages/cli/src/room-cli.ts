@@ -7,6 +7,7 @@ import {
   verifyCompactReceipt,
 } from "../../agent-sdk/src/index.js";
 import type { GrpAuth, RoomEvent } from "../../agent-sdk/src/index.js";
+import { writeBoundedOutput } from "./bounded-output.js";
 import { grpCommand } from "./command-hints.js";
 import { finishEvalTraceRequest, preflightEvalTrace, startEvalTraceRequest } from "./eval-trace.js";
 import {
@@ -21,6 +22,7 @@ import {
   findRememberedRoom,
   forgetRoom,
   listRememberedRooms,
+  providerConfigPath,
   readProviderConfig,
   rememberRoom,
   renderPersonaIdentity,
@@ -95,14 +97,6 @@ class RoomStateChangedError extends Error {
   readonly status = 412;
   readonly posted = false;
   forceAvailable = false;
-  catchUp?: {
-    ref?: RoomRef;
-    from?: number;
-    response?: Record<string, unknown>;
-    rendered?: string;
-    complete: boolean;
-    error?: string;
-  };
 
   constructor(
     readonly expectedRevision: string,
@@ -854,8 +848,7 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
   } catch (err) {
     if (err instanceof RoomStateChangedError) {
       const canForce = roomCommandAllowsFlag(parsed, "force-stale-post");
-      const recoveryForeground =
-        foregroundFromResponse(err.catchUp?.response) ?? err.foreground ?? null;
+      const recoveryForeground = err.foreground ?? null;
       if (isJson(parsed.flags)) {
         resolvedIo.stdout(
           renderJson({
@@ -873,15 +866,6 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
             recovery:
               canForce && err.forceAvailable ? "force_exact_payload_available" : "read_then_retry",
             ...(canForce && err.forceAvailable ? { bypass_flag: "--force-stale-post" } : {}),
-            ...(err.catchUp
-              ? {
-                  catch_up: {
-                    complete: err.catchUp.complete,
-                    ...(err.catchUp.response ? { room: err.catchUp.response } : {}),
-                    ...(err.catchUp.error ? { error: err.catchUp.error } : {}),
-                  },
-                }
-              : {}),
           }),
         );
       } else {
@@ -893,15 +877,6 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
                 foregroundBlockForIo(recoveryForeground, resolvedIo),
               )
             : `${message}\n`,
-        );
-      }
-      // Fetching recovery content is not delivery. Adopt its write precondition
-      // only after the output sink accepted the complete, unelided catch-up.
-      if (err.catchUp?.complete && err.catchUp.ref && err.catchUp.response) {
-        persistObservedStateRevisionFromRead(
-          err.catchUp.ref,
-          { ...err.catchUp.response, _cli_delivery_from: err.catchUp.from },
-          resolvedIo.env,
         );
       }
       return 1;
@@ -987,46 +962,19 @@ function renderForegroundFailure(
 }
 
 function roomStateChangedMessage(error: RoomStateChangedError, canForce: boolean): string {
-  const catchUp = error.catchUp;
-  const catchUpBlock = catchUp?.rendered
-    ? catchUp.rendered.trimEnd()
-    : catchUp?.error
-      ? `CATCH-UP FAILED — ${catchUp.error}\nRun: ${grpCommand("read")}`
-      : `CATCH-UP NOT RUN — run: ${grpCommand("read")}`;
-  const recovery =
-    canForce && error.forceAvailable
-      ? [
-          "The room changed again after a prior complete catch-up.",
-          "Retry normally, or intentionally bypass the room-state guard once for this exact payload with --force-stale-post.",
-          "The bypass is payload-bound, short-lived, and consumed once.",
-        ]
-      : canForce
-        ? catchUp?.complete
-          ? ["Review the catch-up above, then retry your original command."]
-          : [`Finish catching up first: ${grpCommand("read")}`]
-        : [
-            catchUp?.complete
-              ? "Review the catch-up above, then retry the intended transition."
-              : `Finish catching up first: ${grpCommand("read")}`,
-          ];
-  if (!canForce) {
-    return [
-      "The room changed since your last read.",
-      "Nothing was changed.",
-      "",
-      `Next: ${grpCommand("read")}`,
-      "Reading does not cancel your intended action.",
-      "If the changed state does not affect the intended transition, rerun your original command.",
-    ].join("\n");
-  }
   return [
-    "NOT POSTED — the room changed since your last read.",
-    "",
-    catchUpBlock,
-    "",
-    ...recovery,
-    "",
-    "NOT POSTED — no automatic retry was attempted.",
+    canForce
+      ? "NOT POSTED — the room changed since your last read."
+      : "NOT CHANGED — the room changed since your last read.",
+    "No automatic retry was attempted. No catch-up was fetched or acknowledged.",
+    `Read the changed conversation: ${grpCommand("read")}`,
+    "After incorporating it, retry your intended command.",
+    ...(canForce && error.forceAvailable
+      ? [
+          "The room changed again after a prior complete read.",
+          "An intentional one-use, exact-payload bypass is available: --force-stale-post.",
+        ]
+      : []),
   ].join("\n");
 }
 
@@ -1156,6 +1104,8 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
     ],
   ),
   read: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, [
+    "continue",
+    "full",
     "json",
     "quiet",
     "ack",
@@ -1248,7 +1198,16 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
   "action:review": roomFlagSet(
     ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS,
     ROOM_ACTION_OUTPUT_FLAG_KEYS,
-    ["approve", "request-changes", "body", "file", "revision", "idempotency-key"],
+    [
+      "approve",
+      "request-changes",
+      "body",
+      "file",
+      "revision",
+      "idempotency-key",
+      "continue",
+      "full",
+    ],
   ),
   "action:review-note": roomFlagSet(
     ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS,
@@ -1298,11 +1257,16 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
     ],
   ),
   "artifact:read": roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, [
+    "continue",
+    "full",
+    "blocks",
     "json",
     "version",
     "revision-id",
   ]),
   "artifact:diff": roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, [
+    "continue",
+    "full",
     "json",
     "from-version",
     "to-version",
@@ -2201,12 +2165,83 @@ function renderRoomCreated(
   return `${lines.join("\n")}\n`;
 }
 
+function boundedReadOutput(
+  rendered: string | undefined,
+  command: string,
+  ref: RoomRef,
+  flags: Record<string, string>,
+  io: RoomCliIo,
+  completion?: Record<string, unknown>,
+): void {
+  let text = rendered;
+  if (completion) persistCoordinationCapabilityFromRead(ref, completion, io.env);
+  if (
+    flags.continue &&
+    (flags.full ||
+      flags.json ||
+      flags.since ||
+      flags.snapshot ||
+      flags.decision ||
+      flags["ack-through"] ||
+      flags.blocks ||
+      flags.version ||
+      flags["revision-id"] ||
+      flags["from-version"] ||
+      flags["to-version"] ||
+      flags["from-revision"] ||
+      flags["to-revision"])
+  ) {
+    throw new Error(
+      "--continue retrieves pinned bytes; do not combine it with a new read selector, acknowledgment, or bulk output flag",
+    );
+  }
+  // Keep generated acknowledgment outside the content renderer. Never rewrite
+  // rendered user text: a message may itself quote an acknowledgment command.
+  if (text && completion) {
+    const from =
+      numberOrNull(completion._cli_delivery_from) ?? rememberedLastSeenSeq(ref, io.env) ?? 0;
+    const through = numberOrNull(completion.current_through);
+    const eligible =
+      isCompleteReadBatch(completion) &&
+      (!Array.isArray(completion.new) || from <= (rememberedLastSeenSeq(ref, io.env) ?? 0));
+    text +=
+      eligible && through !== null
+        ? `\n${Array.isArray(completion.new) ? "Position unchanged. Acknowledge this batch" : "Acknowledge this snapshot"}: ${grpCommand(`read --ack-through=${through}${roomHintArg(ref.slug, ref, io.env)}`)}\n`
+        : "\nNo acknowledgment available: this read omits required room content.\n";
+  }
+  if (flags.full === "true") {
+    io.stdout(text ?? "");
+    if (completion) persistObservedStateRevisionFromRead(ref, completion, io.env);
+    return;
+  }
+  writeBoundedOutput({
+    configPath: providerConfigPath(io.env),
+    scope: JSON.stringify([
+      ref.baseUrl,
+      ref.slug,
+      callerIdentity(ref, io.env).participantId,
+      authFromFlags(flags, ref, io.env),
+      command,
+    ]),
+    command: grpCommand(`${command}${roomHintArg(ref.slug, ref, io.env)}`),
+    text,
+    continuation: flags.continue,
+    completion,
+    stdout: io.stdout,
+    complete: (response) => persistObservedStateRevisionFromRead(ref, response, io.env),
+  });
+}
+
 async function roomRead(
   target: string,
   flags: Record<string, string>,
   io: RoomCliIo,
 ): Promise<void> {
   const ref = resolveRoomRef(target, flags, io.env);
+  if (flags.continue) {
+    boundedReadOutput(undefined, "read", ref, flags, io);
+    return;
+  }
   // Spec 142 (D9) — the FOCUSED read: one decision's thread (question,
   // options, status/outcome, attached discussion). NON-CONSUMING by ruling
   // P-6: it never advances the room's read mark — a focused read of one
@@ -2257,9 +2292,15 @@ async function roomRead(
       focusedOptions,
     );
     const rendered = renderFocusedDecision(full, focusedSeq, ref, flags, io);
-    io.stdout(
-      isJson(flags) || flags.quiet === "true" ? rendered : withPersonaReadHeader(rendered, io.env),
-    );
+    if (isJson(flags)) io.stdout(rendered);
+    else
+      boundedReadOutput(
+        flags.quiet === "true" ? rendered : withPersonaReadHeader(rendered, io.env),
+        "read",
+        ref,
+        flags,
+        io,
+      );
     return;
   }
   // Spec 113 — delta by default: with a stored high-water mark (or an
@@ -2278,7 +2319,10 @@ async function roomRead(
   // anchored delta (its `new` array); old hosts ignore the unknown query
   // param and return the snapshot agent view.
   if (since !== undefined && Array.isArray(response.new)) {
-    const complete = await fetchCompleteRoomDelta(ref, flags, io, since, response);
+    const complete =
+      isJson(flags) || flags.full === "true"
+        ? await fetchCompleteRoomDelta(ref, flags, io, since, response)
+        : { response, pagesFetched: 1 };
     response = complete.response;
     if (isJson(flags)) {
       const currentThrough = numberOrNull(response.current_through);
@@ -2296,18 +2340,15 @@ async function roomRead(
       persistObservedStateRevisionFromRead(ref, { ...response, _cli_delivery_from: since }, io.env);
       return;
     }
-    const pages = humanDeltaPages(response, ref, io.env);
-    const rendered = pages
-      .map((page, index) =>
-        renderRoomDelta(page, ref, io.env, {
-          moreUnread: index < pages.length - 1,
-          continuesInline: index < pages.length - 1,
-          acknowledged: false,
-        }).trimEnd(),
-      )
-      .join("\n\n");
-    io.stdout(withPersonaReadHeader(`${rendered}\n`, io.env));
-    persistObservedStateRevisionFromRead(ref, { ...response, _cli_delivery_from: since }, io.env);
+    const rendered = renderRoomDelta(response, ref, io.env, {
+      moreUnread: isRecord(response.page) && response.page.complete === false,
+      acknowledged: false,
+      deferAcknowledgment: true,
+    });
+    boundedReadOutput(withPersonaReadHeader(rendered, io.env), "read", ref, flags, io, {
+      ...response,
+      _cli_delivery_from: since,
+    });
     return;
   }
   // Reads deliver content; a separate --ack-through command acknowledges
@@ -2331,16 +2372,21 @@ async function roomRead(
   const deltaUnsupportedNote =
     since !== undefined ? renderDimNote("(this host does not support delta reads)", io) : "";
   if (typeof response.brief === "string" || response.decision !== undefined) {
-    io.stdout(
+    boundedReadOutput(
       withPersonaReadHeader(
         renderRoomRead(response, ref, io.env, {
           acknowledged: false,
           expandBodies: true,
+          deferAcknowledgment: true,
         }),
         io.env,
       ) + deltaUnsupportedNote,
+      "read",
+      ref,
+      flags,
+      io,
+      response,
     );
-    persistObservedStateRevisionFromRead(ref, response, io.env);
     return;
   }
   const decisions = Array.isArray(response.decisions) ? response.decisions.length : 0;
@@ -2477,6 +2523,32 @@ function isCompleteReadDelivery(response: Record<string, unknown>): boolean {
   );
 }
 
+/** A coherent host page can deliver an acknowledgeable prefix without
+ * delivering the room head whose write precondition accompanies it. */
+function isCompleteReadBatch(response: Record<string, unknown>): boolean {
+  if (isCompleteReadDelivery(response)) return true;
+  const page = isRecord(response.page) ? response.page : {};
+  const content = isRecord(page.content) ? page.content : {};
+  const through = numberOrNull(response.current_through);
+  if (
+    !Array.isArray(response.new) ||
+    page.complete !== false ||
+    through === null ||
+    numberOrNull(page.through_event) !== through ||
+    page.bodies_elided === true ||
+    content.discussion_complete === false ||
+    response._cli_bodies_hidden
+  )
+    return false;
+  return response.new.every(
+    (entry) =>
+      isRecord(entry) &&
+      numberOrNull(entry.seq) !== null &&
+      Number(entry.seq) <= through &&
+      (entry.type !== "discussion" || typeof entry.said === "string"),
+  );
+}
+
 /** Only delivered room-wide content may establish a write observation. */
 function persistObservedStateRevisionFromRead(
   ref: RoomRef,
@@ -2486,7 +2558,7 @@ function persistObservedStateRevisionFromRead(
   const through = numberOrNull(response.current_through);
   const from = numberOrNull(response._cli_delivery_from) ?? rememberedLastSeenSeq(ref, env) ?? 0;
   const contiguous = !Array.isArray(response.new) || from <= (rememberedLastSeenSeq(ref, env) ?? 0);
-  if (through !== null && isCompleteReadDelivery(response) && contiguous) {
+  if (through !== null && isCompleteReadBatch(response) && contiguous) {
     updateProviderConfig(
       (current) =>
         setRoomDeliveryState(current, ref.slug, ref.baseUrl, {
@@ -2671,7 +2743,9 @@ function rememberStaleWriteRecovery(
         rejectedExpectedRevision: error.expectedRevision,
         rejectedCurrentRevision: error.currentRevision,
         expiresAt: new Date(Date.now() + STALE_WRITE_RECOVERY_TTL_MS).toISOString(),
-        ...(forceAvailable ? { forceAvailable: true } : {}),
+        ...(forceAvailable && existing?.readStateRevision
+          ? { forceAvailable: true, readStateRevision: existing.readStateRevision }
+          : {}),
       }),
     env,
   );
@@ -2684,75 +2758,6 @@ function clearStaleWriteRecovery(ref: RoomRef, env: Record<string, string | unde
   updateProviderConfig(
     (current) => setRoomStaleWriteRecovery(current, ref.slug, ref.baseUrl, undefined),
     env,
-  );
-}
-
-async function catchUpAfterStaleWrite(
-  ref: RoomRef,
-  flags: Record<string, string>,
-  io: RoomCliIo,
-): Promise<NonNullable<RoomStateChangedError["catchUp"]>> {
-  try {
-    const since = rememberedLastSeenSeq(ref, io.env);
-    const options = readRequestOptions(ref, flags, io.env);
-    if (since !== undefined) options.query = { ...(options.query ?? {}), since };
-    const response = await requestJson<Record<string, unknown>>(
-      ref.baseUrl,
-      `/api/rooms/${encodeURIComponent(ref.slug)}`,
-      io,
-      options,
-    );
-    if (since !== undefined && Array.isArray(response.new)) {
-      const page = humanDeltaPage(response, ref, io.env);
-      persistCoordinationCapabilityFromRead(ref, response, io.env);
-      return {
-        ref,
-        from: since,
-        response: page.response,
-        rendered: renderForegroundCatchUp(
-          page.response,
-          renderRoomDelta(page.response, ref, io.env, {
-            moreUnread: page.moreUnread,
-            acknowledged: false,
-            elideBodies: false,
-          }),
-          ref,
-          io.env,
-        ),
-        complete: !page.moreUnread && isCompleteReadDelivery(page.response),
-      };
-    }
-    persistCoordinationCapabilityFromRead(ref, response, io.env);
-    return {
-      ref,
-      response,
-      rendered: renderForegroundCatchUp(
-        response,
-        renderRoomRead(response, ref, io.env, { acknowledged: false, expandBodies: true }),
-        ref,
-        io.env,
-      ),
-      complete: isCompleteReadDelivery(response),
-    };
-  } catch (error) {
-    return {
-      complete: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-function renderForegroundCatchUp(
-  response: Record<string, unknown>,
-  rendered: string,
-  ref: RoomRef,
-  env: Record<string, string | undefined>,
-): string {
-  const foreground = foregroundFromResponse(response);
-  if (!foreground) return rendered;
-  return insertForegroundBlock(
-    rendered,
-    renderForegroundBlock(foreground, { roomArg: roomHintArg(ref.slug, ref, env) }),
   );
 }
 
@@ -3025,8 +3030,8 @@ function coordinationAvailable(response: Record<string, unknown>): boolean {
  * Spec 113 item 1 — the anchored delta read: a constant-size anchor (room,
  * project, brief, own standing), everything that happened since the caller's
  * mark rendered oldest-first, then the Next block for the caller's own
- * standing. Explicit reads carry full text; automatic stale-write catch-up
- * may elide bodies behind an exact expansion command.
+ * standing. Explicit reads carry full text in bounded deliveries. Failed
+ * writes direct a separate read rather than fetching or eliding catch-up.
  */
 function renderRoomDelta(
   response: Record<string, unknown>,
@@ -3035,6 +3040,7 @@ function renderRoomDelta(
   options: {
     moreUnread?: boolean;
     continuesInline?: boolean;
+    deferAcknowledgment?: boolean;
     acknowledged?: boolean;
     elideBodies?: boolean;
   } = {},
@@ -3069,7 +3075,10 @@ function renderRoomDelta(
   } else {
     lines.push("", "New since your last read:");
     for (const entry of entries) {
-      lines.push(...renderDeltaEntry(entry, room, { elideBodies: options.elideBodies === true }));
+      lines.push(
+        ...renderDeltaEntry(entry, room, { elideBodies: options.elideBodies === true }),
+        "",
+      );
     }
   }
 
@@ -3079,7 +3088,9 @@ function renderRoomDelta(
       ? `Position will advance after the complete catch-up below; this page ends at event ${throughEvent}.`
       : options.acknowledged
         ? `Position acknowledged through event ${throughEvent}.`
-        : `Position unchanged. Acknowledge this batch: ${grpCommand(`read --ack-through=${throughEvent}${room}`)}`,
+        : options.deferAcknowledgment
+          ? "Position unchanged; acknowledgment follows complete delivery."
+          : `Position unchanged. Acknowledge this batch: ${grpCommand(`read --ack-through=${throughEvent}${room}`)}`,
   );
 
   const isObserver = callerRole(response, ref, env) === "observer";
@@ -3150,7 +3161,12 @@ function renderPhasedRoomDelta(
   response: Record<string, unknown>,
   ref: RoomRef,
   env: Record<string, string | undefined>,
-  options: { moreUnread?: boolean; acknowledged?: boolean; elideBodies?: boolean },
+  options: {
+    moreUnread?: boolean;
+    acknowledged?: boolean;
+    elideBodies?: boolean;
+    deferAcknowledgment?: boolean;
+  },
 ): string {
   const entries = Array.isArray(response.new) ? response.new.filter(isRecord) : [];
   const currentThrough = numberOrNull(response.current_through);
@@ -3166,78 +3182,23 @@ function renderPhasedRoomDelta(
   else {
     lines.push("", "New since your last read:");
     for (const entry of entries) {
-      lines.push(...renderDeltaEntry(entry, room, { elideBodies: options.elideBodies === true }));
+      lines.push(
+        ...renderDeltaEntry(entry, room, { elideBodies: options.elideBodies === true }),
+        "",
+      );
     }
   }
   lines.push(
     "",
     options.acknowledged
       ? `Position acknowledged through event ${throughEvent}.`
-      : `Position unchanged. Acknowledge this batch: ${grpCommand(`read --ack-through=${throughEvent}${room}`)}`,
+      : options.deferAcknowledgment
+        ? "Position unchanged; acknowledgment follows complete delivery."
+        : `Position unchanged. Acknowledge this batch: ${grpCommand(`read --ack-through=${throughEvent}${room}`)}`,
   );
   if (options.moreUnread) lines.push("", "More unread activity remains.");
   appendAuthoritativeResult(lines, response, ref, env);
   return `${lines.join("\n")}\n`;
-}
-
-// A human-facing page must remain small enough that agents do not need shell
-// clipping, while every individual event remains byte-for-byte whole. One
-// oversized event is therefore a valid one-entry page.
-const HUMAN_DELTA_PAGE_MAX_RENDERED_LINES = 100;
-const HUMAN_DELTA_PAGE_MAX_RENDERED_CHARACTERS = 100_000;
-
-function humanDeltaPage(
-  response: Record<string, unknown>,
-  ref: RoomRef,
-  env: Record<string, string | undefined>,
-): { response: Record<string, unknown>; moreUnread: boolean } {
-  const entries = Array.isArray(response.new) ? response.new.filter(isRecord) : [];
-  const hostPage = isRecord(response.page) ? response.page : {};
-  const hostIncomplete = hostPage.complete === false;
-  if (entries.length <= 1) return { response, moreUnread: hostIncomplete };
-
-  const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
-  const selected: Record<string, unknown>[] = [];
-  let renderedLines = 0;
-  let renderedCharacters = 0;
-
-  for (const entry of entries) {
-    const rendered = renderDeltaEntry(entry, room);
-    const entryLines = rendered.length;
-    const entryCharacters = rendered.reduce((sum, line) => sum + line.length + 1, 0);
-    const exceedsPage =
-      selected.length > 0 &&
-      (renderedLines + entryLines > HUMAN_DELTA_PAGE_MAX_RENDERED_LINES ||
-        renderedCharacters + entryCharacters > HUMAN_DELTA_PAGE_MAX_RENDERED_CHARACTERS);
-    if (exceedsPage) break;
-    selected.push(entry);
-    renderedLines += entryLines;
-    renderedCharacters += entryCharacters;
-  }
-
-  if (selected.length === entries.length) return { response, moreUnread: hostIncomplete };
-  const safeThrough = numberOrNull(selected.at(-1)?.seq);
-  // Delta entries from current hosts always carry seq. If an old or malformed
-  // host omits it, do not invent a partial acknowledgement boundary.
-  if (safeThrough === null) return { response, moreUnread: false };
-  return {
-    response: {
-      ...response,
-      new: selected,
-      current_through: safeThrough,
-      page: {
-        ...hostPage,
-        through_event: safeThrough,
-        room_event:
-          numberOrNull(hostPage.room_event) ??
-          numberOrNull(response.current_through) ??
-          safeThrough,
-        complete: false,
-        next_since: safeThrough,
-      },
-    },
-    moreUnread: true,
-  };
 }
 
 async function fetchCompleteRoomDelta(
@@ -3317,28 +3278,6 @@ async function fetchCompleteRoomDelta(
   };
 }
 
-function humanDeltaPages(
-  response: Record<string, unknown>,
-  ref: RoomRef,
-  env: Record<string, string | undefined>,
-): Record<string, unknown>[] {
-  const entries = Array.isArray(response.new) ? response.new.filter(isRecord) : [];
-  if (entries.length === 0) return [response];
-  const pages: Record<string, unknown>[] = [];
-  let remaining = entries;
-  while (remaining.length > 0) {
-    const candidate = { ...response, new: remaining };
-    const page = humanDeltaPage(candidate, ref, env);
-    const selected = Array.isArray(page.response.new)
-      ? page.response.new.filter(isRecord).length
-      : 0;
-    if (selected < 1) throw new Error("could not make progress while rendering catch-up pages");
-    pages.push(page.response);
-    remaining = remaining.slice(selected);
-  }
-  return pages;
-}
-
 function readJsonEnvelope(
   response: Record<string, unknown>,
   options: {
@@ -3413,11 +3352,7 @@ function renderDeltaEntry(
     }
     case "option_proposed": {
       const text = String(entry.option ?? "");
-      const shown =
-        text.length > 300
-          ? `${text.slice(0, 300)}… (full: ${grpCommand(`options --full${room}`)})`
-          : text;
-      return [`  ${who} proposed: ${JSON.stringify(shown)}`];
+      return [`  ${who} proposed: ${JSON.stringify(text)}`];
     }
     case "decision_opened": {
       const opener = stringOrNull(entry.who);
@@ -3986,6 +3921,24 @@ async function roomAction(
     );
   }
   const ref = resolveRoomRef(targetOrCurrent(room, flags, io), flags, io.env);
+  if (operation === "review" && (flags.continue || flags.full)) {
+    if (
+      flags.approve ||
+      flags["request-changes"] ||
+      flags.body ||
+      flags.file ||
+      flags.revision ||
+      flags["idempotency-key"]
+    ) {
+      throw new Error(
+        "Read-output flags cannot be combined with a review disposition or mutation payload",
+      );
+    }
+    if (flags.continue) {
+      boundedReadOutput(undefined, `act review ${id}`, ref, flags, io);
+      return;
+    }
+  }
   const current = await experimentalResourceRequest(
     ref,
     `/actions/${encodeURIComponent(id)}`,
@@ -4199,7 +4152,7 @@ async function roomAction(
           }),
         );
       } else {
-        io.stdout(
+        boundedReadOutput(
           renderActionReviewSurface(
             currentAction,
             exact,
@@ -4210,6 +4163,10 @@ async function roomAction(
             history,
             current,
           ),
+          `act review ${id}`,
+          ref,
+          flags,
+          io,
         );
       }
       return;
@@ -4734,8 +4691,7 @@ function renderActionReviewSurface(
   const requestedMode = stringOrNull(presentation?.mode);
   const fullText = renderArtifactRead(exactArtifact, ref, env).trimEnd();
   const diffText = baseArtifact ? renderArtifactDiff(baseArtifact, exactArtifact).trimEnd() : null;
-  const useDiff =
-    requestedMode === "diff" && diffText !== null && diffText.length < fullText.length;
+  const useDiff = requestedMode === "diff" && diffText !== null;
   const room = roomHintArg(ref.slug, ref, env);
   const lines = [
     useDiff
@@ -4749,9 +4705,7 @@ function renderActionReviewSurface(
     );
   }
   if (requestedMode === "diff" && !useDiff) {
-    lines.push(
-      "Full revision shown because the generated diff was not smaller than the exact text.",
-    );
+    lines.push("Full revision shown because the trusted base bytes are unavailable.");
   } else if (requestedMode !== "diff") {
     const reason = stringOrNull(presentation?.fallback_reason)?.replaceAll("_", " ");
     if (reason) lines.push(`Full-revision basis: ${reason}.`);
@@ -5693,50 +5647,65 @@ async function roomArtifact(
     return;
   }
   const ref = resolveRoomRef(targetOrCurrent(revisionIdOrRoom, flags, io), flags, io.env);
+  if (flags.continue && (operation === "read" || operation === "diff")) {
+    boundedReadOutput(undefined, `artifact ${operation} ${id}`, ref, flags, io);
+    return;
+  }
   if (operation === "diff") {
     const fromQuery = artifactRevisionSelector(flags, "from");
     const toQuery = artifactRevisionSelector(flags, "to");
     const [from, to] = await Promise.all([
-      experimentalResourceRequest(
-        ref,
-        `/artifacts/${encodeURIComponent(id)}`,
-        flags,
-        io,
-        "GET",
-        undefined,
-        false,
-        fromQuery,
-      ),
-      experimentalResourceRequest(
-        ref,
-        `/artifacts/${encodeURIComponent(id)}`,
-        flags,
-        io,
-        "GET",
-        undefined,
-        false,
-        toQuery,
-      ),
+      readSelectedArtifact(ref, id, flags, io, fromQuery),
+      readSelectedArtifact(ref, id, flags, io, toQuery),
     ]);
-    io.stdout(isJson(flags) ? renderJson({ from, to }) : renderArtifactDiff(from, to));
+    if (isJson(flags)) io.stdout(renderJson({ from, to }));
+    else boundedReadOutput(renderArtifactDiff(from, to), `artifact diff ${id}`, ref, flags, io);
     return;
   }
   if (operation === "read") {
-    const response = await experimentalResourceRequest(
+    if (flags.version && flags["revision-id"])
+      throw new Error("Choose --version or --revision-id, not both");
+    const response = await readSelectedArtifact(
       ref,
-      `/artifacts/${encodeURIComponent(id)}`,
+      id,
       flags,
       io,
-      "GET",
-      undefined,
-      false,
       flags.version
         ? { version: flags.version }
         : flags["revision-id"]
           ? { revision: flags["revision-id"] }
           : undefined,
     );
-    io.stdout(isJson(flags) ? renderJson(response) : renderArtifactRead(response, ref, io.env));
+    let selected = response;
+    if (flags.blocks) {
+      const match = /^(\d+):(\d+)$/.exec(flags.blocks);
+      if (!match || Number(match[1]) < 1 || Number(match[2]) < Number(match[1])) {
+        throw new Error("--blocks requires an inclusive START:END block-number range");
+      }
+      const record = isRecord(response) ? response : {};
+      const revision = isRecord(record.revision) ? record.revision : {};
+      const blocks = Array.isArray(revision.blocks) ? revision.blocks.filter(isRecord) : [];
+      const excerpt = blocks.filter(
+        (block) =>
+          Number(block.number) >= Number(match[1]) && Number(block.number) <= Number(match[2]),
+      );
+      if (!excerpt.length)
+        throw new Error("No blocks in that range in the selected exact revision");
+      selected = {
+        ...record,
+        revision: { ...revision, content: undefined, blocks: excerpt },
+        _cli: { complete: false, excerpt: true, blocks: flags.blocks },
+      };
+    }
+    if (isJson(flags)) io.stdout(renderJson(selected));
+    else
+      boundedReadOutput(
+        `${flags.blocks ? `EXCERPT — blocks ${flags.blocks}; not the full revision.\n` : ""}${renderArtifactRead(selected, ref, io.env)}`,
+        `artifact read ${id}`,
+        ref,
+        flags,
+        io,
+      );
     return;
   }
   if (operation === "publish") {
@@ -5794,6 +5763,39 @@ async function roomArtifact(
     return;
   }
   throw new Error("usage: grp artifact create|read|diff|patch|publish ...");
+}
+
+async function readSelectedArtifact(
+  ref: RoomRef,
+  id: string,
+  flags: Record<string, string>,
+  io: RoomCliIo,
+  query?: Record<string, string | number | undefined>,
+): Promise<unknown> {
+  try {
+    return await experimentalResourceRequest(
+      ref,
+      `/artifacts/${encodeURIComponent(id)}`,
+      flags,
+      io,
+      "GET",
+      undefined,
+      false,
+      query,
+    );
+  } catch (error) {
+    if (error instanceof CliHttpError && error.status === 404 && query) {
+      throw new CliHttpError(
+        `Artifact ${id} or its requested content ${query.version ? `version v${query.version}` : `revision ${query.revision}`} was not found. Content versions are not artifact state revision counters. Inspect the current content: ${grpCommand(`artifact read ${id}${roomHintArg(ref.slug, ref, io.env)}`)}`,
+        error.status,
+        error.code,
+        error.serverMessage,
+        error.serverHint,
+        error.details,
+      );
+    }
+    throw error;
+  }
 }
 
 function writeArtifactResponse(
@@ -5884,7 +5886,7 @@ function renderArtifactRead(
   const lines = [
     `Artifact: ${stringOrNull(artifact.name) ?? stringOrNull(artifact.id) ?? "unknown"}`,
     `Version: v${ordinal}`,
-    `Revision: rev_${ordinal}`,
+    `Revision: ${stringOrNull(revision.id) ?? `rev_${ordinal}`}`,
   ];
   const claim = isRecord(artifact.claim) ? artifact.claim : null;
   if (claim)
@@ -6403,6 +6405,22 @@ async function roomOutcome(
   }
   if (!outcome) {
     const room = roomHintArg(ref.slug, ref, io.env);
+    const candidate = activeDecision(response);
+    const pending =
+      candidate &&
+      !["resolved", "canceled", "cancelled", "expired", "concluded"].includes(
+        String(candidate.status),
+      )
+        ? candidate
+        : typeof response.question === "string" && response.question.trim() && !response.resolved_at
+          ? response
+          : null;
+    if (!pending) {
+      io.stdout(
+        `No recorded decision outcome.\nAction results are separate from decision outcomes.\nRead action status and authoritative results: ${grpCommand(`read${room}`)}\n`,
+      );
+      return;
+    }
     io.stdout(
       `${[
         "No outcome yet.",
@@ -8509,8 +8527,8 @@ async function actionRequest(
         error,
         io.env,
       );
-      error.catchUp = await catchUpAfterStaleWrite(ref, flags, io);
-      error.forceAvailable = forceEligibleAfterCatchUp && error.catchUp.complete;
+      // Recovery is an explicit bounded read, never hidden content adoption.
+      error.forceAvailable = forceEligibleAfterCatchUp;
     }
     throw error;
   }
@@ -9293,7 +9311,7 @@ function renderRoomRead(
   response: Record<string, unknown>,
   ref: RoomRef,
   env: Record<string, string | undefined>,
-  options: { acknowledged?: boolean; expandBodies?: boolean } = {},
+  options: { acknowledged?: boolean; expandBodies?: boolean; deferAcknowledgment?: boolean } = {},
 ): string {
   if (foregroundFromResponse(response)) {
     return renderPhasedRoomRead(response, ref, env, options);
@@ -9310,7 +9328,7 @@ function renderRoomRead(
     `SNAPSHOT — current working state; latest ${discussionCount} of ${totalDiscussion} discussion post${totalDiscussion === 1 ? "" : "s"}; ${options.acknowledged ? "position acknowledged through" : "position unchanged at"} event ${roomEvent}.`,
   );
   appendViewerIdentity(lines, response);
-  if (!options.acknowledged) {
+  if (!options.acknowledged && !options.deferAcknowledgment) {
     lines.push(
       isCompleteReadDelivery(response)
         ? `Acknowledge this snapshot: ${grpCommand(`read --ack-through=${roomEvent}${roomHintArg(String(response.slug ?? ref.slug), ref, env)}`)}`
@@ -9422,7 +9440,7 @@ function renderPhasedRoomRead(
   response: Record<string, unknown>,
   ref: RoomRef,
   env: Record<string, string | undefined>,
-  options: { acknowledged?: boolean; expandBodies?: boolean } = {},
+  options: { acknowledged?: boolean; expandBodies?: boolean; deferAcknowledgment?: boolean } = {},
 ): string {
   const lines = [`Room ${String(response.slug ?? ref.slug)}`];
   const discussion = Array.isArray(response.discussion) ? response.discussion.filter(isRecord) : [];
@@ -9434,7 +9452,7 @@ function renderPhasedRoomRead(
   );
   appendViewerIdentity(lines, response);
   const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
-  if (!options.acknowledged) {
+  if (!options.acknowledged && !options.deferAcknowledgment) {
     lines.push(
       isCompleteReadDelivery(response)
         ? `Acknowledge this snapshot: ${grpCommand(`read --ack-through=${roomEvent}${room}`)}`
@@ -9610,7 +9628,7 @@ function appendCoordinationState(
               ? "; RECOVERABLE — holder lease expired"
               : isActive && mode === "handoff" && action.available === true
                 ? "; AVAILABLE to take"
-                : isActive && mode === "handoff"
+                : isActive && mode === "handoff" && !isHolder
                   ? "; held by another participant"
                   : isActive && mode === "all"
                     ? `; ${numberOrNull(isRecord(action.progress) ? action.progress.completed : null) ?? 0}/${numberOrNull(isRecord(action.progress) ? action.progress.required : null) ?? "?"} complete`
@@ -9721,7 +9739,9 @@ function appendCoordinationState(
           : claim
             ? `; current editor ${stringOrNull(claim.holder_id) ?? "unknown"}`
             : "; no active editor";
-      lines.push(`  ${id} [rev ${revision}] — ${name}; current ${current}${claimText}`);
+      lines.push(
+        `  ${id} [state revision ${revision}] — ${name}; content revision ${current}${claimText}`,
+      );
     }
   }
 }
@@ -11337,12 +11357,12 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "Read without consuming activity. After incorporating the displayed batch, use its --ack-through=N command; acknowledgment is local and never fetches newer messages.",
     flags: [
       "--snapshot       fresh current-state snapshot; skips catch-up (not full history or artifact bytes)",
+      "--continue=TOKEN next pinned text fragment, no network fetch; follow every fragment before acknowledgment",
+      "--full           explicit unbounded text output instead of the default 12,000-character pages",
       "--decision=N     one decision's thread — question, options, outcome, its discussion (never moves your position)",
-      "--since=N        everything after event N (does not move your position)",
-      "--since=last     everything after your stored position",
+      "--since=N|last   after event N or your stored position; does not move it",
       "--ack-through=N  acknowledge an already delivered batch; makes no network request",
-      "--expand         exact discussion bodies (also the default for room reads)",
-      "--json           wire data plus _cli.schema=grp.read.v1 completeness and cursor metadata",
+      "--json           unbounded lossless wire data plus _cli.schema=grp.read.v1 completeness and cursor metadata",
     ],
     example: "grp read",
   },
@@ -11510,7 +11530,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
     usage:
       "grp act review <action-id> [room] [--revision=REVISION_ID] [--approve | --request-changes] [--body=TEXT|--file=PATH]",
     summary:
-      "Read and respond to one action's exact pending artifact revision. The first round leads with full bytes; later rounds lead with your reviewer-relative diff when that is smaller. With no disposition, this prints the review surface and available responses. A formal response must pin --revision=REVISION_ID. Either disposition may include formal commentary with --body or --file (maximum 32,000 characters); requesting changes requires it.",
+      "Read and respond to one action's exact pending artifact revision. The first round leads with full bytes; later rounds lead with your reviewer-relative diff whenever the trusted base is available. Read-only text is bounded: follow --continue=TOKEN until complete, or explicitly use --full/--json for bulk output. Continuations show pinned bytes, not a fresh check that the round remains open. A formal response must pin --revision=REVISION_ID. Either disposition may include formal commentary with --body or --file (maximum 32,000 characters); requesting changes requires it.",
   },
   "action:review-note": {
     usage:
@@ -11542,6 +11562,11 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
     ],
     example: 'grp artifact create --name="Joint draft" --action=ACTION_ID --file=resolution.md',
   },
+  "artifact:read": {
+    usage: "grp artifact read <artifact-id> [room] [--version=N|--revision-id=ID]",
+    summary:
+      "Read one exact content revision with stable revision ID and revision-local block numbers. Text is bounded; follow --continue=TOKEN to finish. --full/--json request bulk output. --blocks=START:END retrieves an explicitly marked excerpt of inclusive block numbers. Content versions are not artifact state revision counters.",
+  },
   "artifact:patch": {
     usage: "grp artifact patch <artifact-id> [room] --action=ID --file=changes.json",
     summary:
@@ -11572,7 +11597,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
     usage:
       "grp artifact diff <artifact-id> [room] (--from-version=N|--from-revision=ID) (--to-version=M|--to-revision=ID)",
     summary:
-      "Compare two exact immutable native-artifact revisions. Human output uses conventional unified-diff headers and +/- lines. JSON returns both exact revision records, including stable block identities and digests.",
+      "Compare two exact immutable native-artifact revisions. Text is bounded and uses unified-diff headers and +/- lines; follow --continue=TOKEN until complete. --full and --json explicitly request bulk output; JSON returns both exact revision records, stable block identities, and digests. Content versions are not artifact state revision counters.",
   },
   start: {
     usage: "grp start choosing [room]",
