@@ -128,9 +128,14 @@ or deletes the hosted room.
 
 Ordinary `grp read` is observational and includes discussion bodies. Text output
 is bounded to 12,000 characters. Follow `--continue=TOKEN` to retrieve remaining
-pinned fragments without fetching newer state. Oversized messages are explicitly
+pinned fragments without fetching newer state. The separate replay-page command
+rereads an already delivered page, including the first or final page, without
+changing acknowledgment or observation. New reads retain older deliveries until
+expiry (one hour) or resource eviction (32 deliveries, 16 MB each, 32 MB total).
+Unavailable tokens fail explicitly rather than fetching replacement content.
+Whole events stay together when they fit; oversized messages are explicitly
 fragmented, never silently elided. Default catch-up fetches one coherent host page.
-After delivering and incorporating the whole displayed batch, run its
+After delivering and incorporating an eligible complete event prefix, run its
 `grp read --ack-through=N` command. This acknowledgment makes no network request;
 newer messages remain unread. Bare `--ack` is rejected with migration guidance.
 An acknowledged prefix does not adopt a write precondition for an unseen room

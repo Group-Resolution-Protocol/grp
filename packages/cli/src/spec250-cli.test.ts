@@ -100,8 +100,19 @@ describe("coordination correctness", () => {
         f.io(async () => json(delta(6, quoted.repeat(200)))),
       ),
     ).toBe(0);
-    expect(f.output[0]).toContain(quoted);
     expect(f.state().readDelivery).toBeUndefined();
+    const token = /Continue this exact delivery: .*--continue=(\S+)/.exec(
+      f.output.at(-1) ?? "",
+    )?.[1];
+    expect(
+      await runRoomCli(
+        ["read", `--continue=${token}`],
+        f.io(async () => {
+          throw new Error("No fresh fetch");
+        }),
+      ),
+    ).toBe(0);
+    expect(f.output.at(-1)).toContain(quoted);
   });
   it("pins a long delivery, withholds observation and acknowledgment, and ignores a newer head during continuation", async () => {
     const f = fixture({ observedStateRevision: "state-5" });
@@ -118,9 +129,9 @@ describe("coordination correctness", () => {
     while (true) {
       const text = f.output.at(-1) ?? "";
       expect(text.length).toBeLessThanOrEqual(12_000);
-      const token = /--continue=(\S+)/.exec(text)?.[1];
+      const token = /Continue this exact delivery: .*--continue=(\S+)/.exec(text)?.[1];
       if (!token) break;
-      expect(text).not.toContain("--ack-through=6");
+      if (!f.state().readDelivery) expect(text).not.toContain("--ack-through=6");
       expect(f.state().observedStateRevision).toBe("state-5");
       expect(await runRoomCli(["read", `--continue=${token}`], f.io(fetch))).toBe(0);
       if (++pages > 10) throw new Error("nonterminating read");
@@ -159,7 +170,14 @@ describe("coordination correctness", () => {
     const f = fixture({ observedStateRevision: "state-5" });
     const fetch = vi.fn(async () => json(delta(6, "x".repeat(13_000))));
     expect(await runRoomCli(["read"], f.io(fetch))).toBe(0);
-    const token = /--continue=(\S+)/.exec(f.output.at(-1) ?? "")?.[1];
+    let token = "";
+    for (let i = 0; i < 10; i++) {
+      const text = f.output.at(-1) ?? "";
+      token = /Continue this exact delivery: .*--continue=(\S+)/.exec(text)?.[1] ?? "";
+      const total = Number(/DELIVERY \d+\/(\d+)/.exec(text)?.[1]);
+      if (Number(token.split(":")[1]) === total - 1) break;
+      expect(await runRoomCli(["read", `--continue=${token}`], f.io(fetch))).toBe(0);
+    }
     expect(
       await runRoomCli(["read", `--continue=${token}`], {
         ...f.io(fetch),
@@ -169,7 +187,9 @@ describe("coordination correctness", () => {
       }),
     ).toBe(1);
     expect(f.state().observedStateRevision).toBe("state-5");
-    expect(f.state().readDelivery).toBeUndefined();
+    // Complete event prefix may already be delivered, but the pinned state
+    // suffix must succeed before the whole-room observation advances.
+    expect(f.state().lastSeenSeq).toBe(5);
     expect(await runRoomCli(["read", `--continue=${token}`], f.io(fetch))).toBe(0);
     expect(f.state().observedStateRevision).toBe("state-6");
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -232,7 +252,7 @@ describe("coordination correctness", () => {
               id: "r2",
               ordinal: 2,
               blocks: [
-                { number: 1, content: "omitted" },
+                { number: 1, content: "unselected-secret-test-body" },
                 { number: 2, content: "selected" },
               ],
             },
@@ -243,7 +263,7 @@ describe("coordination correctness", () => {
     expect(f.output.join("")).toContain("EXCERPT");
     expect(f.output.join("")).toContain("Revision: r2");
     expect(f.output.join("")).toContain("selected");
-    expect(f.output.join("")).not.toContain("omitted");
+    expect(f.output.join("")).not.toContain("unselected-secret-test-body");
     expect(f.state().readDelivery).toBeUndefined();
   });
 

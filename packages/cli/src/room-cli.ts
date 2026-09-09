@@ -7,7 +7,7 @@ import {
   verifyCompactReceipt,
 } from "../../agent-sdk/src/index.js";
 import type { GrpAuth, RoomEvent } from "../../agent-sdk/src/index.js";
-import { writeBoundedOutput } from "./bounded-output.js";
+import { type OutputUnit, writeBoundedOutput } from "./bounded-output.js";
 import { grpCommand } from "./command-hints.js";
 import { finishEvalTraceRequest, preflightEvalTrace, startEvalTraceRequest } from "./eval-trace.js";
 import {
@@ -2171,8 +2171,11 @@ function boundedReadOutput(
   ref: RoomRef,
   flags: Record<string, string>,
   io: RoomCliIo,
-  completion?: Record<string, unknown>,
+  readCompletion?: Record<string, unknown>,
+  units?: OutputUnit[],
+  label?: string,
 ): void {
+  let completion = readCompletion;
   let text = rendered;
   if (completion) persistCoordinationCapabilityFromRead(ref, completion, io.env);
   if (
@@ -2204,10 +2207,31 @@ function boundedReadOutput(
     const eligible =
       isCompleteReadBatch(completion) &&
       (!Array.isArray(completion.new) || from <= (rememberedLastSeenSeq(ref, io.env) ?? 0));
-    text +=
-      eligible && through !== null
-        ? `\n${Array.isArray(completion.new) ? "Position unchanged. Acknowledge this batch" : "Acknowledge this snapshot"}: ${grpCommand(`read --ack-through=${through}${roomHintArg(ref.slug, ref, io.env)}`)}\n`
-        : "\nNo acknowledgment available: this read omits required room content.\n";
+    if (flags.full === "true")
+      text +=
+        eligible && through !== null
+          ? `\n${Array.isArray(completion.new) ? "Position unchanged. Acknowledge this batch" : "Acknowledge this snapshot"}: ${grpCommand(`read --ack-through=${through}${roomHintArg(ref.slug, ref, io.env)}`)}\n`
+          : "\nNo acknowledgment available: this read omits required room content.\n";
+    completion = {
+      ...completion,
+      _cli_ack_eligible: eligible,
+      _cli_prefix_eligible:
+        eligible &&
+        Array.isArray(completion.new) &&
+        completion.new.every(
+          (entry, i, entries) =>
+            isRecord(entry) &&
+            typeof entry.seq === "number" &&
+            Number.isSafeInteger(entry.seq) &&
+            entry.seq > from &&
+            (i === 0 || entry.seq > Number(entries[i - 1].seq)) &&
+            through !== null &&
+            entry.seq <= through,
+        ),
+      _cli_ack_command: grpCommand(
+        `read --ack-through={through}${roomHintArg(ref.slug, ref, io.env)}`,
+      ),
+    };
   }
   if (flags.full === "true") {
     io.stdout(text ?? "");
@@ -2225,6 +2249,7 @@ function boundedReadOutput(
     ]),
     command: grpCommand(`${command}${roomHintArg(ref.slug, ref, io.env)}`),
     text,
+    units: units ?? (label && text !== undefined ? [{ text, label }] : undefined),
     continuation: flags.continue,
     completion,
     stdout: io.stdout,
@@ -2292,7 +2317,7 @@ async function roomRead(
       focusedOptions,
     );
     const rendered = renderFocusedDecision(full, focusedSeq, ref, flags, io);
-    if (isJson(flags)) io.stdout(rendered);
+    if (isJson(flags) || flags.quiet === "true") io.stdout(rendered);
     else
       boundedReadOutput(
         flags.quiet === "true" ? rendered : withPersonaReadHeader(rendered, io.env),
@@ -2307,6 +2332,9 @@ async function roomRead(
   // explicit --since) the read asks the host for everything after that seq.
   // --snapshot always takes the snapshot.
   const since = resolveReadSince(flags, ref, io.env);
+  const beforeRead = findRememberedRoom(readProviderConfig(io.env), ref.slug, ref.baseUrl);
+  const observationBefore = beforeRead?.observedStateRevision ?? null;
+  const recoveryBefore = JSON.stringify(beforeRead?.staleWriteRecovery ?? null);
   const options = readRequestOptions(ref, flags, io.env);
   if (since !== undefined) options.query = { ...(options.query ?? {}), since };
   let response = await requestJson<Record<string, unknown>>(
@@ -2337,18 +2365,44 @@ async function roomRead(
           }),
         ),
       );
-      persistObservedStateRevisionFromRead(ref, { ...response, _cli_delivery_from: since }, io.env);
+      persistObservedStateRevisionFromRead(
+        ref,
+        {
+          ...response,
+          _cli_delivery_from: since,
+          _cli_observation_before: observationBefore,
+          _cli_recovery_before: recoveryBefore,
+        },
+        io.env,
+      );
       return;
     }
+    response = {
+      ...response,
+      _cli_observation_before: observationBefore,
+      _cli_recovery_before: recoveryBefore,
+    };
+    const units: OutputUnit[] = [];
     const rendered = renderRoomDelta(response, ref, io.env, {
       moreUnread: isRecord(response.page) && response.page.complete === false,
       acknowledged: false,
       deferAcknowledgment: true,
+      ...(flags.full !== "true" ? { outputUnits: units } : {}),
     });
-    boundedReadOutput(withPersonaReadHeader(rendered, io.env), "read", ref, flags, io, {
-      ...response,
-      _cli_delivery_from: since,
-    });
+    const personaHeader = withPersonaReadHeader("", io.env);
+    if (personaHeader) units.unshift({ text: personaHeader });
+    boundedReadOutput(
+      withPersonaReadHeader(rendered, io.env),
+      "read",
+      ref,
+      flags,
+      io,
+      {
+        ...response,
+        _cli_delivery_from: since,
+      },
+      flags.full !== "true" ? units : undefined,
+    );
     return;
   }
   // Reads deliver content; a separate --ack-through command acknowledges
@@ -2366,9 +2420,22 @@ async function roomRead(
         }),
       ),
     );
-    persistObservedStateRevisionFromRead(ref, response, io.env);
+    persistObservedStateRevisionFromRead(
+      ref,
+      {
+        ...response,
+        _cli_observation_before: observationBefore,
+        _cli_recovery_before: recoveryBefore,
+      },
+      io.env,
+    );
     return;
   }
+  response = {
+    ...response,
+    _cli_observation_before: observationBefore,
+    _cli_recovery_before: recoveryBefore,
+  };
   const deltaUnsupportedNote =
     since !== undefined ? renderDimNote("(this host does not support delta reads)", io) : "";
   if (typeof response.brief === "string" || response.decision !== undefined) {
@@ -2526,6 +2593,13 @@ function isCompleteReadDelivery(response: Record<string, unknown>): boolean {
 /** A coherent host page can deliver an acknowledgeable prefix without
  * delivering the room head whose write precondition accompanies it. */
 function isCompleteReadBatch(response: Record<string, unknown>): boolean {
+  if (
+    Array.isArray(response.new) &&
+    response.new.some(
+      (entry) => isRecord(entry) && entry.type === "discussion" && typeof entry.said !== "string",
+    )
+  )
+    return false;
   if (isCompleteReadDelivery(response)) return true;
   const page = isRecord(response.page) ? response.page : {};
   const content = isRecord(page.content) ? page.content : {};
@@ -2555,51 +2629,69 @@ function persistObservedStateRevisionFromRead(
   response: Record<string, unknown>,
   env: Record<string, string | undefined>,
 ): void {
-  const through = numberOrNull(response.current_through);
-  const from = numberOrNull(response._cli_delivery_from) ?? rememberedLastSeenSeq(ref, env) ?? 0;
-  const contiguous = !Array.isArray(response.new) || from <= (rememberedLastSeenSeq(ref, env) ?? 0);
-  if (through !== null && isCompleteReadBatch(response) && contiguous) {
-    updateProviderConfig(
-      (current) =>
-        setRoomDeliveryState(current, ref.slug, ref.baseUrl, {
-          readDelivery: {
-            from,
-            through,
-            kind: Array.isArray(response.new) ? "catch_up" : "snapshot",
-          },
-        }),
-      env,
+  const prefix = Object.hasOwn(response, "_cli_prefix_through");
+  const through = numberOrNull(prefix ? response._cli_prefix_through : response.current_through);
+  const id = stringOrNull(response._cli_delivery_id);
+  const page = numberOrNull(response._cli_delivery_page);
+  const expires = numberOrNull(response._cli_delivery_expires);
+  updateProviderConfig((current) => {
+    const room = findRememberedRoom(current, ref.slug, ref.baseUrl);
+    const records = (room?.readCompletions ?? []).filter((r) => r.expires > Date.now());
+    if (id && page !== null && records.some((r) => r.id === id && r.page >= page)) return current;
+    let next = current;
+    if (id && page !== null && expires !== null) {
+      next = setRoomDeliveryState(next, ref.slug, ref.baseUrl, {
+        readCompletions: [...records.filter((r) => r.id !== id), { id, page, expires }].slice(-64),
+      });
+    }
+    const from = numberOrNull(response._cli_delivery_from) ?? room?.lastSeenSeq ?? 0;
+    const contiguous = !Array.isArray(response.new) || from <= (room?.lastSeenSeq ?? 0);
+    const eligible =
+      isCompleteReadBatch(response) &&
+      contiguous &&
+      (!prefix || response._cli_prefix_eligible === true);
+    if (through !== null && eligible) {
+      next = setRoomDeliveryState(next, ref.slug, ref.baseUrl, {
+        readDelivery: {
+          from,
+          through,
+          kind: Array.isArray(response.new) ? "catch_up" : "snapshot",
+        },
+      });
+    }
+    if (prefix || !eligible || !isCompleteReadDelivery(response)) return next;
+    // Compare-and-set, never order opaque tokens. An intervening read/mutation
+    // makes this delivery historical; another fresh read can establish observation.
+    if (
+      Object.hasOwn(response, "_cli_observation_before") &&
+      response._cli_observation_before !== (room?.observedStateRevision ?? null)
+    )
+      return next;
+    const revision = stringOrNull(response.state_revision);
+    next = setRoomCoordinationStateCapability(
+      next,
+      ref.slug,
+      ref.baseUrl,
+      revision ? "experimental" : "absent",
     );
-  }
-  const revision = stringOrNull(response.state_revision);
-  persistCoordinationCapability(ref, revision ? "experimental" : "absent", env);
-  if (!isCompleteReadDelivery(response)) return;
-  // An explicit --since may omit content between the acknowledged position
-  // and this batch. It cannot establish a whole-room write observation.
-  if (!contiguous) return;
-  if (!revision) return;
-  persistObservedStateRevision(ref, revision, env);
-  const recovery = findRememberedRoom(
-    readProviderConfig(env),
-    ref.slug,
-    ref.baseUrl,
-  )?.staleWriteRecovery;
-  if (!recovery) return;
-  if (Date.parse(recovery.expiresAt) <= Date.now()) {
-    updateProviderConfig(
-      (current) => setRoomStaleWriteRecovery(current, ref.slug, ref.baseUrl, undefined),
-      env,
+    if (!revision) return next;
+    next = setRoomObservedStateRevision(next, ref.slug, ref.baseUrl, revision);
+    const recovery = room?.staleWriteRecovery;
+    if (!recovery) return next;
+    if (
+      Object.hasOwn(response, "_cli_recovery_before") &&
+      response._cli_recovery_before !== JSON.stringify(recovery)
+    )
+      return next;
+    return setRoomStaleWriteRecovery(
+      next,
+      ref.slug,
+      ref.baseUrl,
+      Date.parse(recovery.expiresAt) <= Date.now()
+        ? undefined
+        : { ...recovery, readStateRevision: revision },
     );
-    return;
-  }
-  updateProviderConfig(
-    (current) =>
-      setRoomStaleWriteRecovery(current, ref.slug, ref.baseUrl, {
-        ...recovery,
-        readStateRevision: revision,
-      }),
-    env,
-  );
+  }, env);
 }
 
 /** A partial human page may discover capability support but cannot adopt the
@@ -3043,6 +3135,7 @@ function renderRoomDelta(
     deferAcknowledgment?: boolean;
     acknowledged?: boolean;
     elideBodies?: boolean;
+    outputUnits?: OutputUnit[];
   } = {},
 ): string {
   if (foregroundFromResponse(response)) {
@@ -3060,8 +3153,19 @@ function renderRoomDelta(
   const throughEvent = numberOrNull(page.through_event) ?? currentThrough ?? 0;
   const roomEvent = numberOrNull(page.room_event) ?? throughEvent;
   const complete = !options.moreUnread && page.complete !== false;
-  const catchUpLabel = `${complete ? "COMPLETE" : "PARTIAL"} CATCH-UP — ${entries.length} update${entries.length === 1 ? "" : "s"} shown, through event ${throughEvent} of ${roomEvent}.`;
+  const catchUpLabel = options.outputUnits
+    ? `PINNED CATCH-UP — ${entries.length} updates in source batch, through event ${throughEvent} of ${roomEvent}; ${complete ? "source reaches fetched head" : "more host pages remain"}. Delivery progress is separate.`
+    : `${complete ? "COMPLETE" : "PARTIAL"} CATCH-UP — ${entries.length} update${entries.length === 1 ? "" : "s"} shown, through event ${throughEvent} of ${roomEvent}.`;
   const lines = [catchUpLabel, state ? `${slug} — ${state}` : `Room ${slug}`];
+  let unitStart = 0;
+  const takeUnit = (label?: string, through?: number) => {
+    options.outputUnits?.push({
+      text: `${lines.slice(unitStart).join("\n")}\n`,
+      ...(label ? { label } : {}),
+      ...(through !== undefined ? { through } : {}),
+    });
+    unitStart = lines.length;
+  };
   appendViewerIdentity(lines, response);
   const yourStatus = stringOrNull(response.your_status);
   if (yourStatus) lines.push(`You: ${yourStatus}`);
@@ -3074,11 +3178,14 @@ function renderRoomDelta(
     );
   } else {
     lines.push("", "New since your last read:");
+    takeUnit("Pinned source");
     for (const entry of entries) {
       lines.push(
         ...renderDeltaEntry(entry, room, { elideBodies: options.elideBodies === true }),
         "",
       );
+      const seq = numberOrNull(entry.seq);
+      takeUnit(seq !== null ? `Event ${seq}` : "Event", seq ?? undefined);
     }
   }
 
@@ -3103,6 +3210,7 @@ function renderRoomDelta(
         ? "  Catch-up continues below."
         : `  More unread activity remains: ${grpCommand(`read${room}`)}`,
     );
+    takeUnit("Pinned state");
     return `${lines.join("\n")}\n`;
   }
   const decision = activeDecision(response);
@@ -3154,6 +3262,7 @@ function renderRoomDelta(
     lines.push(`  Wait for what's next: ${grpCommand(`watch${room}`)}`);
   }
 
+  takeUnit("Pinned state");
   return `${lines.join("\n")}\n`;
 }
 
@@ -3166,6 +3275,7 @@ function renderPhasedRoomDelta(
     acknowledged?: boolean;
     elideBodies?: boolean;
     deferAcknowledgment?: boolean;
+    outputUnits?: OutputUnit[];
   },
 ): string {
   const entries = Array.isArray(response.new) ? response.new.filter(isRecord) : [];
@@ -3174,18 +3284,32 @@ function renderPhasedRoomDelta(
   const throughEvent = numberOrNull(page.through_event) ?? currentThrough ?? 0;
   const roomEvent = numberOrNull(page.room_event) ?? throughEvent;
   const complete = !options.moreUnread && page.complete !== false;
-  const label = `${complete ? "COMPLETE" : "PARTIAL"} CATCH-UP — ${entries.length} update${entries.length === 1 ? "" : "s"} shown, through event ${throughEvent} of ${roomEvent}.`;
+  const label = options.outputUnits
+    ? `PINNED CATCH-UP — ${entries.length} updates in source batch, through event ${throughEvent} of ${roomEvent}; ${complete ? "source reaches fetched head" : "more host pages remain"}. Delivery progress is separate.`
+    : `${complete ? "COMPLETE" : "PARTIAL"} CATCH-UP — ${entries.length} update${entries.length === 1 ? "" : "s"} shown, through event ${throughEvent} of ${roomEvent}.`;
   const lines = [label, `Room ${String(response.slug ?? ref.slug)}`];
+  let unitStart = 0;
+  const takeUnit = (label?: string, through?: number) => {
+    options.outputUnits?.push({
+      text: `${lines.slice(unitStart).join("\n")}\n`,
+      ...(label ? { label } : {}),
+      ...(through !== undefined ? { through } : {}),
+    });
+    unitStart = lines.length;
+  };
   const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);
   appendViewerIdentity(lines, response);
   if (entries.length === 0) lines.push("", `Nothing new through event ${throughEvent}.`);
   else {
     lines.push("", "New since your last read:");
+    takeUnit("Pinned source");
     for (const entry of entries) {
       lines.push(
         ...renderDeltaEntry(entry, room, { elideBodies: options.elideBodies === true }),
         "",
       );
+      const seq = numberOrNull(entry.seq);
+      takeUnit(seq !== null ? `Event ${seq}` : "Event", seq ?? undefined);
     }
   }
   lines.push(
@@ -3198,6 +3322,7 @@ function renderPhasedRoomDelta(
   );
   if (options.moreUnread) lines.push("", "More unread activity remains.");
   appendAuthoritativeResult(lines, response, ref, env);
+  takeUnit("Pinned state");
   return `${lines.join("\n")}\n`;
 }
 
@@ -4081,6 +4206,21 @@ async function roomAction(
     }
     if (!review || !artifactId || !revisionId || stringOrNull(review.state) !== "pending") {
       if (hasDisposition && pinnedRevision) {
+        const knownClosedTarget =
+          artifactId &&
+          revisionId === pinnedRevision &&
+          review &&
+          ["approved", "changes_requested"].includes(String(review.state));
+        if (!knownClosedTarget) {
+          throw new Error(
+            [
+              "this action has no pending exact artifact review for that revision; no formal disposition was changed",
+              "Inspect the action and review history before choosing a recovery; the supplied revision and review body were not submitted:",
+              grpCommand(`act read ${id}${roomHintArg(ref.slug, ref, io.env)}`),
+              grpCommand(`act reviews ${id}${roomHintArg(ref.slug, ref, io.env)}`),
+            ].join("\n"),
+          );
+        }
         const bodyFlag = flags.file
           ? ` --file=${JSON.stringify(flags.file)}`
           : flags.body
@@ -4088,7 +4228,7 @@ async function roomAction(
             : " --file=review.md";
         throw new Error(
           [
-            "this action no longer has a pending exact artifact review; no formal disposition was changed",
+            "the exact review round for this revision is closed; no formal disposition was changed",
             "Preserve the exact-revision work as an explicitly non-dispositive late supplement:",
             grpCommand(
               `act review-note ${id} --revision=${pinnedRevision} --kind=late${bodyFlag}${roomHintArg(ref.slug, ref, io.env)}`,
@@ -4167,6 +4307,9 @@ async function roomAction(
           ref,
           flags,
           io,
+          undefined,
+          undefined,
+          `Exact revision ${revisionId}${baseRevisionId ? ` from ${baseRevisionId}` : ""}`,
         );
       }
       return;
@@ -4205,10 +4348,7 @@ async function roomAction(
         false,
       );
     } catch (error) {
-      const closedRound =
-        error instanceof CliHttpError &&
-        (error.code === "action.review_closed" ||
-          /no pending exact artifact review/i.test(error.serverMessage ?? error.message));
+      const closedRound = error instanceof CliHttpError && error.code === "action.review_closed";
       if (!closedRound) throw error;
       const bodyFlag = flags.file
         ? ` --file=${JSON.stringify(flags.file)}`
@@ -5659,7 +5799,17 @@ async function roomArtifact(
       readSelectedArtifact(ref, id, flags, io, toQuery),
     ]);
     if (isJson(flags)) io.stdout(renderJson({ from, to }));
-    else boundedReadOutput(renderArtifactDiff(from, to), `artifact diff ${id}`, ref, flags, io);
+    else
+      boundedReadOutput(
+        renderArtifactDiff(from, to),
+        `artifact diff ${id}`,
+        ref,
+        flags,
+        io,
+        undefined,
+        undefined,
+        `Exact diff ${artifactResponseDescriptor(from)?.revisionId ?? "unknown"} to ${artifactResponseDescriptor(to)?.revisionId ?? "unknown"}`,
+      );
     return;
   }
   if (operation === "read") {
@@ -5705,6 +5855,9 @@ async function roomArtifact(
         ref,
         flags,
         io,
+        undefined,
+        undefined,
+        `Exact revision ${artifactResponseDescriptor(response)?.revisionId ?? "unknown"}${flags.blocks ? ` excerpt ${flags.blocks}` : ""}`,
       );
     return;
   }
@@ -11357,7 +11510,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "Read without consuming activity. After incorporating the displayed batch, use its --ack-through=N command; acknowledgment is local and never fetches newer messages.",
     flags: [
       "--snapshot       fresh current-state snapshot; skips catch-up (not full history or artifact bytes)",
-      "--continue=TOKEN next pinned text fragment, no network fetch; follow every fragment before acknowledgment",
+      "--continue=TOKEN retrieve the next pinned page or replay a delivered page; no network fetch",
       "--full           explicit unbounded text output instead of the default 12,000-character pages",
       "--decision=N     one decision's thread — question, options, outcome, its discussion (never moves your position)",
       "--since=N|last   after event N or your stored position; does not move it",

@@ -5061,7 +5061,7 @@ describe("spec 113 delta reads", () => {
       "This room resolves when its configured choice rules determine the outcome",
     );
     expect(stdout).not.toContain("every participant has chosen");
-    expect(stdout).toContain("COMPLETE CATCH-UP — 3 updates shown, through event 8 of 8.");
+    expect(stdout).toContain("PINNED CATCH-UP — 3 updates in source batch, through event 8 of 8;");
     await acknowledgeThrough(env, 8);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(8);
@@ -5362,7 +5362,7 @@ describe("spec 113 delta reads", () => {
         env,
       }),
     ).toBe(0);
-    expect(human.startsWith(`${identity}\n\nDecision 2:`)).toBe(true);
+    expect(human).toContain(`${identity}\n\nDecision 2:`);
 
     let json = "";
     expect(
@@ -12395,7 +12395,7 @@ describe("spec 193 — safe room-read pagination", () => {
     expect(firstPage).toContain("second complete event line 60");
     expect(firstPage).toContain("later event remains readable");
     expect(firstPage.length).toBeLessThanOrEqual(12_000);
-    expect(firstPage).toContain("COMPLETE CATCH-UP — 3 updates shown, through event 13");
+    expect(firstPage).toContain("PINNED CATCH-UP — 3 updates in source batch, through event 13");
     await acknowledgeThrough(env, 13);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(13);
@@ -12469,12 +12469,14 @@ describe("spec 193 — safe room-read pagination", () => {
     const noFetch = vi.fn(async () => {
       throw new Error("continuation must not fetch");
     });
-    while (stdout.includes("--continue=")) {
+    let fragments = 0;
+    while (stdout.includes("Continue this exact delivery:")) {
+      if (++fragments > 50) throw new Error("nonterminating delivery");
       body +=
         stdout
           .split("Long messages/diffs may span fragments; no text is omitted.\n\n")[1]
           ?.split("\nContinue this exact delivery:")[0] ?? "";
-      const token = /--continue=([^\s]+)/.exec(stdout)?.[1];
+      const token = /Continue this exact delivery: .*--continue=([^\s]+)/.exec(stdout)?.[1];
       stdout = "";
       expect(
         await runRoomCli(["read", `--continue=${token}`], {

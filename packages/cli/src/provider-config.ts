@@ -42,6 +42,8 @@ export interface RoomContext {
   /** Exact interval emitted by the last eligible room read. No new fetch is
    * performed when this interval is explicitly acknowledged. */
   readDelivery?: { from: number; through: number; kind: "catch_up" | "snapshot" };
+  /** Idempotent local delivery effects, bounded to the retained delivery lifetime. */
+  readCompletions?: { id: string; page: number; expires: number }[];
   /** Notification progress only; never consumes room content. */
   lastNotifiedSeq?: number;
   /** Spec 224 candidate — the opaque canonical room revision observed by the
@@ -435,7 +437,7 @@ export function setRoomDeliveryState(
   config: ProviderConfig,
   slug: string,
   baseUrl: string | undefined,
-  change: Pick<RoomContext, "readDelivery" | "lastNotifiedSeq">,
+  change: Pick<RoomContext, "readDelivery" | "lastNotifiedSeq" | "readCompletions">,
 ): ProviderConfig {
   const next = normalizeProviderConfig(config);
   const targetBase = baseUrl ? normalizeBaseUrl(baseUrl) : undefined;
@@ -443,6 +445,11 @@ export function setRoomDeliveryState(
     normalizeRoomContext({
       ...room,
       ...change,
+      ...(room.readDelivery &&
+      change.readDelivery &&
+      room.readDelivery.through >= change.readDelivery.through
+        ? { readDelivery: room.readDelivery }
+        : {}),
       ...(change.lastNotifiedSeq !== undefined
         ? {
             lastNotifiedSeq: Math.max(room.lastNotifiedSeq ?? 0, change.lastNotifiedSeq),
@@ -1038,6 +1045,20 @@ function normalizeRoomContext(raw: Partial<RoomContext>): RoomContext {
     raw.readDelivery.through >= raw.readDelivery.from &&
     (raw.readDelivery.kind === "catch_up" || raw.readDelivery.kind === "snapshot")
       ? { readDelivery: raw.readDelivery }
+      : {}),
+    ...(Array.isArray(raw.readCompletions)
+      ? {
+          readCompletions: raw.readCompletions
+            .filter(
+              (item) =>
+                typeof item.id === "string" &&
+                /^[a-f0-9-]{36}$/.test(item.id) &&
+                Number.isSafeInteger(item.page) &&
+                item.page >= 0 &&
+                Number.isFinite(item.expires),
+            )
+            .slice(-64),
+        }
       : {}),
     ...(Number.isSafeInteger(raw.lastNotifiedSeq) && (raw.lastNotifiedSeq ?? -1) >= 0
       ? { lastNotifiedSeq: raw.lastNotifiedSeq }
