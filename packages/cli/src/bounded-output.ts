@@ -138,6 +138,27 @@ function frame(d: Delivery, index: number, prefix?: { through: number | undefine
     (final || (through !== undefined && c._cli_prefix_eligible === true));
   const ackThrough = eligible ? (final ? c?.current_through : through) : null;
   const metadata = d.metadata ?? {};
+  const sourcePage = c?.page as Record<string, unknown> | undefined;
+  const sourceHead =
+    sourcePage?.room_event ??
+    (sourcePage?.complete === false ? null : (c?.current_through ?? null));
+  const sourceHasMore =
+    typeof sourceHead === "number" && typeof c?.current_through === "number"
+      ? c.current_through < sourceHead
+      : sourcePage?.complete === false
+        ? null
+        : false;
+  const fresh =
+    final && c && (sourceHasMore !== false || c._cli_ack_eligible === false)
+      ? {
+          argv: ["read", ...(Array.isArray(metadata.room_argv) ? metadata.room_argv : [])],
+          requires_ack_through: eligible ? c.current_through : null,
+          reason:
+            c._cli_ack_eligible === false
+              ? "missing_content_or_noncontiguous_source"
+              : "next_host_batch",
+        }
+      : null;
   if (d.format === "json") {
     return `${JSON.stringify({
       schema: "grp.output-page.v1",
@@ -157,11 +178,8 @@ function frame(d: Delivery, index: number, prefix?: { through: number | undefine
         ? {
             source_from_event: c._cli_delivery_from ?? null,
             source_through_event: c.current_through ?? null,
-            source_head_event:
-              (c.page as Record<string, unknown> | undefined)?.room_event ??
-              c.current_through ??
-              null,
-            source_has_more: (c.page as Record<string, unknown> | undefined)?.complete === false,
+            source_head_event: sourceHead,
+            source_has_more: sourceHasMore,
             content_complete: metadata.content_complete === true,
             delivered_through_event: through ?? (final && eligible ? c.current_through : null),
             eligible_ack_through_event: ackThrough,
@@ -176,13 +194,7 @@ function frame(d: Delivery, index: number, prefix?: { through: number | undefine
               ...(Array.isArray(metadata.room_argv) ? metadata.room_argv : []),
               `--ack-through=${ackThrough}`,
             ],
-      fresh_fetch_argv:
-        c && (c.page as Record<string, unknown> | undefined)?.complete === false
-          ? {
-              argv: ["read", ...(Array.isArray(metadata.room_argv) ? metadata.room_argv : [])],
-              requires_ack_through: c.current_through,
-            }
-          : null,
+      fresh_fetch_argv: fresh,
     })}\n`;
   }
   const labels =
@@ -199,12 +211,13 @@ function frame(d: Delivery, index: number, prefix?: { through: number | undefine
     ? `Source: room ${String(metadata.room)} at ${String(metadata.operator)}; participant ${String(metadata.participant ?? "unknown")}.\n`
     : "";
   const coverage = c
-    ? `Source events: after ${String(c._cli_delivery_from ?? "snapshot")} through ${String(c.current_through ?? "unknown")}; head ${String((c.page as Record<string, unknown> | undefined)?.room_event ?? c.current_through ?? "unknown")}; bodies complete: ${metadata.content_complete === true}; room-head observation eligible on completion: ${Array.isArray(metadata.observation_scopes) && metadata.observation_scopes.length > 0}.\n`
+    ? `Source events: after ${String(c._cli_delivery_from ?? "snapshot")} through ${String(c.current_through ?? "unknown")}; head ${String(sourceHead ?? "unknown")}; bodies complete: ${metadata.content_complete === true}; room-head observation eligible on completion: ${Array.isArray(metadata.observation_scopes) && metadata.observation_scopes.length > 0}.\n`
     : "";
-  const more =
-    final && c && (c.page as Record<string, unknown> | undefined)?.complete === false
-      ? "\nMore host activity remains. Finish incorporating and acknowledge this delivered prefix, then fetch a fresh read. This delivery has no further local page."
-      : "";
+  const more = fresh
+    ? fresh.requires_ack_through === null
+      ? "\nCatch up from the acknowledged position with a fresh room read; this source cannot authorize acknowledgment. This delivery has no further local page."
+      : "\nThe captured head is not fully covered. Finish incorporating and acknowledge this delivered prefix, then fetch a fresh room read. This delivery has no further local page."
+    : "";
   return `DELIVERY ${index + 1}/${d.pages.length} — ${final ? "FINAL fragment" : "INCOMPLETE"}.\n${labels ? `Content: ${labels}\n` : ""}${identity}${coverage}Replay this page: ${d.command} --continue=${d.id}:${index}\nSource captured: ${d.capturedAt ?? "legacy capture"}. Local delivery is not a fresh state check.\n\n${page.text}\n${footer}${ack}${more}\n`;
 }
 

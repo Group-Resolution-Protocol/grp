@@ -301,6 +301,54 @@ describe("exact focused presentation and compact receipts", () => {
 });
 
 describe("bounded structured room reads", () => {
+  it.each(["omitted_snapshot", "skipped_prefix"])(
+    "does not prescribe an unavailable acknowledgment for %s",
+    async (kind) => {
+      const f = fixture();
+      const response =
+        kind === "omitted_snapshot"
+          ? {
+              slug: "room",
+              current_through: 6,
+              state_revision: "46",
+              discussion: [],
+              page: { through_event: 6, room_event: 6, complete: false, bodies_elided: true },
+            }
+          : {
+              ...delta("46"),
+              current_through: 6,
+              new: [{ seq: 6, type: "discussion", who: "Peer", said: "later" }],
+              page: { through_event: 6, room_event: 10, complete: false },
+            };
+      const fetch = vi.fn(async () => json(response)) as typeof globalThis.fetch;
+      expect(
+        await runRoomCli(
+          [
+            "read",
+            kind === "omitted_snapshot" ? "--snapshot" : "--since=5",
+            "--json",
+            "--max-chars=4096",
+          ],
+          f.io(fetch),
+        ),
+      ).toBe(0);
+      let page = JSON.parse(f.output.at(-1) ?? "");
+      while (page.delivery.next_argv) {
+        expect(await runRoomCli(page.delivery.next_argv, f.io(fetch))).toBe(0);
+        page = JSON.parse(f.output.at(-1) ?? "");
+      }
+      expect(page.ack_argv).toBeNull();
+      expect(page.fresh_fetch_argv.requires_ack_through).toBeNull();
+      expect(page.fresh_fetch_argv.argv).toEqual([
+        "read",
+        "room",
+        "--base=https://operator.example",
+      ]);
+      expect(page.coverage.source_has_more).toBe(kind === "skipped_prefix");
+      expect(f.state().observations).toBeUndefined();
+      expect(f.state().readDelivery).toBeUndefined();
+    },
+  );
   it.each([2048, 4096, 12000])(
     "bounds escaped JSON to %i and replays without fetching or progress changes",
     async (budget) => {
