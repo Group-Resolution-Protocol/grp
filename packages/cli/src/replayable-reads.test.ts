@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { setRoomStaleWriteRecovery, updateProviderConfig } from "./provider-config.js";
+import {
+  setRoomObservedStateRevision,
+  setRoomStaleWriteRecovery,
+  updateProviderConfig,
+} from "./provider-config.js";
 import { runRoomCli } from "./room-cli.js";
 
 function fixture() {
@@ -19,6 +23,12 @@ function fixture() {
         token: "test-token",
         lastSeenSeq: 5,
         observedStateRevision: "opaque-base",
+        observations: {
+          schema: 1,
+          generation: "fixture-read",
+          global: "opaque-base",
+          conversation: "opaque-base",
+        },
         coordinationStateCapability: "experimental",
       },
     }),
@@ -110,10 +120,12 @@ describe("replayable read coordination", () => {
       // Simulates another successful local command while the request is in flight.
       updateProviderConfig((current) => {
         if (!current.currentRoom) throw new Error("Missing fixture room");
-        return {
-          ...current,
-          currentRoom: { ...current.currentRoom, observedStateRevision: "intervening" },
-        };
+        return setRoomObservedStateRevision(
+          current,
+          "room",
+          "https://operator.example",
+          "intervening",
+        );
       }, f.env);
       return json(delta(6, "response"));
     });
@@ -143,7 +155,7 @@ describe("replayable read coordination", () => {
     const before = f.state();
     expect(await f.run(["read", `--continue=${token}`])).toBe(0);
     expect(f.state()).toEqual(before);
-    expect(f.state().staleWriteRecovery.readStateRevision).toBeUndefined();
+    expect(f.state().staleWriteRecovery).toBeUndefined();
   });
 
   it("retains separate state for incomplete or skipped catch-up and bulk reads", async () => {
@@ -184,9 +196,10 @@ describe("replayable read coordination", () => {
       f.env,
     );
     await f.finish(next);
-    expect(f.state().staleWriteRecovery.readStateRevision).toBeUndefined();
+    expect(f.state().staleWriteRecovery).toBeUndefined();
     expect(await f.run(["read"], async () => json(delta(7, "fresh")))).toBe(0);
-    expect(f.state().staleWriteRecovery.readStateRevision).toBe("opaque-7");
+    expect(f.state().staleWriteRecovery).toBeUndefined();
+    expect(f.state().observations.global).toBe("opaque-7");
   });
 });
 

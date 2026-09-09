@@ -45,6 +45,167 @@ interface Delivery {
   pages: OutputPage[];
   completion: Record<string, unknown> | null;
   command: string;
+  maxChars?: number;
+  format?: "text" | "json";
+  argv?: string[];
+  metadata?: Record<string, unknown>;
+  capturedAt?: string;
+}
+
+export class OutputDeliveryError extends Error {
+  constructor(
+    message: string,
+    public code: string,
+    public recovery: Record<string, unknown> = {},
+  ) {
+    super(message);
+  }
+}
+
+function navigation(d: Delivery, index: number): string[] {
+  return [
+    ...(d.argv ?? [d.command]),
+    ...(d.format === "json" ? ["--json"] : []),
+    `--continue=${d.id}:${index}`,
+  ];
+}
+
+/** Local metadata only. No cache creation, pruning, acknowledgment or fetching. */
+export function inspectOutputDeliveries(options: {
+  configPath: string;
+  scope: string;
+  continuation?: string;
+}): Record<string, unknown>[] {
+  const directory = `${options.configPath}.deliveries-v2`;
+  const scope = createHash("sha256").update(options.scope).digest("hex");
+  const match = options.continuation ? TOKEN.exec(options.continuation) : null;
+  if (options.continuation && !match)
+    throw new OutputDeliveryError("Invalid continuation token", "delivery.invalid");
+  let names: string[];
+  try {
+    if (lstatSync(directory).isSymbolicLink()) throw new Error("Unsafe delivery directory");
+    names = match ? [`${match[1]}.json`] : readdirSync(directory).filter((f) => CACHE_FILE.test(f));
+  } catch {
+    if (match)
+      throw new OutputDeliveryError(
+        "Delivery unavailable for this identity or read surface",
+        "delivery.unavailable",
+      );
+    return [];
+  }
+  const found: Delivery[] = [];
+  for (const name of names) {
+    try {
+      const d = readDelivery(join(directory, name));
+      if (d.scope === scope) found.push(d);
+    } catch {
+      /* Unavailable. */
+    }
+  }
+  if (match && !found.length)
+    throw new OutputDeliveryError(
+      "Delivery unavailable for this identity or read surface",
+      "delivery.unavailable",
+    );
+  return found
+    .sort((a, b) => b.expires - a.expires)
+    .slice(0, 6)
+    .map((d) => ({
+      id: d.id,
+      captured_at: d.capturedAt ?? null,
+      expires_at: new Date(d.expires).toISOString(),
+      expired: d.expires <= Date.now(),
+      delivered_pages: d.next,
+      pages: d.pages.length,
+      complete: d.next === d.pages.length,
+      max_chars: d.maxChars ?? OUTPUT_PAGE_CHARS,
+      format: d.format ?? "text",
+      next_argv: d.expires > Date.now() && d.next < d.pages.length ? navigation(d, d.next) : null,
+      surface: d.metadata?.surface ?? null,
+    }));
+}
+
+function frame(d: Delivery, index: number, prefix?: { through: number | undefined }): string {
+  const final = index === d.pages.length - 1;
+  const page = d.pages[index];
+  if (!page) throw new Error("Invalid delivery page");
+  const through = prefix
+    ? prefix.through
+    : d.pages.slice(0, index + 1).reduce<number | undefined>((n, p) => p.through ?? n, undefined);
+  const c = d.completion;
+  const eligible =
+    c?._cli_ack_eligible === true &&
+    (final || (through !== undefined && c._cli_prefix_eligible === true));
+  const ackThrough = eligible ? (final ? c?.current_through : through) : null;
+  const metadata = d.metadata ?? {};
+  if (d.format === "json") {
+    return `${JSON.stringify({
+      schema: "grp.output-page.v1",
+      ...metadata,
+      text: page.text,
+      delivery: {
+        id: d.id,
+        page: index + 1,
+        pages: d.pages.length,
+        complete: final,
+        captured_at: d.capturedAt,
+        max_chars: d.maxChars ?? OUTPUT_PAGE_CHARS,
+        replay_argv: navigation(d, index),
+        next_argv: final ? null : navigation(d, index + 1),
+      },
+      coverage: c
+        ? {
+            source_from_event: c._cli_delivery_from ?? null,
+            source_through_event: c.current_through ?? null,
+            source_head_event:
+              (c.page as Record<string, unknown> | undefined)?.room_event ??
+              c.current_through ??
+              null,
+            source_has_more: (c.page as Record<string, unknown> | undefined)?.complete === false,
+            content_complete: metadata.content_complete === true,
+            delivered_through_event: through ?? (final && eligible ? c.current_through : null),
+            eligible_ack_through_event: ackThrough,
+            eligible_observation_scopes_on_completion: metadata.observation_scopes ?? [],
+          }
+        : null,
+      ack_argv:
+        ackThrough === null
+          ? null
+          : [
+              "read",
+              ...(Array.isArray(metadata.room_argv) ? metadata.room_argv : []),
+              `--ack-through=${ackThrough}`,
+            ],
+      fresh_fetch_argv:
+        c && (c.page as Record<string, unknown> | undefined)?.complete === false
+          ? {
+              argv: ["read", ...(Array.isArray(metadata.room_argv) ? metadata.room_argv : [])],
+              requires_ack_through: c.current_through,
+            }
+          : null,
+    })}\n`;
+  }
+  const labels =
+    page.labels.length <= 4 ? page.labels.join(", ") : `${page.labels[0]} … ${page.labels.at(-1)}`;
+  const ack = eligible
+    ? `\nDelivered prefix available for acknowledgment: ${String(c?._cli_ack_command).replace("{through}", String(ackThrough))}`
+    : final && c && c._cli_ack_eligible === false
+      ? "\nNo acknowledgment available: required room content or contiguous coverage is missing."
+      : "";
+  const footer = final
+    ? "END OF DELIVERY. Pinned read-time bytes, not a fresh state check."
+    : `Continue this exact delivery: ${d.command} --continue=${d.id}:${index + 1}`;
+  const identity = metadata.room
+    ? `Source: room ${String(metadata.room)} at ${String(metadata.operator)}; participant ${String(metadata.participant ?? "unknown")}.\n`
+    : "";
+  const coverage = c
+    ? `Source events: after ${String(c._cli_delivery_from ?? "snapshot")} through ${String(c.current_through ?? "unknown")}; head ${String((c.page as Record<string, unknown> | undefined)?.room_event ?? c.current_through ?? "unknown")}; bodies complete: ${metadata.content_complete === true}; room-head observation eligible on completion: ${Array.isArray(metadata.observation_scopes) && metadata.observation_scopes.length > 0}.\n`
+    : "";
+  const more =
+    final && c && (c.page as Record<string, unknown> | undefined)?.complete === false
+      ? "\nMore host activity remains. Finish incorporating and acknowledge this delivered prefix, then fetch a fresh read. This delivery has no further local page."
+      : "";
+  return `DELIVERY ${index + 1}/${d.pages.length} — ${final ? "FINAL fragment" : "INCOMPLETE"}.\n${labels ? `Content: ${labels}\n` : ""}${identity}${coverage}Replay this page: ${d.command} --continue=${d.id}:${index}\nSource captured: ${d.capturedAt ?? "legacy capture"}. Local delivery is not a fresh state check.\n\n${page.text}\n${footer}${ack}${more}\n`;
 }
 
 function chunkEnd(text: string, offset: number, budget: number): number {
@@ -124,6 +285,14 @@ function readDelivery(path: string): Delivery {
     d.next > d.pages.length ||
     typeof d.command !== "string" ||
     d.command.length > 500 ||
+    (d.maxChars !== undefined &&
+      (!Number.isSafeInteger(d.maxChars) || d.maxChars < 2048 || d.maxChars > OUTPUT_PAGE_CHARS)) ||
+    (d.format !== undefined && d.format !== "text" && d.format !== "json") ||
+    (d.argv !== undefined &&
+      (!Array.isArray(d.argv) ||
+        !d.argv.every((a) => typeof a === "string" && a.length <= 1000))) ||
+    (d.metadata !== undefined &&
+      (!d.metadata || typeof d.metadata !== "object" || Array.isArray(d.metadata))) ||
     !(
       d.completion === null ||
       (typeof d.completion === "object" && !Array.isArray(d.completion))
@@ -131,7 +300,7 @@ function readDelivery(path: string): Delivery {
     !d.pages.every(
       (p) =>
         typeof p.text === "string" &&
-        p.text.length <= BODY_CHARS &&
+        p.text.length <= OUTPUT_PAGE_CHARS &&
         Array.isArray(p.labels) &&
         p.labels.every((l) => typeof l === "string" && l.length <= 150) &&
         (p.through === undefined || (Number.isSafeInteger(p.through) && p.through >= 0)),
@@ -152,7 +321,21 @@ export function writeBoundedOutput(options: {
   completion?: Record<string, unknown> | undefined;
   stdout: (text: string) => void;
   complete: (completion: Record<string, unknown>) => void;
+  maxChars?: number;
+  format?: "text" | "json";
+  argv?: string[];
+  metadata?: Record<string, unknown>;
 }): void {
+  if (
+    options.maxChars !== undefined &&
+    (!Number.isSafeInteger(options.maxChars) ||
+      options.maxChars < 2048 ||
+      options.maxChars > OUTPUT_PAGE_CHARS)
+  )
+    throw new OutputDeliveryError(
+      "--max-chars must be an integer from 2048 through 12000",
+      "output.invalid_budget",
+    );
   const scope = createHash("sha256").update(options.scope).digest("hex");
   // Legacy caches are never interpreted as replayable deliveries.
   const directory = `${options.configPath}.deliveries-v2`;
@@ -170,21 +353,49 @@ export function writeBoundedOutput(options: {
     if (options.continuation) {
       const match = TOKEN.exec(options.continuation);
       if (!match)
-        throw new Error("Invalid continuation. Start a new read; no acknowledgment was advanced.");
+        throw new OutputDeliveryError(
+          "Invalid continuation. Start a new read; no acknowledgment was advanced.",
+          "delivery.invalid",
+        );
       try {
         d = readDelivery(join(directory, `${match[1]}.json`));
       } catch {
-        throw new Error(
+        throw new OutputDeliveryError(
           "Delivery unavailable, evicted, or incompatible. Start a new read; no acknowledgment was advanced.",
+          "delivery.unavailable",
         );
       }
       index = Number(match[2]);
       if (d.scope !== scope || d.id !== match[1])
-        throw new Error("Delivery unavailable for this identity or read surface.");
+        throw new OutputDeliveryError(
+          "Delivery unavailable for this identity or read surface.",
+          "delivery.unavailable",
+        );
       if (d.expires <= Date.now())
-        throw new Error("Expired delivery. Start a new read; no acknowledgment was advanced.");
+        throw new OutputDeliveryError(
+          "Expired delivery. Start a new read; no acknowledgment was advanced.",
+          "delivery.expired",
+        );
+      if (
+        (options.maxChars !== undefined &&
+          options.maxChars !== (d.maxChars ?? OUTPUT_PAGE_CHARS)) ||
+        (options.format !== undefined && options.format !== (d.format ?? "text"))
+      )
+        throw new OutputDeliveryError(
+          "Continuation format and budget must match the pinned delivery",
+          "delivery.format_mismatch",
+        );
       if (!Number.isSafeInteger(index) || index > d.next || index >= d.pages.length)
-        throw new Error("Out-of-order continuation; retrieve the next sequential page first.");
+        throw new OutputDeliveryError(
+          d.next === d.pages.length
+            ? "Delivery complete; no next page exists. Replay a valid page if needed."
+            : `Out-of-order continuation; next page: ${d.command} --continue=${d.id}:${d.next}`,
+          d.next === d.pages.length ? "delivery.complete" : "delivery.out_of_order",
+          {
+            next_argv: d.next === d.pages.length ? null : navigation(d, d.next),
+            pages: d.pages.length,
+          },
+        );
     } else {
       d = {
         schema: 2,
@@ -195,7 +406,35 @@ export function writeBoundedOutput(options: {
         pages: outputPages(options.units ?? [{ text: options.text ?? "", label: options.command }]),
         completion: options.completion ?? null,
         command: options.command,
+        maxChars: options.maxChars ?? OUTPUT_PAGE_CHARS,
+        format: options.format ?? "text",
+        argv: options.argv ?? [options.command],
+        metadata: options.metadata ?? {},
+        capturedAt: new Date().toISOString(),
       };
+      let budget = (d.maxChars ?? OUTPUT_PAGE_CHARS) - 512;
+      for (;;) {
+        d.pages = outputPages(
+          options.units ?? [{ text: options.text ?? "", label: options.command }],
+          budget,
+        );
+        let excess = 0;
+        let through: number | undefined;
+        for (let i = 0; i < d.pages.length; i++) {
+          through = d.pages[i]?.through ?? through;
+          excess = Math.max(
+            excess,
+            frame(d, i, { through }).length - (d.maxChars ?? OUTPUT_PAGE_CHARS),
+          );
+        }
+        if (excess <= 0) break;
+        budget = Math.min(budget - Math.max(excess, 32), Math.floor(budget * 0.8));
+        if (budget < 2)
+          throw new OutputDeliveryError(
+            "Delivery metadata cannot fit this output budget",
+            "output.framing_too_large",
+          );
+      }
     }
     const path = join(directory, `${d.id}.json`);
     const save = () => {
@@ -245,10 +484,6 @@ export function writeBoundedOutput(options: {
     const final = index === d.pages.length - 1;
     const page = d.pages[index];
     if (!page) throw new Error("Invalid delivery page");
-    const labels =
-      page.labels.length <= 4
-        ? page.labels.join(", ")
-        : `${page.labels[0]} … ${page.labels.at(-1)}`;
     const through = d.pages
       .slice(0, index + 1)
       .reduce<number | undefined>((n, p) => p.through ?? n, undefined);
@@ -261,19 +496,8 @@ export function writeBoundedOutput(options: {
           ...(!final ? { _cli_prefix_through: through ?? null } : {}),
         }
       : null;
-    const ack =
-      completion &&
-      (final || (through !== undefined && completion._cli_prefix_eligible === true)) &&
-      completion._cli_ack_eligible === true
-        ? `\nDelivered prefix available for acknowledgment: ${String(completion._cli_ack_command).replace("{through}", String(final ? completion.current_through : through))}`
-        : final && completion && completion._cli_ack_eligible === false
-          ? "\nNo acknowledgment available: required room content or contiguous coverage is missing."
-          : "";
-    const footer = final
-      ? "END OF DELIVERY. Pinned read-time bytes, not a fresh state check."
-      : `Continue this exact delivery: ${d.command} --continue=${d.id}:${index + 1}`;
-    const output = `DELIVERY ${index + 1}/${d.pages.length} — ${final ? "FINAL fragment" : "INCOMPLETE"}.\n${labels ? `Content: ${labels}\n` : ""}Replay this page: ${d.command} --continue=${d.id}:${index}\nLong messages/diffs may span fragments; no text is omitted.\n\n${page.text}\n${footer}${ack}\n`;
-    if (output.length > OUTPUT_PAGE_CHARS)
+    const output = frame(d, index);
+    if (output.length > (d.maxChars ?? OUTPUT_PAGE_CHARS))
       throw new Error("Delivery framing exceeds output budget");
     options.stdout(output);
     // Callback is idempotent in the config transaction: a crash after it but

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as pathJoin } from "node:path";
@@ -5,6 +6,7 @@ import { Readable } from "node:stream";
 import * as ed25519 from "@noble/ed25519";
 import { describe, expect, it, vi } from "vitest";
 import { computeJwsReceiptHash, signCompactJws } from "../../audit/src/jws.js";
+import { observedFixture } from "../test-support/observation-fixture.js";
 import {
   readProviderConfig,
   resolveLocalSession,
@@ -433,7 +435,7 @@ describe("room CLI requests", () => {
       { argv: ["create", "--help"], usage: "Usage: grp create", maxLines: 30 },
       { argv: ["create", "-h"], usage: "Usage: grp create", maxLines: 30 },
       { argv: ["join", "--help"], usage: "Usage: grp join <room-url|slug>", maxLines: 16 },
-      { argv: ["read", "--help"], usage: "Usage: grp read [room]", maxLines: 16 },
+      { argv: ["read", "--help"], usage: "Usage: grp read [room]", maxLines: 18 },
       { argv: ["watch", "--help"], usage: "Usage: grp watch [room]", maxLines: 16 },
     ]) {
       let stdout = "";
@@ -570,7 +572,9 @@ describe("room CLI requests", () => {
     const code = await runRoomCli(
       ["read", "https://operator.example/r/abc123?token=t_secret", "--json"],
       {
-        stdout: () => {},
+        stdout: (text) => {
+          stderr += text;
+        },
         stderr: (text) => {
           stderr += text;
         },
@@ -595,7 +599,9 @@ describe("room CLI requests", () => {
   it("rejects oversized JSON responses before buffering their bodies", async () => {
     let stderr = "";
     const code = await runRoomCli(["read", "https://operator.example/r/abc123", "--json"], {
-      stdout: () => {},
+      stdout: (text) => {
+        stderr += text;
+      },
       stderr: (text) => {
         stderr += text;
       },
@@ -4619,8 +4625,8 @@ describe("room CLI requests", () => {
 
     expect(code).toBe(0);
     expect(stdout).toContain("Discussion posted.");
-    expect(stdout).toContain("Read the room: grp read abc123");
-    expect(stdout).toContain("Stay with the room: grp watch --timeout=300 abc123");
+    expect(stdout).toContain("Read current state: grp read abc123");
+    expect(stdout).not.toContain("Stay with the room");
   });
 
   it("confirms open choices after start choosing", async () => {
@@ -7923,7 +7929,7 @@ describe("spec 228 action-centered coordination", () => {
     expect(expectedHeader).toBe("41");
   });
 
-  it("requires a separate delivered read between stale rejections before arming the exact bypass", async () => {
+  it("never arms a bypass even after repeated stale rejections and a separate read", async () => {
     const env = providerEnv(
       roomConfig({
         token: "t_1",
@@ -8002,7 +8008,7 @@ describe("spec 228 action-centered coordination", () => {
     ).toBe(1);
     expect(writes).toBe(2);
     expect(reads).toBe(1);
-    expect(second).toContain("--force-stale-post");
+    expect(second).not.toContain("--force-stale-post");
 
     expect(
       await runRoomCli(["discuss", "Exact payload", "--force-stale-post"], {
@@ -8011,8 +8017,8 @@ describe("spec 228 action-centered coordination", () => {
         fetch,
         env,
       }),
-    ).toBe(0);
-    expect(writes).toBe(3);
+    ).toBe(1);
+    expect(writes).toBe(2);
     expect(reads).toBe(1);
   });
 
@@ -8179,10 +8185,9 @@ describe("spec 228 action-centered coordination", () => {
         .find((request) => request.method === "POST")
         ?.headers.get("x-grp-expected-room-revision"),
     ).toBe("41");
-    expect(stdout).toContain("holder Cobalt");
-    expect(stdout).toContain("Cobalt holds this handoff action");
-    expect(stdout).toContain("Holder-scoped transitions are unavailable to you");
-    expect(stdout).toContain("grp watch --action=act_1");
+    expect(stdout).toContain("Action act_1 started");
+    expect(stdout).toContain("completion holder");
+    expect(stdout).toContain("Inspect action: grp act read act_1");
     expect(stdout).not.toContain("grp watch --artifact");
     expect(stdout).not.toContain("defer");
     expect(stdout).not.toContain("enforced lock");
@@ -8235,9 +8240,8 @@ describe("spec 228 action-centered coordination", () => {
       mode: "all",
     });
     expect(expectedRoomRevision).toBe("41");
-    expect(stdout).toContain("all participants 0/2 complete");
-    expect(stdout).toContain("Your report is required");
-    expect(stdout).toContain("grp act complete act_all");
+    expect(stdout).toContain("completion all");
+    expect(stdout).toContain("Inspect action: grp act read act_all");
   });
 
   it("declares group completion at start and rejects a completion override for all mode", async () => {
@@ -8345,8 +8349,8 @@ describe("spec 228 action-centered coordination", () => {
       }),
     ).toBe(0);
     expect(postedBody).toEqual({ expected_revision: "ar_2" });
-    expect(stdout).toContain("You hold this handoff action");
-    expect(stdout).toContain("grp act handoff act_turn --to=group");
+    expect(stdout).toContain("Action act_turn taken");
+    expect(stdout).toContain("Inspect action: grp act read act_turn");
   });
 
   it("shows a losing taker the current holder, lease expiry, and exact scoped watch", async () => {
@@ -8454,8 +8458,8 @@ describe("spec 228 action-centered coordination", () => {
       to_group: true,
       note: "Ready for the next pass",
     });
-    expect(stdout).toContain("This handoff action is available");
-    expect(stdout).toContain("grp act take act_turn");
+    expect(stdout).toContain("Action act_turn handed off");
+    expect(stdout).toContain("Inspect action: grp act read act_turn");
   });
 
   it("renders an ordinary room read with one literal shared-turn watch", async () => {
@@ -8737,11 +8741,11 @@ describe("spec 228 action-centered coordination", () => {
       to_participant_id: "p_cobalt",
       note: "Check the governance section",
     });
-    expect(stdout).toContain("Handoff note: Check the governance section");
-    expect(stdout).toContain("grp watch --action=act_1");
+    expect(stdout).toContain("Action act_1 handed off");
+    expect(stdout).toContain("Inspect action: grp act read act_1");
   });
 
-  it("attaches a new native artifact to the action and keeps exact tokens off the human path", async () => {
+  it("attaches a new native artifact and returns its exact revision receipt", async () => {
     const env = providerEnv(roomConfig());
     const calls: Array<{ method: string; pathname: string; body?: unknown }> = [];
     let stdout = "";
@@ -8802,9 +8806,8 @@ describe("spec 228 action-centered coordination", () => {
       action_id: "act_1",
       expected_action_revision: "ar_2",
     });
-    expect(stdout).toContain("Revision: rev_1");
-    expect(stdout).not.toContain("rev_uuid_1");
-    expect(stdout).not.toContain("a".repeat(64));
+    expect(stdout).toContain("Version: v1; revision rev_uuid_1");
+    expect(stdout).toContain(`SHA-256: ${"a".repeat(64)}`);
   });
 
   it("renders stable paragraph numbers while keeping internal ids and digests in JSON only", async () => {
@@ -8868,6 +8871,10 @@ describe("spec 228 action-centered coordination", () => {
       revision: {
         id: `rev_uuid_${ordinal}`,
         ordinal,
+        content:
+          ordinal === 3
+            ? "Pre-money valuation is $32m.\nOld reporting term.\n"
+            : "Pre-money valuation is $33m.\nQuarterly information rights.\n",
         blocks:
           ordinal === 3
             ? [
@@ -8920,10 +8927,9 @@ describe("spec 228 action-centered coordination", () => {
     ).toBe(0);
     expect(stdout).toContain("--- artifact v3");
     expect(stdout).toContain("+++ artifact v4");
-    expect(stdout).toContain("@@ -1,1 +1,1 @@ paragraph");
+    expect(stdout).toContain("@@ -1,2 +1,2 @@");
     expect(stdout).toContain("-Pre-money valuation is $32m.");
     expect(stdout).toContain("+Pre-money valuation is $33m.");
-    expect(stdout).toContain("@@ -2,1 +2,1 @@ paragraph");
     expect(stdout).toContain("-Old reporting term.");
     expect(stdout).toContain("+Quarterly information rights.");
     expect(stdout).not.toContain("economics");
@@ -9101,7 +9107,7 @@ describe("spec 228 action-centered coordination", () => {
     expect(stdout).not.toContain("Complete the owning action: grp act complete act_1");
   });
 
-  it("points a whole-artifact group edit to exact review instead of rejected completion", async () => {
+  it("points a whole-artifact edit at its exact bytes without assuming a completion path", async () => {
     const env = providerEnv(roomConfig());
     const current = {
       artifact: {
@@ -9141,8 +9147,10 @@ describe("spec 228 action-centered coordination", () => {
         },
       ),
     ).toBe(0);
-    expect(stdout).toContain("Artifact doc_1 updated: Joint draft.");
-    expect(stdout).toContain("Request exact review: grp act request-review act_1");
+    expect(stdout).toContain("Artifact doc_1 updated.");
+    expect(stdout).toContain(
+      "Inspect exact revision: grp artifact read doc_1 --revision-id=rev_uuid_5",
+    );
     expect(stdout).not.toContain("Complete the owning action: grp act complete act_1");
   });
 
@@ -9338,10 +9346,8 @@ describe("spec 228 action-centered coordination", () => {
       expected_artifact_revision: "rr_5",
       artifact_revision_id: "rev_uuid_5",
     });
-    expect(stdout).toContain("Review is open on exact artifact revision rev_uuid_5");
-    expect(stdout).toContain("Your approval is recorded: approve");
-    expect(stdout).toContain("Outstanding responses: 1");
-    expect(stdout).toContain("grp watch --action=act_1");
+    expect(stdout).toContain("Review: pending; exact revision rev_uuid_5");
+    expect(stdout).toContain("Inspect action: grp act read act_1");
     expect(stdout).not.toContain("grp accept");
   });
 
@@ -9390,7 +9396,7 @@ describe("spec 228 action-centered coordination", () => {
       revision: {
         id: "rev_uuid_5",
         ordinal: 5,
-        sha256: "d".repeat(64),
+        sha256: createHash("sha256").update("# Exact terms\n").digest("hex"),
         content: "# Exact terms\n",
       },
       reviews: [
@@ -9521,7 +9527,7 @@ describe("spec 228 action-centered coordination", () => {
       body: "Looks exact",
     });
     expect(stdout).toContain("State: completed");
-    expect(stdout).toContain('"revision_id":"rev_uuid_5"');
+    expect(stdout).toContain("exact revision rev_uuid_5");
   });
 
   it("shows the editor every formal response after an exact review requests changes", async () => {
@@ -10075,7 +10081,7 @@ describe("spec 228 action-centered coordination", () => {
       reason: "The principal supplied one correction",
     });
     expect(stdout).toContain("Action act_1 resumed for revision");
-    expect(stdout).toContain('grp act complete act_1 --result-text="What happened"');
+    expect(stdout).toContain("Inspect action: grp act read act_1");
     expect(stdout).not.toContain("grp accept 1");
   });
 
@@ -10503,8 +10509,9 @@ describe("spec 228 action-centered coordination", () => {
         expected_action_revision: "ar_1",
       },
     });
-    expect(stdout).toContain("Artifact doc_1 created and attached to action act_1.");
-    expect(stdout).toContain("Revision: rev_1");
+    expect(stdout).toContain("Artifact doc_1 created.");
+    expect(stdout).toContain("Action: act_1.");
+    expect(stdout).toContain("Version: v1; revision rev_1");
   });
 
   it("rejects invalid action-artifact convenience before any remote request", async () => {
@@ -10714,7 +10721,7 @@ describe("spec 228 action-centered coordination", () => {
 function providerEnv(config: unknown): Record<string, string | undefined> {
   const dir = mkdtempSync(pathJoin(tmpdir(), "grp-room-provider-test-"));
   const path = pathJoin(dir, "config.json");
-  writeFileSync(path, `${JSON.stringify(config)}\n`, "utf8");
+  writeFileSync(path, `${JSON.stringify(observedFixture(config))}\n`, "utf8");
   return { GRP_CONFIG: path };
 }
 
@@ -11238,7 +11245,7 @@ describe("spec 117 — collaboration defaults (CLI)", () => {
       }),
     ).toBe(1);
     expect(stderr).toContain("NOT CHANGED");
-    expect(stderr).toContain("Read the changed conversation: grp read");
+    expect(stderr).toContain("Read the changed room state: grp read");
     expect(stderr).toContain("After incorporating it, retry your intended command");
     expect(stderr).not.toContain("--post-anyway");
 
@@ -12474,7 +12481,7 @@ describe("spec 193 — safe room-read pagination", () => {
       if (++fragments > 50) throw new Error("nonterminating delivery");
       body +=
         stdout
-          .split("Long messages/diffs may span fragments; no text is omitted.\n\n")[1]
+          .split("Local delivery is not a fresh state check.\n\n")[1]
           ?.split("\nContinue this exact delivery:")[0] ?? "";
       const token = /Continue this exact delivery: .*--continue=([^\s]+)/.exec(stdout)?.[1];
       stdout = "";
@@ -12492,7 +12499,7 @@ describe("spec 193 — safe room-read pagination", () => {
     }
     body +=
       stdout
-        .split("Long messages/diffs may span fragments; no text is omitted.\n\n")[1]
+        .split("Local delivery is not a fresh state check.\n\n")[1]
         ?.split("\nEND OF DELIVERY")[0] ?? "";
     for (const entry of largeEntries) expect(body.includes(entry.said)).toBe(true);
     expect(noFetch).not.toHaveBeenCalled();
@@ -12676,8 +12683,8 @@ describe("spec 131 — multi-room attention and routing", () => {
     expect(requestedUrl).toBe("https://operator.example/api/rooms/nightroom2/discuss");
     expect(requestedBody).toEqual({ body: "I am ready" });
     expect(stdout).toContain("Discussion posted. Room: nightroom2.");
-    expect(stdout).toContain("Read the room: grp read nightroom2");
-    expect(stdout).toContain("Stay with the room: grp watch --timeout=300 nightroom2");
+    expect(stdout).toContain("Read current state: grp read nightroom2");
+    expect(stdout).not.toContain("Stay with the room");
     expect(readProviderConfig(env).currentRoom?.slug).toBe("dayroom01");
   });
 

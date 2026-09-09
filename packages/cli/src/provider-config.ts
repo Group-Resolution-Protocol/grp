@@ -24,6 +24,13 @@ export interface ProviderProfile {
 }
 
 export interface RoomContext {
+  /** Versioned scope certificates; legacy observations are not reusable. */
+  observations?: {
+    schema: 1;
+    generation: string;
+    conversation?: string;
+    global?: string;
+  };
   provider?: string;
   baseUrl?: string;
   slug: string;
@@ -46,10 +53,8 @@ export interface RoomContext {
   readCompletions?: { id: string; page: number; expires: number }[];
   /** Notification progress only; never consumes room content. */
   lastNotifiedSeq?: number;
-  /** Spec 224 candidate — the opaque canonical room revision observed by the
-   * last room-wide read (or returned by a successful guarded mutation).
-   * This is intentionally independent from lastSeenSeq: watching events is
-   * not evidence that the caller reread canonical room state. */
+  /** Derived compatibility alias of observations.global. Legacy raw values
+   * are discarded; guarded commands only use the versioned certificates. */
   observedStateRevision?: string;
   /** Live discovery result for the experimental coordination-state surface.
    * This is kept separate from the observation token so capability is never
@@ -63,8 +68,7 @@ export interface RoomContext {
    * authenticated phased response. This is a decimal equality token, not a
    * client-side counter. */
   observedForegroundEpoch?: string;
-  /** One content-free, short-lived recovery capability for an exact mutation
-   * that the host rejected because room state was stale. */
+  /** Legacy deserialization type only. Normalization always discards it. */
   staleWriteRecovery?: StaleWriteRecovery;
 }
 
@@ -530,27 +534,41 @@ export function setRoomObservedStateRevision(
   slug: string,
   baseUrl: string | undefined,
   observedStateRevision: string,
+  scope: "conversation" | "global" = "global",
 ): ProviderConfig {
   const revision = normalizeObservedStateRevision(observedStateRevision);
   const next = normalizeProviderConfig(config);
   const targetBase = baseUrl ? normalizeBaseUrl(baseUrl) : undefined;
   const rooms = { ...(next.rooms ?? {}) };
+  const generation = randomUUID();
+  const apply = (room: RoomContext) =>
+    normalizeRoomContext({
+      ...room,
+      observations: {
+        schema: 1,
+        ...room.observations,
+        ...(scope === "global" ? { global: revision } : {}),
+        conversation: revision,
+        // One local generation invalidates both pending read certificates. A
+        // speech interleaving must invalidate a read even if global is unchanged.
+        generation,
+      },
+    });
   let touched = false;
   for (const [key, room] of Object.entries(rooms)) {
     if (!roomMatches(next, room, slug, targetBase)) continue;
-    rooms[key] = normalizeRoomContext({ ...room, observedStateRevision: revision });
+    rooms[key] = apply(room);
     touched = true;
   }
   let currentRoom = next.currentRoom;
   if (currentRoom && roomMatches(next, currentRoom, slug, targetBase)) {
-    currentRoom = normalizeRoomContext({ ...currentRoom, observedStateRevision: revision });
+    currentRoom = apply(currentRoom);
     touched = true;
   }
   if (!touched) {
-    const room = normalizeRoomContext({
+    const room = apply({
       slug,
       ...(baseUrl ? { baseUrl } : {}),
-      observedStateRevision: revision,
     });
     rooms[roomContextKey(room)] = room;
   }
@@ -602,42 +620,14 @@ export function setRoomForegroundObservation(
   };
 }
 
+/** @deprecated Old bypass entitlements are never recreated or reused. */
 export function setRoomStaleWriteRecovery(
   config: ProviderConfig,
-  slug: string,
-  baseUrl: string | undefined,
-  recovery: StaleWriteRecovery | undefined,
+  _slug: string,
+  _baseUrl: string | undefined,
+  _recovery: StaleWriteRecovery | undefined,
 ): ProviderConfig {
-  const next = normalizeProviderConfig(config);
-  const targetBase = baseUrl ? normalizeBaseUrl(baseUrl) : undefined;
-  const apply = (room: RoomContext): RoomContext => {
-    if (!recovery) {
-      const { staleWriteRecovery: _removed, ...withoutRecovery } = room;
-      return normalizeRoomContext(withoutRecovery);
-    }
-    return normalizeRoomContext({ ...room, staleWriteRecovery: recovery });
-  };
-  const rooms = { ...(next.rooms ?? {}) };
-  let touched = false;
-  for (const [key, room] of Object.entries(rooms)) {
-    if (!roomMatches(next, room, slug, targetBase)) continue;
-    rooms[key] = apply(room);
-    touched = true;
-  }
-  let currentRoom = next.currentRoom;
-  if (currentRoom && roomMatches(next, currentRoom, slug, targetBase)) {
-    currentRoom = apply(currentRoom);
-    touched = true;
-  }
-  if (!touched && recovery) {
-    const room = apply({ slug, ...(baseUrl ? { baseUrl } : {}) });
-    rooms[roomContextKey(room)] = room;
-  }
-  return {
-    ...next,
-    ...(currentRoom ? { currentRoom } : {}),
-    ...(Object.keys(rooms).length > 0 ? { rooms } : {}),
-  };
+  return normalizeProviderConfig(config);
 }
 
 /** Record a live discovery result. An absent capability invalidates any
@@ -653,7 +643,11 @@ export function setRoomCoordinationStateCapability(
   const targetBase = baseUrl ? normalizeBaseUrl(baseUrl) : undefined;
   const apply = (room: RoomContext): RoomContext => {
     if (capability === "absent") {
-      const { observedStateRevision: _removed, ...withoutObservation } = room;
+      const {
+        observedStateRevision: _removed,
+        observations: _scoped,
+        ...withoutObservation
+      } = room;
       return normalizeRoomContext({
         ...withoutObservation,
         coordinationStateCapability: capability,
@@ -1017,7 +1011,13 @@ function normalizeRoomContext(raw: Partial<RoomContext>): RoomContext {
     typeof raw.baseUrl === "string" && raw.baseUrl.trim().length > 0
       ? normalizeBaseUrl(raw.baseUrl)
       : undefined;
-  const staleWriteRecovery = normalizeStaleWriteRecovery(raw.staleWriteRecovery);
+  const observations =
+    raw.observations?.schema === 1 &&
+    typeof raw.observations.generation === "string" &&
+    raw.observations.generation.length > 0 &&
+    raw.observations.generation.length <= 100
+      ? raw.observations
+      : undefined;
   return {
     ...(provider ? { provider } : {}),
     ...(baseUrl ? { baseUrl } : {}),
@@ -1035,8 +1035,22 @@ function normalizeRoomContext(raw: Partial<RoomContext>): RoomContext {
     raw.lastSeenSeq >= 0
       ? { lastSeenSeq: raw.lastSeenSeq }
       : {}),
-    ...(typeof raw.observedStateRevision === "string" && raw.observedStateRevision.trim().length > 0
-      ? { observedStateRevision: normalizeObservedStateRevision(raw.observedStateRevision) }
+    ...(observations
+      ? {
+          observations: {
+            schema: 1 as const,
+            generation: observations.generation,
+            ...(typeof observations.conversation === "string" && observations.conversation.trim()
+              ? { conversation: normalizeObservedStateRevision(observations.conversation) }
+              : {}),
+            ...(typeof observations.global === "string" && observations.global.trim()
+              ? { global: normalizeObservedStateRevision(observations.global) }
+              : {}),
+          },
+          ...(typeof observations.global === "string" && observations.global.trim()
+            ? { observedStateRevision: normalizeObservedStateRevision(observations.global) }
+            : {}),
+        }
       : {}),
     ...(raw.readDelivery &&
     Number.isSafeInteger(raw.readDelivery.from) &&
@@ -1072,37 +1086,6 @@ function normalizeRoomContext(raw: Partial<RoomContext>): RoomContext {
     /^[0-9]+$/.test(raw.observedForegroundEpoch)
       ? { observedForegroundEpoch: normalizeForegroundEpoch(raw.observedForegroundEpoch) }
       : {}),
-    ...(staleWriteRecovery ? { staleWriteRecovery } : {}),
-  };
-}
-
-function normalizeStaleWriteRecovery(raw: unknown): StaleWriteRecovery | undefined {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const value = raw as Partial<StaleWriteRecovery>;
-  if (
-    typeof value.operation !== "string" ||
-    !/^[a-z][a-z0-9_.\/-]{0,199}$/.test(value.operation) ||
-    typeof value.requestBodySha256 !== "string" ||
-    !/^[0-9a-f]{64}$/.test(value.requestBodySha256) ||
-    typeof value.rejectedExpectedRevision !== "string" ||
-    value.rejectedExpectedRevision.length === 0 ||
-    typeof value.rejectedCurrentRevision !== "string" ||
-    value.rejectedCurrentRevision.length === 0 ||
-    typeof value.expiresAt !== "string" ||
-    !Number.isFinite(Date.parse(value.expiresAt))
-  ) {
-    return undefined;
-  }
-  return {
-    operation: value.operation,
-    requestBodySha256: value.requestBodySha256,
-    rejectedExpectedRevision: normalizeObservedStateRevision(value.rejectedExpectedRevision),
-    rejectedCurrentRevision: normalizeObservedStateRevision(value.rejectedCurrentRevision),
-    expiresAt: value.expiresAt,
-    ...(typeof value.readStateRevision === "string" && value.readStateRevision.length > 0
-      ? { readStateRevision: normalizeObservedStateRevision(value.readStateRevision) }
-      : {}),
-    ...(value.forceAvailable === true ? { forceAvailable: true } : {}),
   };
 }
 
@@ -1195,7 +1178,11 @@ function mergeRoomContexts(
   if (coordinationStateCapability !== undefined) {
     merged.coordinationStateCapability = coordinationStateCapability;
     if (coordinationStateCapability === "absent") {
-      const { observedStateRevision: _removed, ...withoutObservation } = merged;
+      const {
+        observedStateRevision: _removed,
+        observations: _scoped,
+        ...withoutObservation
+      } = merged;
       return normalizeRoomContext(withoutObservation);
     }
   }

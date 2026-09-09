@@ -3,24 +3,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
+import { observedFixture } from "../test-support/observation-fixture.js";
 import { runRoomCli } from "./room-cli.js";
 
 function fixture(extra: Record<string, unknown> = {}) {
   const config = join(mkdtempSync(join(tmpdir(), "grp-coordination-")), "config.json");
   writeFileSync(
     config,
-    JSON.stringify({
-      providers: {},
-      currentRoom: {
-        baseUrl: "https://operator.example",
-        slug: "room",
-        participantId: "p1",
-        token: "test-token",
-        lastSeenSeq: 5,
-        coordinationStateCapability: "absent",
-        ...extra,
-      },
-    }),
+    JSON.stringify(
+      observedFixture({
+        providers: {},
+        currentRoom: {
+          baseUrl: "https://operator.example",
+          slug: "room",
+          participantId: "p1",
+          token: "test-token",
+          lastSeenSeq: 5,
+          coordinationStateCapability: "absent",
+          ...extra,
+        },
+      }),
+    ),
   );
   const env = { GRP_CONFIG: config };
   const state = () => JSON.parse(readFileSync(config, "utf8")).currentRoom;
@@ -288,6 +291,7 @@ describe("coordination correctness", () => {
       revision: {
         id,
         ordinal: id === "r1" ? 1 : 2,
+        content: id === "r1" ? "old long text\n".repeat(2_000) : "new short text",
         blocks: [
           {
             id: "b1",

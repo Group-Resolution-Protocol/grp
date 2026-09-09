@@ -232,6 +232,12 @@ describe("provider config transactions", () => {
             slug: "newsroom",
             baseUrl: TEST_BASE_URL,
             observedStateRevision: opaque,
+            observations: {
+              schema: 1,
+              generation: "fixture-read",
+              global: opaque,
+              conversation: opaque,
+            },
           },
         ),
       env,

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as pathJoin } from "node:path";
@@ -95,7 +96,8 @@ function artifactRevision(
     revision: {
       id,
       ordinal,
-      sha256: ordinal === 1 ? "a".repeat(64) : "b".repeat(64),
+      content: `${unchanged}\n\n${changedText}`,
+      sha256: createHash("sha256").update(`${unchanged}\n\n${changedText}`).digest("hex"),
       blocks: [
         {
           id: "stable-1",
@@ -132,7 +134,7 @@ describe("spec 249 CLI review convergence", () => {
     const presentation = {
       mode: "full",
       fallback_reason: "first_revision",
-      current: { id: "revision-1", ordinal: 1, sha256: "a".repeat(64) },
+      current: { id: "revision-1", ordinal: 1 },
       base: null,
       changed_blocks: null,
       round: 1,
@@ -170,8 +172,8 @@ describe("spec 249 CLI review convergence", () => {
     const reviewRound = {
       mode: "diff",
       fallback_reason: null,
-      current: { id: "revision-2", ordinal: 2, sha256: "b".repeat(64) },
-      base: { id: "revision-1", ordinal: 1, sha256: "a".repeat(64) },
+      current: { id: "revision-2", ordinal: 2 },
+      base: { id: "revision-1", ordinal: 1 },
       changed_blocks: [{ id: "stable-2", change: "modified", current_number: 2, base_number: 2 }],
       round: 3,
       roster: [

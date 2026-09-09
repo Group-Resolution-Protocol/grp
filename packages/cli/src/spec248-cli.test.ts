@@ -263,6 +263,12 @@ describe("spec 248 CLI projections and read economy", () => {
     const env = testEnv({
       coordinationStateCapability: "experimental",
       observedStateRevision: "state-5",
+      observations: {
+        schema: 1,
+        generation: "fixture-read",
+        global: "state-5",
+        conversation: "state-5",
+      },
     });
     const secret = "full stale discussion body";
     const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {

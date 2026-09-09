@@ -34,13 +34,48 @@ it, read the next batch. After incorporating it, use `grp read --ack-through=N`.
 local: it cannot fetch and consume newer messages. Watches keep a separate
 notification bookmark and never acknowledge room content.
 
-Read-only `act review`, `artifact read`, and `artifact diff` use the same bounded
+Read-only `act review`, `act reviews`, `artifact read`, and `artifact diff` use the same bounded
 output. Later reviews lead with the reviewer-relative diff whenever a trusted
 base exists, even if the diff is longer than the full text. Retrieve exact blocks
 with `artifact read ID --revision-id=ID --blocks=START:END` (an explicitly marked
 excerpt). Content versions (`v2`) are distinct from artifact state counters.
-`--full` and `--json` deliberately request unbounded, lossless bulk output.
+Diffs compare full native content, including separators, whitespace and line
+endings. Available SHA-256 hashes are verified; unavailable native bytes are
+explicitly labeled, never reconstructed from block excerpts. Unshown diff context
+is byte-identical, not independently certified correct. `--full` and bare
+`--json` deliberately request unbounded bulk output.
 `read --json` retains `_cli.schema=grp.read.v1` and its completeness/cursor fields.
+
+Use `--max-chars=N` (2,048–12,000 UTF-16 code units, including framing) to set a
+smaller page budget. `--json --max-chars=N` returns a bounded presentation, not
+bulk wire data: `schema: "grp.output-page.v1"`, rendered `text`, source identity
+and capture time, `delivery` with `replay_argv` and nullable `next_argv`, and
+room-event `coverage` (null for focused resources). Exact artifact descriptors
+include base/target revision IDs and available hashes. Argument arrays exclude
+credentials: pass them as arguments, never evaluate them as shell code.
+`ack_argv` and `fresh_fetch_argv` distinguish local acknowledgment from another
+host fetch. Source completeness, local page completion, and observation eligibility
+are separate. Eligibility is not proof that a later local state update succeeded.
+Continuation inherits its saved format/budget; incompatible overrides fail.
+`--full` cannot combine with `--max-chars`.
+
+`read --status [--json]` inspects local acknowledged/delivered positions, scoped
+observations and up to six cached room reads, without fetching or changing progress.
+Add `--continue=TOKEN` to inspect one exact delivery. Completed deliveries have
+no next page; expired or unavailable tokens require a fresh read. Structured
+errors retain nonzero exit status and distinguish `delivery.complete`,
+`delivery.out_of_order`, `delivery.expired`, `delivery.unavailable`,
+`delivery.invalid`, and `delivery.format_mismatch`.
+
+Conversation writes and strict work use separate observation certificates.
+A successful post cannot certify unseen room work. Upgrading discards old
+unscoped certificates and stale-post bypass state while preserving credentials
+and acknowledged positions; complete a fresh room read to establish new proof.
+`--force-stale-post` is retired and fails before sending a request. Neither
+receipts nor focused reads silently fetch catch-up or move a formal review to
+another revision. Text mutation confirmations are compact; inspect their exact
+object pointers for longer content. `--json` is the scripting interface; clipped
+stdout or a shell pipeline's final status cannot prove the original command succeeded.
 
 First delivery is sequential; any delivered page, including the first and last,
 can be replayed without advancing acknowledgment, observation, or recovery.

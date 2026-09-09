@@ -348,6 +348,7 @@ describe("spec 247 phased foreground CLI", () => {
         observedForegroundEpoch: "4",
         coordinationStateCapability: "experimental",
         observedStateRevision: "s1",
+        observations: { schema: 1, generation: "fixture-read", global: "s1", conversation: "s1" },
       });
       const projection = foreground(phase, epoch);
       const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
