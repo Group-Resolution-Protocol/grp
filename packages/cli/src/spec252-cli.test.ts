@@ -301,14 +301,15 @@ describe("exact focused presentation and compact receipts", () => {
 });
 
 describe("bounded structured room reads", () => {
-  it.each(["omitted_snapshot", "skipped_prefix"])(
+  it.each(["omitted_snapshot", "omitted_legacy_snapshot", "skipped_prefix"])(
     "does not prescribe an unavailable acknowledgment for %s",
     async (kind) => {
       const f = fixture();
       const response =
-        kind === "omitted_snapshot"
+        kind !== "skipped_prefix"
           ? {
               slug: "room",
+              ...(kind === "omitted_snapshot" ? { brief: "Room open" } : {}),
               current_through: 6,
               state_revision: "46",
               discussion: [],
@@ -325,7 +326,7 @@ describe("bounded structured room reads", () => {
         await runRoomCli(
           [
             "read",
-            kind === "omitted_snapshot" ? "--snapshot" : "--since=5",
+            kind !== "skipped_prefix" ? "--snapshot" : "--since=5",
             "--json",
             "--max-chars=4096",
           ],

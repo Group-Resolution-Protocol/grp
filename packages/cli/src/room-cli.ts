@@ -2597,22 +2597,30 @@ async function roomRead(
     return;
   }
   const decisions = Array.isArray(response.decisions) ? response.decisions.length : 0;
-  io.stdout(
-    withPersonaReadHeader(
-      [
-        `room ${String(response.slug ?? ref.slug)}`,
-        `status=${String(response.status ?? "unknown")}`,
-        `participants=${String(response.participant_count ?? "unknown")}`,
-        `decisions=${decisions}`,
-        response.active_decision_id
-          ? `active_decision=${String(response.active_decision_id)}`
-          : null,
-      ]
-        .filter(Boolean)
-        .join(" "),
-      io.env,
-    ),
+  const summary = withPersonaReadHeader(
+    [
+      `room ${String(response.slug ?? ref.slug)}`,
+      `status=${String(response.status ?? "unknown")}`,
+      `participants=${String(response.participant_count ?? "unknown")}`,
+      `decisions=${decisions}`,
+      response.active_decision_id ? `active_decision=${String(response.active_decision_id)}` : null,
+    ]
+      .filter(Boolean)
+      .join(" "),
+    io.env,
   );
+  if (flags.quiet !== "true") {
+    boundedReadOutput(
+      `${summary}\n${deltaUnsupportedNote}Legacy summary only; required room content was not displayed. Bulk data: ${grpCommand(`read --json${roomHintArg(ref.slug, ref, io.env)}`)}\n`,
+      "read",
+      ref,
+      flags,
+      io,
+      { ...response, _cli_bodies_hidden: true },
+    );
+    return;
+  }
+  io.stdout(summary);
   io.stdout("\n");
   if (deltaUnsupportedNote) io.stdout(deltaUnsupportedNote);
   persistObservedStateRevisionFromRead(ref, { ...response, _cli_bodies_hidden: true }, io.env);
