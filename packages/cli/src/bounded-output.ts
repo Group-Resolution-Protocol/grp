@@ -50,6 +50,7 @@ interface Delivery {
   argv?: string[];
   metadata?: Record<string, unknown>;
   capturedAt?: string;
+  bookendedControls?: boolean;
 }
 
 export class OutputDeliveryError extends Error {
@@ -122,6 +123,7 @@ export function inspectOutputDeliveries(options: {
       format: d.format ?? "text",
       next_argv: d.expires > Date.now() && d.next < d.pages.length ? navigation(d, d.next) : null,
       surface: d.metadata?.surface ?? null,
+      room_read: d.completion !== null,
     }));
 }
 
@@ -218,7 +220,13 @@ function frame(d: Delivery, index: number, prefix?: { through: number | undefine
       ? "\nCatch up from the acknowledged position with a fresh room read; this source cannot authorize acknowledgment. This delivery has no further local page."
       : "\nThe captured head is not fully covered. Finish incorporating and acknowledge this delivered prefix, then fetch a fresh room read. This delivery has no further local page."
     : "";
-  return `DELIVERY ${index + 1}/${d.pages.length} — ${final ? "FINAL fragment" : "INCOMPLETE"}.\n${labels ? `Content: ${labels}\n` : ""}${identity}${coverage}Replay this page: ${d.command} --continue=${d.id}:${index}\nSource captured: ${d.capturedAt ?? "legacy capture"}. Local delivery is not a fresh state check.\n\n${page.text}\n${footer}${ack}${more}\n`;
+  // Navigation is outside user content at both boundaries. A shell may expose
+  // only a prefix or suffix; neither should require constructing a page index.
+  const progress =
+    d.bookendedControls && !final && c
+      ? "Room observation not established by this partial delivery.\n"
+      : "";
+  return `DELIVERY ${index + 1}/${d.pages.length} — ${final ? "FINAL fragment" : "INCOMPLETE"}.\n${d.bookendedControls ? `${footer}\n` : ""}${progress}${labels ? `Content: ${labels}\n` : ""}${identity}${coverage}Replay this page: ${d.command} --continue=${d.id}:${index}\nSource captured: ${d.capturedAt ?? "legacy capture"}. Local delivery is not a fresh state check.\n\n${page.text}\n${footer}${ack}${more}\n`;
 }
 
 function chunkEnd(text: string, offset: number, budget: number): number {
@@ -424,6 +432,7 @@ export function writeBoundedOutput(options: {
         argv: options.argv ?? [options.command],
         metadata: options.metadata ?? {},
         capturedAt: new Date().toISOString(),
+        bookendedControls: true,
       };
       let budget = (d.maxChars ?? OUTPUT_PAGE_CHARS) - 512;
       for (;;) {

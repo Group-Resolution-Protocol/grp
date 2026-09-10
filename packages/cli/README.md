@@ -86,7 +86,13 @@ and 32 MB total; oldest expiry is evicted first. Expired, evicted, corrupt, or
 incompatible tokens fail explicitly and never fetch replacement content.
 They fetch no new
 state and do not prove a review is still pending. A stale mutation reports
-`NOT POSTED` or `NOT CHANGED` and directs a separate `grp read`; it neither
+`NOT POSTED` or `NOT CHANGED` and supplies a room/operator-scoped fresh read.
+If the latest saved room read is unfinished, recovery also supplies its exact
+continuation; those bytes are pinned, not a new fetch. A delivered but
+unacknowledged prefix has a separate acknowledgment command, conditional on
+incorporating it. Without acknowledgment, bare reads repeat from the unchanged
+cursor. Structured errors expose `read_recovery` argv fields and any credential
+option names that must be reused (never their values). Recovery neither
 auto-retries nor silently adopts conversation. Delivery cannot detect a caller
 discarding stdout with shell clipping; it is not proof of comprehension.
 

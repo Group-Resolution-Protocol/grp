@@ -6458,7 +6458,7 @@ describe.skip("obsolete spec 224 candidate — replaced by spec 228", () => {
     expect(code).toBe(1);
     expect(mutationCalls).toBe(0);
     expect(stderr).toContain("fresh room read before guarded writes");
-    expect(stderr).toContain("Run: grp read");
+    expect(stderr).toContain("Read current room state: grp read");
     expect(JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8")).currentRoom).toEqual(
       expect.objectContaining({ coordinationStateCapability: "experimental" }),
     );
@@ -11245,8 +11245,12 @@ describe("spec 117 — collaboration defaults (CLI)", () => {
       }),
     ).toBe(1);
     expect(stderr).toContain("NOT CHANGED");
-    expect(stderr).toContain("Read the changed room state: grp read");
-    expect(stderr).toContain("After incorporating it, retry your intended command");
+    expect(stderr).toContain(
+      "Read current room state: grp read abc123 --base=https://operator.example",
+    );
+    expect(stderr).toContain(
+      "After incorporating the complete read, reconsider and retry your intended command",
+    );
     expect(stderr).not.toContain("--post-anyway");
 
     let stdout = "";

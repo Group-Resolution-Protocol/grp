@@ -95,6 +95,7 @@ const MAX_CLI_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_CLI_SSE_BUFFER_BYTES = 2 * 1024 * 1024;
 
 class SseBufferLimitError extends Error {}
+class RoomReadRequiredError extends Error {}
 
 /** Spec 224 candidate — a false strong room-state precondition. */
 class RoomStateChangedError extends Error {
@@ -135,6 +136,12 @@ interface ForegroundCommandState {
 }
 
 const foregroundCommandStates = new WeakMap<RoomCliIo, ForegroundCommandState>();
+// Locally resolved destination/identity of the guarded operation, not inferred
+// from server error text or whichever room becomes current during the request.
+const guardedReadContexts = new WeakMap<
+  RoomCliIo,
+  { ref: RoomRef; flags: Record<string, string> }
+>();
 
 interface SseMessage {
   id?: string;
@@ -881,6 +888,7 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
     if (err instanceof RoomStateChangedError) {
       const canForce = ["discuss", "ask", "propose"].includes(parsed.positionals[0] ?? "");
       const recoveryForeground = err.foreground ?? null;
+      const readRecovery = guardedReadRecovery(resolvedIo);
       if (isJson(parsed.flags)) {
         resolvedIo.stdout(
           renderJson({
@@ -894,12 +902,13 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
                 ...(recoveryForeground ?? {}),
               },
             },
-            suggested_command: grpCommand("read"),
+            suggested_command: recoveryCommand(readRecovery.fresh_read_argv),
             recovery: "read_then_retry",
+            read_recovery: readRecovery,
           }),
         );
       } else {
-        const message = roomStateChangedMessage(err, canForce);
+        const message = `${roomStateChangedMessage(err, canForce)}\n${renderGuardedReadRecovery(readRecovery)}`;
         resolvedIo.stderr(
           recoveryForeground && !message.includes("\nForeground:")
             ? insertForegroundBlock(
@@ -944,6 +953,9 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
                     : "client.validation",
             message: err instanceof Error ? err.message : String(err),
             ...(err instanceof OutputDeliveryError ? { recovery: err.recovery } : {}),
+            ...(err instanceof RoomReadRequiredError
+              ? { read_recovery: guardedReadRecovery(resolvedIo), posted: false }
+              : {}),
             ...(err instanceof CliHttpError ? { details: err.details } : {}),
           },
         }),
@@ -1015,8 +1027,104 @@ function roomStateChangedMessage(error: RoomStateChangedError, canForce: boolean
       ? "NOT POSTED — the room changed since your last read."
       : "NOT CHANGED — the room changed since your last read.",
     "No automatic retry was attempted. No catch-up was fetched or acknowledged.",
-    `Read the changed ${canForce ? "conversation" : "room state"}: ${grpCommand("read")}`,
-    "After incorporating it, retry your intended command.",
+  ].join("\n");
+}
+
+function recoveryCommand(argv: string[]): string {
+  return grpCommand(
+    argv
+      .map((arg) => (/^[a-zA-Z0-9_./:=@-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`))
+      .join(" "),
+  );
+}
+
+function guardedReadRecovery(io: RoomCliIo): {
+  fresh_read_argv: string[];
+  continue_argv: string[] | null;
+  acknowledge_if_incorporated_argv: string[] | null;
+  credential_flags_required: string[];
+} {
+  const context = guardedReadContexts.get(io);
+  const recovery = {
+    fresh_read_argv: context
+      ? ["read", context.ref.slug, `--base=${context.ref.baseUrl}`]
+      : ["read"],
+    continue_argv: null as string[] | null,
+    acknowledge_if_incorporated_argv: null as string[] | null,
+    credential_flags_required: context
+      ? ["token", "bearer", "mandate", "password", "passcode"].filter(
+          (key) => context.flags[key] !== undefined,
+        )
+      : [],
+  };
+  if (!context) return recovery;
+  const { ref, flags } = context;
+  try {
+    const room = findRememberedRoom(readProviderConfig(io.env), ref.slug, ref.baseUrl);
+    const through = room?.readDelivery?.through;
+    const from = room?.readDelivery?.from;
+    const acknowledged = room?.lastSeenSeq ?? 0;
+    const explicitAuth = recovery.credential_flags_required.length > 0;
+    if (
+      !explicitAuth &&
+      through !== undefined &&
+      from !== undefined &&
+      through > acknowledged &&
+      (room?.readDelivery?.kind === "snapshot" || from <= acknowledged)
+    ) {
+      recovery.acknowledge_if_incorporated_argv = [
+        ...recovery.fresh_read_argv,
+        `--ack-through=${through}`,
+      ];
+    }
+    const latest = inspectOutputDeliveries({
+      configPath: providerConfigPath(io.env),
+      scope: JSON.stringify([
+        ref.baseUrl,
+        ref.slug,
+        callerIdentity(ref, io.env).participantId,
+        authFromFlags(flags, ref, io.env),
+        "read",
+      ]),
+    })[0];
+    if (
+      latest &&
+      latest.room_read === true &&
+      !latest.expired &&
+      Array.isArray(latest.next_argv) &&
+      ["room.catch_up", "room.snapshot"].includes(String(latest.surface)) &&
+      latest.next_argv.every((arg) => typeof arg === "string")
+    ) {
+      recovery.continue_argv = latest.next_argv as string[];
+    }
+  } catch {
+    // Missing/corrupt local metadata must never mask the original rejection.
+  }
+  return recovery;
+}
+
+function renderGuardedReadRecovery(recovery: ReturnType<typeof guardedReadRecovery>): string {
+  return [
+    ...(recovery.credential_flags_required.length
+      ? [
+          `Reuse the same credential options with these commands: ${recovery.credential_flags_required.map((key) => `--${key}`).join(", ")} (values not echoed).`,
+        ]
+      : []),
+    ...(recovery.continue_argv
+      ? [
+          "Latest saved room read is unfinished; it has not established a complete room observation.",
+          `Continue this exact delivery: ${recoveryCommand(recovery.continue_argv)}`,
+          "These are pinned bytes; finishing them does not check for newer activity.",
+        ]
+      : []),
+    ...(recovery.acknowledge_if_incorporated_argv
+      ? [
+          `If already incorporated, acknowledge the delivered prefix: ${recoveryCommand(recovery.acknowledge_if_incorporated_argv)}`,
+          "Acknowledgment is local only. Without it, a fresh read repeats from the unchanged position.",
+        ]
+      : []),
+    `Read current room state: ${recoveryCommand(recovery.fresh_read_argv)}`,
+    "After incorporating the complete read, reconsider and retry your intended command.",
   ].join("\n");
 }
 
@@ -2324,9 +2432,11 @@ function boundedReadOutput(
     metadata: {
       surface:
         command === "read"
-          ? Array.isArray(completion?.new)
-            ? "room.catch_up"
-            : "room.snapshot"
+          ? !completion
+            ? "room.focused"
+            : Array.isArray(completion?.new)
+              ? "room.catch_up"
+              : "room.snapshot"
           : command.split(" ").slice(0, 2).join("."),
       room: ref.slug,
       operator: ref.baseUrl,
@@ -2860,6 +2970,7 @@ async function guardedExpectedRoomRevision(
   io: RoomCliIo,
   operation: string,
 ): Promise<{ revision: string; generation: string } | undefined> {
+  guardedReadContexts.set(io, { ref, flags });
   if (flags["force-stale-post"] !== undefined) {
     throw new Error(
       "--force-stale-post has been retired; read current conversation and reconsider before resubmitting. No mutation was sent.",
@@ -2889,8 +3000,8 @@ async function guardedExpectedRoomRevision(
   )?.observations;
   const revision = observations?.[observationScope(operation)];
   if (!revision || !observations) {
-    throw new Error(
-      `This host requires a fresh room read before guarded writes. Run: ${grpCommand("read")}`,
+    throw new RoomReadRequiredError(
+      `This host requires a fresh room read before guarded writes. No mutation was sent.\n${renderGuardedReadRecovery(guardedReadRecovery(io))}`,
     );
   }
   return { revision, generation: observations.generation };
@@ -9506,7 +9617,7 @@ function renderRoomRead(
   const page = isRecord(response.page) ? response.page : {};
   const roomEvent = numberOrNull(page.room_event) ?? numberOrNull(response.current_through) ?? 0;
   lines.push(
-    `SNAPSHOT — current working state; latest ${discussionCount} of ${totalDiscussion} discussion post${totalDiscussion === 1 ? "" : "s"}; ${options.acknowledged ? "position acknowledged through" : "position unchanged at"} event ${roomEvent}.`,
+    `SNAPSHOT — current working state; latest ${discussionCount} of ${totalDiscussion} discussion post${totalDiscussion === 1 ? "" : "s"}; captured through event ${roomEvent}. ${options.acknowledged ? `Position acknowledged through event ${roomEvent}` : `Acknowledged position: ${rememberedLastSeenSeq(ref, env) ?? "none"} (unchanged)`}.`,
   );
   appendViewerIdentity(lines, response);
   if (!options.acknowledged && !options.deferAcknowledgment) {
@@ -9629,7 +9740,7 @@ function renderPhasedRoomRead(
   const page = isRecord(response.page) ? response.page : {};
   const roomEvent = numberOrNull(page.room_event) ?? numberOrNull(response.current_through) ?? 0;
   lines.push(
-    `SNAPSHOT — current working state; latest ${discussion.length} of ${discussion.length + earlierDiscussion} discussion post${discussion.length + earlierDiscussion === 1 ? "" : "s"}; ${options.acknowledged ? "position acknowledged through" : "position unchanged at"} event ${roomEvent}.`,
+    `SNAPSHOT — current working state; latest ${discussion.length} of ${discussion.length + earlierDiscussion} discussion post${discussion.length + earlierDiscussion === 1 ? "" : "s"}; captured through event ${roomEvent}. ${options.acknowledged ? `Position acknowledged through event ${roomEvent}` : `Acknowledged position: ${rememberedLastSeenSeq(ref, env) ?? "none"} (unchanged)`}.`,
   );
   appendViewerIdentity(lines, response);
   const room = roomHintArg(String(response.slug ?? ref.slug), ref, env);

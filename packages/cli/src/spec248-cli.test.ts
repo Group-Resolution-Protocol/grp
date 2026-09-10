@@ -303,7 +303,9 @@ describe("spec 248 CLI projections and read economy", () => {
     expect(await runRoomCli(["discuss", "stale post"], io)).toBe(1);
     const rendered = stderr.join("");
     expect(rendered).not.toContain(secret);
-    expect(rendered).toContain("Read the changed conversation: grp read");
+    expect(rendered).toContain(
+      `Read current room state: grp read ${SLUG} --base=https://operator.example`,
+    );
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(JSON.parse(readFileSync(env.GRP_CONFIG, "utf8")).currentRoom.observedStateRevision).toBe(
       "state-5",
