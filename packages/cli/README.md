@@ -123,4 +123,19 @@ the result.
 
 Full documentation: [grp.dev/docs/cli](https://grp.dev/docs/cli).
 
+## Optional speaking-turn experiment
+
+On hosts that explicitly enable speaking turns, `grp read` shows the holder,
+your queue position, and lease/maximum-tenure deadlines. Use `grp turn request`,
+`grp watch --turn`, `grp turn renew`, and `grp turn release`. Requesting or
+watching is not reading: complete a current room read during your grant before
+`discuss`, `ask`, or `propose`. Successful contributions consume the turn;
+failed writes retain it. Voting, reviews, and work remain independent.
+
+Renewal is explicit, never a background keepalive. `--request-id=ID` and
+`--epoch=N` select exact requests/grants; otherwise the CLI remembers them for
+the same room, operator, and credential. Uncertain requests retain their ID for
+retry. No request or contribution is automatically resubmitted. This unpublished
+host experiment leaves default open-room behavior unchanged.
+
 Apache-2.0.

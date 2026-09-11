@@ -126,6 +126,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
       "timeline",
       "history",
       "watch",
+      "turn",
       "invite",
       "members",
       "settings",

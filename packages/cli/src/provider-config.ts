@@ -68,6 +68,7 @@ export interface RoomContext {
    * authenticated phased response. This is a decimal equality token, not a
    * client-side counter. */
   observedForegroundEpoch?: string;
+  speakingTurn?: { identity: string; requestId?: string; epoch?: string; observation?: string };
   /** Legacy deserialization type only. Normalization always discards it. */
   staleWriteRecovery?: StaleWriteRecovery;
 }
@@ -620,6 +621,31 @@ export function setRoomForegroundObservation(
   };
 }
 
+export function setRoomSpeakingTurn(
+  config: ProviderConfig,
+  slug: string,
+  baseUrl: string,
+  speakingTurn: RoomContext["speakingTurn"],
+): ProviderConfig {
+  const next = normalizeProviderConfig(config);
+  const apply = (room: RoomContext): RoomContext => {
+    if (!roomMatches(next, room, slug, normalizeBaseUrl(baseUrl))) return room;
+    const { speakingTurn: _old, ...rest } = room;
+    return normalizeRoomContext({ ...rest, ...(speakingTurn ? { speakingTurn } : {}) });
+  };
+  return {
+    ...next,
+    ...(next.currentRoom ? { currentRoom: apply(next.currentRoom) } : {}),
+    ...(next.rooms
+      ? {
+          rooms: Object.fromEntries(
+            Object.entries(next.rooms).map(([key, room]) => [key, apply(room)]),
+          ),
+        }
+      : {}),
+  };
+}
+
 /** @deprecated Old bypass entitlements are never recreated or reused. */
 export function setRoomStaleWriteRecovery(
   config: ProviderConfig,
@@ -1082,6 +1108,23 @@ function normalizeRoomContext(raw: Partial<RoomContext>): RoomContext {
       ? { coordinationStateCapability: raw.coordinationStateCapability }
       : {}),
     ...(raw.foregroundPolicy === "phased_serial" ? { foregroundPolicy: "phased_serial" } : {}),
+    ...(raw.speakingTurn && typeof raw.speakingTurn.identity === "string"
+      ? {
+          speakingTurn: {
+            identity: raw.speakingTurn.identity,
+            ...(typeof raw.speakingTurn.requestId === "string"
+              ? { requestId: raw.speakingTurn.requestId }
+              : {}),
+            ...(typeof raw.speakingTurn.epoch === "string"
+              ? { epoch: raw.speakingTurn.epoch }
+              : {}),
+            ...(typeof raw.speakingTurn.observation === "string" &&
+            /^[a-zA-Z0-9_.-]{1,256}$/.test(raw.speakingTurn.observation)
+              ? { observation: raw.speakingTurn.observation }
+              : {}),
+          },
+        }
+      : {}),
     ...(typeof raw.observedForegroundEpoch === "string" &&
     /^[0-9]+$/.test(raw.observedForegroundEpoch)
       ? { observedForegroundEpoch: normalizeForegroundEpoch(raw.observedForegroundEpoch) }

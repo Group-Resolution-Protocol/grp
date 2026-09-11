@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   publicKeyFromJwks,
@@ -41,6 +41,7 @@ import {
   setRoomForegroundObservation,
   setRoomLastSeenSeq,
   setRoomObservedStateRevision,
+  setRoomSpeakingTurn,
   updateProviderConfig,
 } from "./provider-config.js";
 import { type CliCreateAccess, resolveCliCreateAccess } from "./room-access.js";
@@ -284,6 +285,7 @@ const MUTABLE_SETTING_KEYS = [
 // remain supported and are normalized because the downstream presentation
 // flags intentionally use the simple string `"true"` contract.
 const BOOLEAN_CLI_FLAG_KEYS = new Set([
+  "turn",
   "agreement",
   "as-discussion",
   "ack",
@@ -808,6 +810,14 @@ export async function runRoomCli(argv: string[], io: Partial<RoomCliIo> = {}): P
           resolvedIo,
         );
         return 0;
+      case "turn":
+        await roomTurn(
+          targetOrCurrent(parsed.positionals[2], parsed.flags, resolvedIo),
+          maybeTarget,
+          parsed.flags,
+          resolvedIo,
+        );
+        return 0;
       case "watch":
         await roomWatch(
           targetOrCurrent(maybeTarget, parsed.flags, resolvedIo),
@@ -1207,6 +1217,11 @@ function roomFlagSet(...groups: string[][]): ReadonlySet<string> {
 }
 
 const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
+  turn: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, ROOM_ACTION_OUTPUT_FLAG_KEYS, [
+    "request-id",
+    "epoch",
+    "idempotency-key",
+  ]),
   enter: roomFlagSet(ROOM_REFERENCE_FLAG_KEYS, ["json"]),
   current: roomFlagSet(["json"]),
   rooms: roomFlagSet(["json"]),
@@ -1523,6 +1538,7 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
     "since-event-id",
   ]),
   watch: roomFlagSet(ROOM_AUTHENTICATED_REFERENCE_FLAG_KEYS, [
+    "turn",
     "jsonl",
     "timeout",
     "until",
@@ -2332,8 +2348,21 @@ function boundedReadOutput(
   source?: Record<string, unknown>,
 ): void {
   let completion = readCompletion;
+  if (completion)
+    completion = { ...completion, _cli_turn_identity: speakingTurnIdentity(ref, flags, io.env) };
   let text = rendered;
   let framedUnits = units;
+  const turnBlock =
+    completion && isRecord(completion.speaking_turn)
+      ? renderSpeakingTurn(completion.speaking_turn, roomHintArg(ref.slug, ref, io.env))
+      : null;
+  if (turnBlock && text !== undefined && !isJson(flags)) {
+    text = `${turnBlock}\n${text}`;
+    if (framedUnits?.length)
+      framedUnits = framedUnits.map((unit, index) =>
+        index === 0 ? { ...unit, text: `${turnBlock}\n${unit.text}` } : unit,
+      );
+  }
   // Include foreground framing before pagination, never after the budget check.
   const foregroundState = foregroundCommandStates.get(io);
   if (
@@ -2622,6 +2651,7 @@ async function roomRead(
           _cli_delivery_from: since,
           _cli_observation_schema: 1,
           _cli_observation_before: observationBefore,
+          _cli_turn_identity: speakingTurnIdentity(ref, flags, io.env),
         },
         io.env,
       );
@@ -2676,6 +2706,7 @@ async function roomRead(
         ...response,
         _cli_observation_schema: 1,
         _cli_observation_before: observationBefore,
+        _cli_turn_identity: speakingTurnIdentity(ref, flags, io.env),
       },
       io.env,
     );
@@ -2934,6 +2965,19 @@ function persistObservedStateRevisionFromRead(
     );
     if (!revision) return next;
     next = setRoomObservedStateRevision(next, ref.slug, ref.baseUrl, revision);
+    if (isRecord(response.speaking_turn) && typeof response._cli_turn_identity === "string") {
+      const turn = response.speaking_turn;
+      const own = isRecord(turn.own) ? turn.own : {};
+      const holder = isRecord(turn.holder) ? turn.holder : {};
+      next = setRoomSpeakingTurn(next, ref.slug, ref.baseUrl, {
+        identity: response._cli_turn_identity,
+        ...(typeof own.request_id === "string" ? { requestId: own.request_id } : {}),
+        ...(own.request_id === holder.request_id && typeof holder.epoch === "string"
+          ? { epoch: holder.epoch }
+          : {}),
+        ...(typeof turn.observation === "string" ? { observation: turn.observation } : {}),
+      });
+    }
     return next;
   }, env);
 }
@@ -7436,12 +7480,191 @@ export function parseWatchTimeout(
   return Math.min(3600, Math.max(1, Math.floor(n)));
 }
 
+function speakingTurnIdentity(
+  ref: RoomRef,
+  flags: Record<string, string>,
+  env: Record<string, string | undefined>,
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify([ref.baseUrl, ref.slug, authFromFlags(flags, ref, env)]))
+    .digest("hex");
+}
+
+function renderSpeakingTurn(turn: Record<string, unknown>, roomArg = ""): string {
+  const holder = isRecord(turn.holder) ? turn.holder : null;
+  const own = isRecord(turn.own) ? turn.own : null;
+  if (turn.concluded === true) return "Speaking turns: room concluded.\n";
+  if (own?.status === "held")
+    return [
+      `Your speaking turn: ${own.request_id}; epoch ${holder?.epoch}.`,
+      `Lease ends: ${holder?.expires_at}; maximum tenure: ${holder?.max_until}.`,
+      "Required before contribution: a complete current room read during this grant.",
+      `Available: ${grpCommand(`read${roomArg}`)}; discuss, ask, or propose once; ${grpCommand(`turn renew${roomArg}`)}; ${grpCommand(`turn release${roomArg}`)}.`,
+    ].join("\n");
+  if (own?.status === "queued")
+    return [
+      `Waiting for your speaking turn: position ${own.queue_position}; request ${own.request_id}.`,
+      `Queue presence ends: ${own.expires_at}.`,
+      `Available: ${grpCommand(`watch --turn${roomArg}`)}; ${grpCommand(`turn renew${roomArg}`)}; ${grpCommand(`turn release${roomArg}`)}.`,
+    ].join("\n");
+  return `Speaking turns enabled${holder ? `; current holder ${holder.participant_id}, until ${holder.expires_at}` : ""}.\nAvailable: ${grpCommand(`turn request${roomArg}`)}.\n`;
+}
+
+function rememberSpeakingTurn(
+  ref: RoomRef,
+  flags: Record<string, string>,
+  io: RoomCliIo,
+  turn: Record<string, unknown>,
+): void {
+  const identity = speakingTurnIdentity(ref, flags, io.env);
+  const own = isRecord(turn.own) ? turn.own : {};
+  const holder = isRecord(turn.holder) ? turn.holder : {};
+  const requestId = stringOrNull(own.request_id);
+  const epoch = requestId && requestId === holder.request_id ? stringOrNull(holder.epoch) : null;
+  updateProviderConfig((config) => {
+    const previous = findRememberedRoom(config, ref.slug, ref.baseUrl)?.speakingTurn;
+    return setRoomSpeakingTurn(config, ref.slug, ref.baseUrl, {
+      identity,
+      ...(requestId ? { requestId } : {}),
+      ...(epoch ? { epoch } : {}),
+      ...(previous?.identity === identity &&
+      previous.requestId === requestId &&
+      previous.epoch === epoch &&
+      previous.observation
+        ? { observation: previous.observation }
+        : {}),
+    });
+  }, io.env);
+}
+
+async function roomTurn(
+  target: string,
+  operation: string | undefined,
+  flags: Record<string, string>,
+  io: RoomCliIo,
+): Promise<void> {
+  if (operation !== "request" && operation !== "renew" && operation !== "release")
+    throw new Error("use grp turn request|renew|release [room]");
+  const ref = resolveRoomRef(target, flags, io.env);
+  const auth = authFromFlags(flags, ref, io.env);
+  if (!auth || auth.kind !== "token")
+    throw new Error("speaking-turn commands currently require a participant token");
+  const identity = speakingTurnIdentity(ref, flags, io.env);
+  const previous = findRememberedRoom(
+    readProviderConfig(io.env),
+    ref.slug,
+    ref.baseUrl,
+  )?.speakingTurn;
+  const own = previous?.identity === identity ? previous : undefined;
+  const requestId =
+    flags["request-id"] ??
+    own?.requestId ??
+    (operation === "request" ? `${Date.now()}_${randomUUID()}` : undefined);
+  if (!requestId)
+    throw new Error("No remembered speaking request; read the room or supply --request-id");
+  const epoch = flags.epoch ?? own?.epoch;
+  // Retain the exact request through a lost response. Retrying cannot silently
+  // enqueue a new operation after the original request has ended.
+  if (operation === "request")
+    updateProviderConfig(
+      (config) =>
+        setRoomSpeakingTurn(config, ref.slug, ref.baseUrl, { ...own, identity, requestId }),
+      io.env,
+    );
+  const response = await requestJson<Record<string, unknown>>(
+    ref.baseUrl,
+    `/api/rooms/${encodeURIComponent(ref.slug)}/turns`,
+    io,
+    {
+      method: "POST",
+      auth,
+      body: { operation, request_id: requestId, ...(epoch !== undefined ? { epoch } : {}) },
+      headers: {
+        "idempotency-key": validatedIdempotencyKey(flags["idempotency-key"]) ?? randomUUID(),
+      },
+    },
+  );
+  if (!isRecord(response.speaking_turn)) throw new Error("host did not return speaking-turn state");
+  rememberSpeakingTurn(ref, flags, io, response.speaking_turn);
+  if (isJson(flags)) io.stdout(renderJson(response));
+  else if (flags.quiet !== "true")
+    io.stdout(
+      `${renderSpeakingTurn(response.speaking_turn, roomHintArg(ref.slug, ref, io.env))}\n`,
+    );
+}
+
+async function roomTurnWatch(
+  ref: RoomRef,
+  flags: Record<string, string>,
+  io: RoomCliIo,
+): Promise<void> {
+  const auth = authFromFlags(flags, ref, io.env);
+  if (!auth) throw new Error("watch --turn requires participant credentials");
+  const previous = findRememberedRoom(
+    readProviderConfig(io.env),
+    ref.slug,
+    ref.baseUrl,
+  )?.speakingTurn;
+  const requestId =
+    flags.turn !== "true"
+      ? flags.turn
+      : previous?.identity === speakingTurnIdentity(ref, flags, io.env)
+        ? previous.requestId
+        : undefined;
+  if (!requestId)
+    throw new Error(
+      "No remembered speaking request; use grp turn request or watch --turn=REQUEST_ID",
+    );
+  const seconds = parseWatchTimeout(flags.timeout, DEFAULT_FOREGROUND_WATCH_TIMEOUT_SECONDS);
+  const deadline = seconds === null ? Number.POSITIVE_INFINITY : Date.now() + seconds * 1000;
+  while (Date.now() < deadline) {
+    const response = await requestJson<Record<string, unknown>>(
+      ref.baseUrl,
+      `/api/rooms/${encodeURIComponent(ref.slug)}/next-action`,
+      io,
+      {
+        auth,
+        query: {
+          for: "activity",
+          turn_request: requestId,
+          wait: Math.min(50, Math.max(0, (deadline - Date.now()) / 1000)),
+        },
+      },
+    );
+    if (response.status === "timeout") continue;
+    if (response.status === "speaking_turn" && isRecord(response.speaking_turn)) {
+      rememberSpeakingTurn(ref, flags, io, response.speaking_turn);
+      const target = isRecord(response.speaking_turn.target) ? response.speaking_turn.target : {};
+      io.stdout(
+        `Speaking request ${requestId}: ${target.status ?? "changed"}.\n${renderSpeakingTurn(response.speaking_turn, roomHintArg(ref.slug, ref, io.env))}\n`,
+      );
+      return;
+    }
+    if (response.status === "actionable" || response.status === "action_required") {
+      io.stdout(
+        `Required: ${response.status === "actionable" ? "decision response" : "action work/review"}.\n${renderJson(response)}Available: ${grpCommand(`read${roomHintArg(ref.slug, ref, io.env)}`)}. Your speaking request remains independent.\n`,
+      );
+      return;
+    }
+    throw new Error("host returned an unsupported speaking-turn wake; no observation was recorded");
+  }
+  io.stdout(`Still waiting for speaking request ${requestId}; no turn granted by this timeout.\n`);
+}
+
 async function roomWatch(
   target: string,
   flags: Record<string, string>,
   io: RoomCliIo,
 ): Promise<void> {
   const ref = resolveRoomRef(target, flags, io.env);
+  if (flags.turn !== undefined) {
+    if (
+      ["action", "artifact", "decision", "until", "jsonl"].some((key) => flags[key] !== undefined)
+    )
+      throw new Error("--turn cannot be combined with another watch selector");
+    await roomTurnWatch(ref, flags, io);
+    return;
+  }
   const selectors = [flags.action, flags.artifact, flags.decision].filter(
     (value): value is string => value !== undefined,
   );
@@ -8812,12 +9035,38 @@ async function actionRequest(
       "x-grp-expected-room-revision": expectedRevision,
     };
   }
+  if (["/discuss", "/ask", "/options"].includes(path)) {
+    const turn = findRememberedRoom(
+      readProviderConfig(io.env),
+      ref.slug,
+      ref.baseUrl,
+    )?.speakingTurn;
+    if (turn?.identity === speakingTurnIdentity(ref, flags, io.env) && turn.observation) {
+      options.headers = {
+        ...(options.headers ?? {}),
+        "x-grp-speaking-observation": turn.observation,
+      };
+    }
+  }
   const response = await requestJson<unknown>(
     ref.baseUrl,
     `/api/rooms/${encodeURIComponent(ref.slug)}${path}`,
     io,
     options,
   );
+  if (
+    options.headers?.["x-grp-speaking-observation"] &&
+    (!isRecord(response) || response.accepted !== false)
+  ) {
+    const identity = speakingTurnIdentity(ref, flags, io.env);
+    updateProviderConfig((config) => {
+      const turn = findRememberedRoom(config, ref.slug, ref.baseUrl)?.speakingTurn;
+      return turn?.identity === identity &&
+        turn.observation === options.headers?.["x-grp-speaking-observation"]
+        ? setRoomSpeakingTurn(config, ref.slug, ref.baseUrl, { identity })
+        : config;
+    }, io.env);
+  }
   // Only a successful guarded transition can safely advance the observation
   // without a fresh read. An unguarded legacy/bypass response does not.
   if (expectedRevision && isRecord(response)) {
@@ -11603,6 +11852,17 @@ interface CommandHelp {
 }
 
 const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
+  turn: {
+    usage: "grp turn request|renew|release [room]",
+    summary:
+      "Request, explicitly renew, or release a speaking turn in rooms that enable them. Requesting or watching never counts as reading.",
+    flags: [
+      "--request-id=ID  exact request to retry/renew/release (otherwise remembered)",
+      "--epoch=N        exact held generation (otherwise remembered)",
+      "--json           raw turn state",
+    ],
+    example: "grp turn request",
+  },
   create: {
     usage: "grp create [--about=TEXT] [--ask=TEXT] [room shape flags]",
     summary: "Create a room and remember it as current.",
@@ -11953,8 +12213,8 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "--until=resolved|next-resolved  wait for current-or-future, or future-only resolution",
       "--until=needed   wait until the room needs your choice",
       "--action=ID      wake when assigned this action, it ends, or recovery is needed",
-      "--artifact=ID    wake when this artifact advances",
-      "--decision=N     wake when this decision resolves",
+      "--artifact=ID / --decision=N  wait for artifact advancement / decision resolution",
+      "--turn[=ID]      wait on your exact speaking request; grant, expiry, or an owed action wakes you",
       "--jsonl          raw event stream (never moves your read position)",
     ],
     example: "grp watch",
