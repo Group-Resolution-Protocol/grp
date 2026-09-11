@@ -344,6 +344,7 @@ describe("bounded structured room reads", () => {
         "read",
         "room",
         "--base=https://operator.example",
+        "--since=0",
       ]);
       expect(page.coverage.source_has_more).toBe(kind === "skipped_prefix");
       expect(f.state().observations).toBeUndefined();

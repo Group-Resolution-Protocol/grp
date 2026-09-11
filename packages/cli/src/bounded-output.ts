@@ -153,7 +153,13 @@ function frame(d: Delivery, index: number, prefix?: { through: number | undefine
   const fresh =
     final && c && (sourceHasMore !== false || c._cli_ack_eligible === false)
       ? {
-          argv: ["read", ...(Array.isArray(metadata.room_argv) ? metadata.room_argv : [])],
+          argv: [
+            "read",
+            ...(Array.isArray(metadata.room_argv) ? metadata.room_argv : []),
+            ...(c._cli_ack_eligible === false && typeof metadata.recovery_since === "number"
+              ? [`--since=${metadata.recovery_since}`]
+              : []),
+          ],
           requires_ack_through: eligible ? c.current_through : null,
           reason:
             c._cli_ack_eligible === false
@@ -217,7 +223,7 @@ function frame(d: Delivery, index: number, prefix?: { through: number | undefine
     : "";
   const more = fresh
     ? fresh.requires_ack_through === null
-      ? "\nCatch up from the acknowledged position with a fresh room read; this source cannot authorize acknowledgment. This delivery has no further local page."
+      ? `\nCatch up from the covered position: grp ${fresh.argv.join(" ")}. This source cannot authorize acknowledgment and has no further local page.`
       : "\nThe captured head is not fully covered. Finish incorporating and acknowledge this delivered prefix, then fetch a fresh room read. This delivery has no further local page."
     : "";
   // Navigation is outside user content at both boundaries. A shell may expose

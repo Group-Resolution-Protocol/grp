@@ -2420,7 +2420,7 @@ function boundedReadOutput(
       text +=
         eligible && through !== null
           ? `\n${Array.isArray(completion.new) ? "Position unchanged. Acknowledge this batch" : "Acknowledge this snapshot"}: ${grpCommand(`read --ack-through=${through}${roomHintArg(ref.slug, ref, io.env)}`)}\n`
-          : "\nNo acknowledgment available: this read omits required room content.\n";
+          : `\nNo acknowledgment available: this read omits required room content or contiguous coverage.\nCatch up: ${grpCommand(`read${roomHintArg(ref.slug, ref, io.env)} --since=${rememberedLastSeenSeq(ref, io.env) ?? 0}`)}\n`;
     completion = {
       ...completion,
       _cli_ack_eligible: eligible,
@@ -2475,6 +2475,7 @@ function boundedReadOutput(
       operator: ref.baseUrl,
       participant: callerIdentity(ref, io.env).participantId ?? null,
       room_argv: [ref.slug, `--base=${ref.baseUrl}`],
+      recovery_since: rememberedLastSeenSeq(ref, io.env) ?? 0,
       content_complete: completion ? isCompleteReadBatch(completion) : null,
       observation_scopes:
         completion &&
@@ -2615,7 +2616,7 @@ async function roomRead(
   // Spec 113 — delta by default: with a stored high-water mark (or an
   // explicit --since) the read asks the host for everything after that seq.
   // --snapshot always takes the snapshot.
-  const since = resolveReadSince(flags, ref, io.env);
+  let since = resolveReadSince(flags, ref, io.env);
   const beforeRead = findRememberedRoom(readProviderConfig(io.env), ref.slug, ref.baseUrl);
   const observationBefore = beforeRead?.observations?.generation ?? null;
   const options = readRequestOptions(ref, flags, io.env);
@@ -2626,6 +2627,24 @@ async function roomRead(
     io,
     options,
   );
+  // A cold default read preserves first-contact orientation until its snapshot
+  // omits conversation. Repeating that snapshot cannot create an observation;
+  // start one bounded catch-up instead. Explicit snapshots remain views.
+  const snapshotPage = isRecord(response.page) ? response.page : {};
+  const snapshotContent = isRecord(snapshotPage.content) ? snapshotPage.content : {};
+  if (
+    since === undefined &&
+    flags.snapshot !== "true" &&
+    snapshotContent.discussion_complete === false
+  ) {
+    since = 0;
+    response = await requestJson<Record<string, unknown>>(
+      ref.baseUrl,
+      `/api/rooms/${encodeURIComponent(ref.slug)}`,
+      io,
+      { ...options, query: { ...(options.query ?? {}), since } },
+    );
+  }
   // Feature detection: a delta-capable host answers a `since` read with the
   // anchored delta (its `new` array); old hosts ignore the unknown query
   // param and return the snapshot agent view.
@@ -5260,7 +5279,7 @@ function renderActionReviewChoice(
   const round = isRecord(projectionRecord.review_round) ? projectionRecord.review_round : null;
   if (round?.can_approve === false) {
     lines.push(
-      "This review round can no longer approve: a required reviewer has requested changes.",
+      "Approval is currently blocked by a required reviewer's change request. Responses can be updated until the round closes.",
       "Required responses are still recorded against these exact bytes before the round closes.",
     );
   }
@@ -5687,7 +5706,7 @@ function appendFocusedActionProjection(
   const round = isRecord(projection.review_round) ? projection.review_round : null;
   if (round?.can_approve === false) {
     lines.push(
-      `Review round for action ${actionId} can no longer approve: a required reviewer requested changes.`,
+      `Approval of action ${actionId} is currently blocked by a required reviewer's change request. Responses can be updated until the round closes.`,
     );
   }
   if (round) {

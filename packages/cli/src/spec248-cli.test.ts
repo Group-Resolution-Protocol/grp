@@ -213,7 +213,7 @@ describe("spec 248 CLI projections and read economy", () => {
     expect(await runRoomCli(["act", "read", "a-old"], io)).toBe(0);
     expect(stdout.join("")).toContain("Superseded by action a-new (in_review).");
     expect(stdout.join("")).toContain(
-      "Review round for action a-old can no longer approve: a required reviewer requested changes.",
+      "Approval of action a-old is currently blocked by a required reviewer's change request. Responses can be updated until the round closes.",
     );
   });
 
