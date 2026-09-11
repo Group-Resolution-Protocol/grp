@@ -2354,7 +2354,11 @@ function boundedReadOutput(
   let framedUnits = units;
   const turnBlock =
     completion && isRecord(completion.speaking_turn)
-      ? renderSpeakingTurn(completion.speaking_turn, roomHintArg(ref.slug, ref, io.env))
+      ? renderSpeakingTurn(
+          completion.speaking_turn,
+          roomHintArg(ref.slug, ref, io.env),
+          callerRole(completion, ref, io.env) !== "observer",
+        )
       : null;
   if (turnBlock && text !== undefined && !isJson(flags)) {
     text = `${turnBlock}\n${text}`;
@@ -7490,10 +7494,12 @@ function speakingTurnIdentity(
     .digest("hex");
 }
 
-function renderSpeakingTurn(turn: Record<string, unknown>, roomArg = ""): string {
+function renderSpeakingTurn(turn: Record<string, unknown>, roomArg = "", canSpeak = true): string {
   const holder = isRecord(turn.holder) ? turn.holder : null;
   const own = isRecord(turn.own) ? turn.own : null;
   if (turn.concluded === true) return "Speaking turns: room concluded.\n";
+  if (!canSpeak)
+    return "Speaking turns enabled. You are an observer; no speaking request is available.\n";
   if (own?.status === "held")
     return [
       `Your speaking turn: ${own.request_id}; epoch ${holder?.epoch}.`,

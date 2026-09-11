@@ -74,6 +74,17 @@ function fixture() {
 }
 
 describe("optional speaking turns", () => {
+  it("does not offer observers an unavailable speaking request", async () => {
+    const f = fixture();
+    const response = {
+      ...read(),
+      you: { participant_id: "p1", role: "observer" },
+      speaking_turn: { ...turn(), own: null, observation: null },
+    };
+    expect(await f.run(["read"], async () => json(response))).toBe(0);
+    expect(f.output.join("")).toContain("observer; no speaking request");
+    expect(f.output.join("")).not.toContain("grp turn request");
+  });
   it("keeps the room positional after bare --turn", () => {
     expect(parseRoomArgs(["watch", "--turn", "room"]).positionals).toEqual(["watch", "room"]);
   });
