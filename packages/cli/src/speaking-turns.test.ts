@@ -74,6 +74,95 @@ function fixture() {
 }
 
 describe("optional speaking turns", () => {
+  for (const verb of ["request", "renew", "release"]) {
+    it(`accepts explicit room syntax for ${verb} and rejects trailing arguments`, async () => {
+      const f = fixture();
+      await f.run(["turn", "request"], async () => json({ speaking_turn: turn() }));
+      const fetch = vi.fn(async (input, init) => {
+        expect(new URL(String(input)).pathname).toBe("/api/rooms/room/turns");
+        expect(JSON.parse(String(init?.body)).operation).toBe(verb);
+        return json({ speaking_turn: turn() });
+      });
+      expect(await f.run(["turn", verb, "room"], fetch)).toBe(0);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(await f.run(["turn", verb, "room", "extra"], fetch)).toBe(1);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+  }
+  for (const owed of [false, true])
+    it(`ordinary watch surfaces a caller grant; owed vote=${owed}`, async () => {
+      const f = fixture();
+      const response = owed
+        ? {
+            status: "actionable",
+            decision: { question: "Route?", status: "open" },
+            speaking_turn: turn(),
+          }
+        : { status: "speaking_turn", speaking_turn: turn() };
+      const fetch = vi.fn(async (input, init) => {
+        if (new URL(String(input)).pathname.endsWith("/next-action")) return json(response);
+        return new Promise<Response>((_resolve, reject) =>
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted"))),
+        );
+      });
+      expect(await f.run(["watch", "--timeout=1"], fetch)).toBe(0);
+      expect(f.output.join("")).toContain("Your speaking turn");
+      expect(f.state().speakingTurn.observation).toBeUndefined();
+      expect(f.state().lastSeenSeq).toBe(5);
+      expect(f.state().observations.conversation).toBe("5");
+      if (owed) expect(f.output.join("")).toContain("Route?");
+    });
+  it("inbox carries a held turn alongside an owed vote without consuming either", async () => {
+    const f = fixture();
+    expect(
+      await f.run(["inbox"], async () =>
+        json({
+          status: "actionable",
+          decision: { question: "Route?", status: "open" },
+          speaking_turn: turn(),
+        }),
+      ),
+    ).toBe(0);
+    expect(f.output.join("")).toContain("SPEAKING STATE");
+    expect(f.output.join("")).toContain("CHOICE NEEDED");
+    expect(f.state().lastSeenSeq).toBe(5);
+    expect(f.state().speakingTurn).toBeUndefined();
+  });
+  it("reads a visible vote reason without requiring a discussion or acknowledging it", async () => {
+    const f = fixture();
+    const response = {
+      ...read(),
+      new: [
+        {
+          seq: 6,
+          type: "choice_submitted",
+          who: "Peer",
+          option: 2,
+          rationale: "The bridge is open.\nAvoid the tunnel.",
+        },
+      ],
+    };
+    expect(await f.run(["read"], async () => json(response))).toBe(0);
+    expect(f.output.join("")).toContain("Peer chose #2");
+    expect(f.output.join("")).toContain("The bridge is open.");
+    expect(f.output.join("")).toContain("Avoid the tunnel.");
+    expect(f.state().lastSeenSeq).toBe(5);
+  });
+  it("snapshots show recorded choices and reasons", async () => {
+    const f = fixture();
+    const response = {
+      slug: "room",
+      status: "open",
+      decision: { question: "Route?", options: ["East", "West"] },
+      choices: [{ who: "Peer", option: 2, rationale: "Bridge open" }],
+      discussion: [],
+      page: { through_event: 6, room_event: 6, complete: true },
+      state_revision: "6",
+    };
+    expect(await f.run(["read", "--snapshot", "--full"], async () => json(response))).toBe(0);
+    expect(f.output.join("")).toContain("Recorded choices:");
+    expect(f.output.join("")).toContain("Bridge open");
+  });
   it("does not offer observers an unavailable speaking request", async () => {
     const f = fixture();
     const response = {

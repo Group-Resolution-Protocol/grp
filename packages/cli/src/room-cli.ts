@@ -176,7 +176,8 @@ interface CallerIdentity {
 }
 
 /** Spec 113 — how a foreground watch woke up. */
-type WatchWake =
+type WatchWake = { speakingTurn?: Record<string, unknown> } & (
+  | { kind: "speaking_turn"; response: Record<string, unknown> }
   | { kind: "event"; event?: RoomEvent; stopEvent?: string }
   | { kind: "action_recovery"; response: unknown }
   | { kind: "action_required"; response: unknown }
@@ -194,7 +195,8 @@ type WatchWake =
       decisionSeq?: number | null;
       completionActionId?: string | null;
     }
-  | { kind: "timeout"; seconds: number };
+  | { kind: "timeout"; seconds: number }
+);
 
 /**
  * Spec 109 (WR2-11/WR2-8) — cross-connection watch state. The head seq is
@@ -1155,7 +1157,7 @@ function assertNoIgnoredPositionals(parsed: ParsedArgs): void {
       parsed.flags.statement !== undefined
         ? 2
         : 3;
-  } else if (command === "cancel") max = 3;
+  } else if (command === "cancel" || command === "turn") max = 3;
   else if (command === "start") max = 3;
   else if (command === "act" || command === "action") {
     max = subcommand === "start" ? 3 : 4;
@@ -1646,6 +1648,7 @@ async function roomCurrent(flags: Record<string, string>, io: RoomCliIo): Promis
 }
 
 interface RememberedRoomRow {
+  speakingTurn?: Record<string, unknown>;
   current: boolean;
   slug: string;
   baseUrl: string;
@@ -1657,6 +1660,7 @@ interface RememberedRoomRow {
 }
 
 type InboxRow =
+  | (RememberedRoomRow & { status: "speaking_turn" })
   | (RememberedRoomRow & {
       status: "choice_needed";
       question: string | null;
@@ -1713,6 +1717,7 @@ function inboxUrgencyRank(row: InboxRow): number {
   if (row.status === "choice_needed") return 0;
   if (row.status === "question_resolved") return 1;
   if (row.status === "action_required") return 2;
+  if (row.status === "speaking_turn") return 2;
   if (row.status === "action_recovery") return 3;
   if (row.status === "new_activity") return 4;
   if (row.status === "unavailable") return 5;
@@ -1822,7 +1827,10 @@ async function roomInbox(flags: Record<string, string>, io: RoomCliIo): Promise<
     io.stdout(
       renderJson({
         rooms: rows.map((row) => {
-          const base = publicRememberedRoomRow(row);
+          const base = {
+            ...publicRememberedRoomRow(row),
+            ...(row.speakingTurn ? { speaking_turn: row.speakingTurn } : {}),
+          };
           if (row.status === "choice_needed") {
             return {
               ...base,
@@ -1896,6 +1904,12 @@ async function roomInbox(flags: Record<string, string>, io: RoomCliIo): Promise<
   }
   const lines: string[] = [];
   for (const row of visible) {
+    if (row.speakingTurn) {
+      lines.push(
+        `SPEAKING STATE  ${row.slug}\n${renderSpeakingTurn(row.speakingTurn, ` ${row.baseUrl}/r/${encodeURIComponent(row.slug)}`)}`,
+      );
+    }
+    if (row.status === "speaking_turn") continue;
     if (row.status === "choice_needed") {
       const deadline = describeTimeUntil(row.votingEndsAt, nowMs);
       const multi = (choiceRowsPerRoom.get(`${row.baseUrl}|${row.slug}`) ?? 0) > 1;
@@ -1961,7 +1975,11 @@ function rememberedRoomRows(env: Record<string, string | undefined>): Remembered
     .sort((a, b) => Number(b.current) - Number(a.current) || a.slug.localeCompare(b.slug));
 }
 
-async function checkRoomAttention(room: RememberedRoomRow, io: RoomCliIo): Promise<InboxRow[]> {
+async function checkRoomAttention(
+  savedRoom: RememberedRoomRow,
+  io: RoomCliIo,
+): Promise<InboxRow[]> {
+  let room = savedRoom;
   const ref: RoomRef = {
     baseUrl: room.baseUrl,
     slug: room.slug,
@@ -1982,6 +2000,8 @@ async function checkRoomAttention(room: RememberedRoomRow, io: RoomCliIo): Promi
       io,
       options,
     );
+    if (isRecord(response.speaking_turn)) room = { ...room, speakingTurn: response.speaking_turn };
+    if (response.status === "speaking_turn") return [{ ...room, status: "speaking_turn" }];
     if (response.status === "actionable") {
       const decision = isRecord(response.decision) ? response.decision : {};
       // Spec 139 — an actionable RESOLVED decision is the opener-seal wake
@@ -3742,8 +3762,12 @@ function renderDeltaEntry(
       const optionNumber = numberOrNull(entry.option);
       const choice = typeof entry.choice === "string" ? entry.choice : null;
       const revised = entry.revised === true ? " (revised)" : "";
+      const reason =
+        typeof entry.rationale === "string"
+          ? entry.rationale.split("\n").map((line) => `    Reason: ${line}`)
+          : [];
       if (optionNumber !== null) {
-        return [`  ${who} ${verb} #${optionNumber}${revised}`];
+        return [`  ${who} ${verb} #${optionNumber}${revised}`, ...reason];
       }
       // Spec 152 W4 — a map ballot renders as scores, not as an escaped-JSON
       // blob (Stage A: every score ballot in the record was unreadable, so
@@ -3754,10 +3778,13 @@ function renderDeltaEntry(
           const label = option.length > 40 ? `${option.slice(0, 40)}…` : option;
           return `${label} = ${score}`;
         });
-        return [`  ${who} scored${revised}: ${parts.join(", ")}`];
+        return [`  ${who} scored${revised}: ${parts.join(", ")}`, ...reason];
       }
       const clipped = choice && choice.length > 120 ? `${choice.slice(0, 120)}…` : choice;
-      return [`  ${who} ${verb}${revised}${clipped ? `: ${JSON.stringify(clipped)}` : ""}`];
+      return [
+        `  ${who} ${verb}${revised}${clipped ? `: ${JSON.stringify(clipped)}` : ""}`,
+        ...reason,
+      ];
     }
     case "decision_resolved": {
       const question = stringOrNull(entry.question) ?? "unknown";
@@ -7793,6 +7820,35 @@ async function roomWatch(
   }
 
   await foregroundForReadSurface(ref, flags, io);
+  // Even when a stream event or an owed decision wins the race, don't hide a
+  // lane the caller is holding. This projection is not a content observation.
+  if (wakeMode && auth) {
+    const attention =
+      wake.kind === "speaking_turn"
+        ? wake.response
+        : wake.speakingTurn
+          ? { speaking_turn: wake.speakingTurn }
+          : remembered?.speakingTurn
+            ? await requestJson<Record<string, unknown>>(
+                ref.baseUrl,
+                `/api/rooms/${encodeURIComponent(ref.slug)}/next-action`,
+                io,
+                { auth, query: { for: "activity", wait: 0, since_seq: mark ?? headSeq ?? 0 } },
+              ).catch(() => null)
+            : null;
+    if (attention && isRecord(attention.speaking_turn)) {
+      rememberSpeakingTurn(ref, flags, io, attention.speaking_turn);
+      io.stdout(
+        `${renderSpeakingTurn(attention.speaking_turn, roomHintArg(ref.slug, ref, io.env))}\n`,
+      );
+      if (
+        wake.kind === "speaking_turn" ||
+        (wake.kind === "timeout" && attention.status === "speaking_turn")
+      )
+        return;
+    }
+  }
+  if (wake.kind === "speaking_turn") return;
   const room = roomHintArg(ref.slug, ref, io.env);
   if (wake.kind === "timeout") {
     // Spec 231 — use the light read to surface action recovery and size the
@@ -8329,6 +8385,7 @@ async function needsMeWakePoll(
       const decision = isRecord(response.decision) ? response.decision : {};
       return {
         kind: "needed",
+        ...(isRecord(response.speaking_turn) ? { speakingTurn: response.speaking_turn } : {}),
         question: stringOrNull(decision.question),
         resolved: stringOrNull(decision.status) === "resolved",
         votingEndsAt: stringOrNull(decision.voting_ends_at),
@@ -8381,8 +8438,11 @@ async function activityWakePoll(
         votingEndsAt: stringOrNull(decision.voting_ends_at),
         decisionSeq: numberOrNull(decision.seq),
         completionActionId: stringOrNull(decision.completion_action_id),
+        ...(isRecord(response.speaking_turn) ? { speakingTurn: response.speaking_turn } : {}),
       };
     }
+    if (response.status === "speaking_turn" && isRecord(response.speaking_turn))
+      return { kind: "speaking_turn", response };
     if (response.status === "working") {
       const change = isRecord(response.signal_change) ? response.signal_change : {};
       const signalId = stringOrNull(change.signal_id);
@@ -8399,7 +8459,11 @@ async function activityWakePoll(
       return { kind: "action_recovery", response };
     }
     if (response.status === "action_required" && isRecord(response.action)) {
-      return { kind: "action_required", response };
+      return {
+        kind: "action_required",
+        response,
+        ...(isRecord(response.speaking_turn) ? { speakingTurn: response.speaking_turn } : {}),
+      };
     }
     if (response.status === "activity") {
       const activity = isRecord(response.event) ? response.event : {};
@@ -8454,7 +8518,11 @@ function wakeQualifies(
   wake: NonNullable<WatchStreamState["wake"]>,
   state: WatchStreamState,
 ): boolean {
-  if (!WAKE_EVENT_TYPES.has(event.event_type)) return false;
+  const visibleReason =
+    event.event_type === "vote.cast" &&
+    typeof event.data.rationale === "string" &&
+    event.data.choice_redacted !== true;
+  if (!WAKE_EVENT_TYPES.has(event.event_type) && !visibleReason) return false;
   if (event.event_type === "action.handed_off") {
     const toHolder = stringOrNull(event.data.to_holder_id);
     if (!wake.identity.participantId || toHolder !== wake.identity.participantId) return false;
@@ -9952,6 +10020,7 @@ function renderRoomRead(
         lines.push(`  ${index + 1}. ${option}`);
       }
     }
+    appendVisibleChoices(lines, response);
     appendDiscussion(lines, response, ref, env, options.expandBodies === true);
     if (isObserver) {
       appendObserverGuidance(lines, response, ref, env);
@@ -10036,6 +10105,7 @@ function renderPhasedRoomRead(
       lines.push(`  ${index + 1}. ${typeof option === "string" ? option : String(option)}`);
     }
   }
+  appendVisibleChoices(lines, response);
   appendDiscussion(lines, response, ref, env, options.expandBodies === true);
   const actions = Array.isArray(response.actions) ? response.actions.filter(isRecord) : [];
   if (actions.length > 0) {
@@ -10060,6 +10130,14 @@ function renderPhasedRoomRead(
   }
   appendAuthoritativeResult(lines, response, ref, env);
   return `${lines.join("\n")}\n`;
+}
+
+function appendVisibleChoices(lines: string[], response: Record<string, unknown>): void {
+  if (!Array.isArray(response.choices) || response.choices.length === 0) return;
+  lines.push("", "Recorded choices:");
+  for (const choice of response.choices.filter(isRecord)) {
+    lines.push(...renderDeltaEntry({ ...choice, type: "choice_submitted" }));
+  }
 }
 
 function appendViewerIdentity(lines: string[], response: Record<string, unknown>): void {
