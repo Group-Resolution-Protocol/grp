@@ -248,7 +248,7 @@ describe("spec 248 CLI projections and read economy", () => {
     const first = runIo(env, fetch);
     expect(await runRoomCli(["read"], first.io)).toBe(0);
     expect(first.stdout.join("").match(/PINNED CATCH-UP/g)).toHaveLength(1);
-    expect(first.stdout.join("")).toContain("Position unchanged;");
+    expect(first.stdout.join("")).toContain("Saved read position unchanged.");
     expect(JSON.parse(readFileSync(env.GRP_CONFIG, "utf8")).currentRoom.lastSeenSeq).toBe(5);
 
     const second = runIo(env, fetch);

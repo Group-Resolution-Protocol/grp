@@ -3431,7 +3431,7 @@ function renderRoomDelta(
       `Nothing new through event ${throughEvent}. Fresh working-set snapshot: ${grpCommand(`read --snapshot${room}`)}`,
     );
   } else {
-    lines.push("", "New since your last read:");
+    lines.push("", "Updates in this fetched range:");
     takeUnit("Pinned source");
     for (const entry of entries) {
       lines.push(
@@ -3450,7 +3450,7 @@ function renderRoomDelta(
       : options.acknowledged
         ? `Position acknowledged through event ${throughEvent}.`
         : options.deferAcknowledgment
-          ? "Position unchanged; acknowledgment follows complete delivery."
+          ? "Saved read position unchanged. Acknowledgment is a separate command."
           : `Position unchanged. Acknowledge this batch: ${grpCommand(`read --ack-through=${throughEvent}${room}`)}`,
   );
 
@@ -3555,7 +3555,7 @@ function renderPhasedRoomDelta(
   appendViewerIdentity(lines, response);
   if (entries.length === 0) lines.push("", `Nothing new through event ${throughEvent}.`);
   else {
-    lines.push("", "New since your last read:");
+    lines.push("", "Updates in this fetched range:");
     takeUnit("Pinned source");
     for (const entry of entries) {
       lines.push(
@@ -3571,7 +3571,7 @@ function renderPhasedRoomDelta(
     options.acknowledged
       ? `Position acknowledged through event ${throughEvent}.`
       : options.deferAcknowledgment
-        ? "Position unchanged; acknowledgment follows complete delivery."
+        ? "Saved read position unchanged. Acknowledgment is a separate command."
         : `Position unchanged. Acknowledge this batch: ${grpCommand(`read --ack-through=${throughEvent}${room}`)}`,
   );
   if (options.moreUnread) lines.push("", "More unread activity remains.");
@@ -12024,7 +12024,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
   read: {
     usage: "grp read [room]",
     summary:
-      "Read without consuming activity. After incorporating the displayed batch, use its --ack-through=N command; acknowledgment is local and never fetches newer messages.",
+      "Read without moving your saved position. After incorporating the displayed batch, its --ack-through=N command advances that position so subsequent default reads start after it. Without acknowledgment, reads can repeat content. Acknowledgment is local and never fetches newer messages.",
     flags: [
       "--snapshot       fresh current-state snapshot; skips catch-up (not full history or artifact bytes)",
       "--continue=TOKEN retrieve the next pinned page or replay a delivered page; no network fetch",

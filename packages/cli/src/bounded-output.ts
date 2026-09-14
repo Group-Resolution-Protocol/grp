@@ -208,7 +208,7 @@ function frame(d: Delivery, index: number, prefix?: { through: number | undefine
   const labels =
     page.labels.length <= 4 ? page.labels.join(", ") : `${page.labels[0]} … ${page.labels.at(-1)}`;
   const ack = eligible
-    ? `\nDelivered prefix available for acknowledgment: ${String(c?._cli_ack_command).replace("{through}", String(ackThrough))}`
+    ? `\nAdvance saved read position through ${String(ackThrough)} after incorporating this content: ${String(c?._cli_ack_command).replace("{through}", String(ackThrough))}\nSubsequent default reads start after the saved position; delivery alone does not advance it.`
     : final && c && c._cli_ack_eligible === false
       ? "\nNo acknowledgment available: required room content or contiguous coverage is missing."
       : "";

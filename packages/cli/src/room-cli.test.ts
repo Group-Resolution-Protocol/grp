@@ -5059,7 +5059,7 @@ describe("spec 113 delta reads", () => {
     expect(stdout).toContain("abc123 —"); // Spec 117 thin header
     expect(stdout).not.toContain("Project:"); // Spec 117 diet: no premise on deltas
     expect(stdout).toContain("You: you have not chosen on the open decision");
-    expect(stdout).toContain("New since your last read:");
+    expect(stdout).toContain("Updates in this fetched range:");
     expect(stdout).toContain("Full text of the argument, uncut.");
     expect(stdout).toContain("Option B");
     expect(stdout).toContain('Choose: grp choose "<option>"');
