@@ -3786,6 +3786,13 @@ function renderDeltaEntry(
         ...reason,
       ];
     }
+    case "abstained": {
+      const reason =
+        typeof entry.reason === "string"
+          ? entry.reason.split("\n").map((line) => `    Reason: ${line}`)
+          : [];
+      return [`  ${who} abstained${entry.revised === true ? " (revised)" : ""}`, ...reason];
+    }
     case "decision_resolved": {
       const question = stringOrNull(entry.question) ?? "unknown";
       const outcome = stringOrNull(entry.outcome);
@@ -10133,10 +10140,18 @@ function renderPhasedRoomRead(
 }
 
 function appendVisibleChoices(lines: string[], response: Record<string, unknown>): void {
-  if (!Array.isArray(response.choices) || response.choices.length === 0) return;
-  lines.push("", "Recorded choices:");
-  for (const choice of response.choices.filter(isRecord)) {
-    lines.push(...renderDeltaEntry({ ...choice, type: "choice_submitted" }));
+  if (Array.isArray(response.choices) && response.choices.length > 0) {
+    lines.push("", "Recorded choices:");
+    for (const choice of response.choices.filter(isRecord)) {
+      lines.push(...renderDeltaEntry({ ...choice, type: "choice_submitted" }));
+    }
+  }
+  // Abstentions are formal public responses, including when ballots are hidden.
+  if (Array.isArray(response.abstentions) && response.abstentions.length > 0) {
+    lines.push("", "Recorded abstentions:");
+    for (const abstention of response.abstentions.filter(isRecord)) {
+      lines.push(...renderDeltaEntry({ ...abstention, type: "abstained" }));
+    }
   }
 }
 

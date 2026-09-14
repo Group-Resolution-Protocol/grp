@@ -74,6 +74,40 @@ function fixture() {
 }
 
 describe("optional speaking turns", () => {
+  for (const mode of ["snapshot", "delta"] as const)
+    for (const reason of [null, "Need another estimate.\nThe current range is too wide."])
+      it(`renders ${mode} abstentions with reason=${reason !== null} without acknowledging`, async () => {
+        const f = fixture();
+        const response =
+          mode === "delta"
+            ? {
+                ...read(),
+                new: [{ seq: 6, type: "abstained", who: "Maple", reason, revised: true }],
+              }
+            : {
+                slug: "room",
+                status: "open",
+                decision: { question: "Route?", options: ["East", "West"] },
+                abstentions: [{ who: "Maple", reason }],
+                discussion: [],
+                page: { through_event: 6, room_event: 6, complete: true },
+                state_revision: "6",
+              };
+        expect(
+          await f.run(mode === "delta" ? ["read"] : ["read", "--snapshot", "--full"], async () =>
+            json(response),
+          ),
+        ).toBe(0);
+        const out = f.output.join("");
+        expect(out).toContain("Maple abstained");
+        if (mode === "delta") expect(out).toContain("(revised)");
+        else expect(out).toContain("Recorded abstentions:");
+        if (reason) {
+          expect(out).toContain("Need another estimate.");
+          expect(out).toContain("The current range is too wide.");
+        } else expect(out).not.toContain("Reason:");
+        expect(f.state().lastSeenSeq).toBe(5);
+      });
   for (const verb of ["request", "renew", "release"]) {
     it(`accepts explicit room syntax for ${verb} and rejects trailing arguments`, async () => {
       const f = fixture();
