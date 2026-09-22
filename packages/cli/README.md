@@ -34,6 +34,10 @@ it, read the next batch. After incorporating it, use `grp read --ack-through=N`.
 local: it cannot fetch and consume newer messages. Watches keep a separate
 notification bookmark and never acknowledge room content.
 
+Decision-opening and revision updates include the event's explanation when the
+host supplies it; long explanations use the same lossless catch-up pages.
+`grp options` also includes the current decision context in text and JSON.
+
 Read-only `act review`, `act reviews`, `artifact read`, and `artifact diff` use the same bounded
 output. Later reviews lead with the reviewer-relative diff whenever a trusted
 base exists, even if the diff is longer than the full text. Retrieve exact blocks

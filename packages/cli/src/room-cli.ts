@@ -3740,15 +3740,23 @@ function renderDeltaEntry(
         entry.agreement === true
           ? " (agreement — resolves only when every voter accepts the same option)"
           : "";
-      return [
+      const lines = [
         `  Decision opened${opener ? ` by ${opener}` : ""}: ${JSON.stringify(String(entry.question ?? ""))}${agreementNote}`,
       ];
+      appendDecisionContext(lines, entry, "    ");
+      return lines;
     }
     case "decision_revised": {
       const revisedBy = stringOrNull(entry.who);
-      return [
+      const lines = [
         `  Decision premise replaced${revisedBy ? ` by ${revisedBy}` : ""}; prior choices cleared: ${JSON.stringify(String(entry.question ?? ""))}`,
       ];
+      if (entry.context === null || entry.context === "") {
+        lines.push("    Context: none.");
+      } else {
+        appendDecisionContext(lines, entry, "    ");
+      }
+      return lines;
     }
     case "choosing_started": {
       const question = stringOrNull(entry.question);
@@ -9639,6 +9647,7 @@ function optionState(
     slug: response.slug ?? null,
     ...(focusedSeq !== undefined ? { decision: focusedSeq } : {}),
     question: decision ? stringOrNull(decision.question) : null,
+    ...(decision && "context" in decision ? { context: decision.context } : {}),
     phase: status,
     choice_mode: choiceMode(response),
     proposal_status: decision
@@ -9704,8 +9713,9 @@ function renderOptions(
   const options = Array.isArray(state.options)
     ? (state.options as Array<{ number: number; text: string; proposed_by?: string }>)
     : [];
-  const lines = [
-    `Question: ${state.question}`,
+  const lines = [`Question: ${state.question}`];
+  appendDecisionContext(lines, state);
+  lines.push(
     `Phase: ${formatPhase(String(state.phase ?? "unknown"))}`,
     // Spec 152 W4 — never fabricate a mode: unknown is honest, "single
     // choice" on a score room guaranteed a first-ballot rejection.
@@ -9713,7 +9723,7 @@ function renderOptions(
     `Proposal status: ${state.proposal_status ?? "unknown"}`,
     "",
     "Options:",
-  ];
+  );
   let clipped = false;
   if (options.length === 0) {
     lines.push("  none yet");
@@ -10748,10 +10758,14 @@ function decisionOptions(decision: Record<string, unknown>): string[] {
     .filter((option): option is string => Boolean(option));
 }
 
-function appendDecisionContext(lines: string[], decision: Record<string, unknown>): void {
+function appendDecisionContext(
+  lines: string[],
+  decision: Record<string, unknown>,
+  indent = "",
+): void {
   const context = stringOrNull(decision.context);
   if (!context) return;
-  lines.push("Context:", ...context.split("\n").map((line) => `  ${line}`));
+  lines.push(`${indent}Context:`, ...context.split("\n").map((line) => `${indent}  ${line}`));
 }
 
 function appendDecisionResponseState(lines: string[], decision: Record<string, unknown>): void {
