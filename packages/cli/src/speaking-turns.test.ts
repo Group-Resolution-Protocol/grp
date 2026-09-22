@@ -74,6 +74,157 @@ function fixture() {
 }
 
 describe("optional speaking turns", () => {
+  for (const [args, by] of [
+    [["discuss", "A contribution"], "discussion"],
+    [["ask", "Which route?"], "question"],
+    [["propose", "East"], "proposal"],
+  ] as const) {
+    it(`confirms ${by} consumption and makes only the exact redundant release a local no-op`, async () => {
+      const f = fixture();
+      await f.run(["read"], async () => json(read()));
+      expect(await f.run([...args], async () => json({ id: "posted", state_revision: "7" }))).toBe(
+        0,
+      );
+      expect(f.output.at(-1)).toContain("Speaking turn complete; no release needed.");
+      expect(f.state().speakingTurn).toMatchObject({ consumed: { requestId: id, epoch: "1", by } });
+      expect(f.state().speakingTurn.observation).toBeUndefined();
+      expect(f.state().speakingTurn.requestId).toBeUndefined();
+      const fetch = vi.fn(async () => {
+        throw new Error("must not contact host");
+      });
+      expect(await f.run(["turn", "release"], fetch)).toBe(0);
+      expect(f.output.at(-1)).toContain("Nothing to release.");
+      expect(
+        await f.run(["turn", "release", `--request-id=${id}`, "--epoch=1", "--json"], fetch),
+      ).toBe(0);
+      expect(JSON.parse(f.output.at(-1) ?? "")).toEqual({
+        _cli: { schema: "grp.turn-release.v1", source: "local" },
+        operation: "release",
+        status: "already_consumed",
+        request_id: id,
+        epoch: "1",
+        consumed_by: by,
+      });
+      const count = f.output.length;
+      expect(await f.run(["turn", "release", "--quiet"], fetch)).toBe(0);
+      expect(f.output).toHaveLength(count);
+      expect(fetch).not.toHaveBeenCalled();
+      expect(await f.run(["turn", "renew"], fetch)).toBe(1);
+      expect(await f.run(["turn", "release", "--token=other"], fetch)).toBe(1);
+      expect(await f.run(["turn", "release", "other-room"], fetch)).toBe(1);
+      expect(await f.run(["turn", "release", "https://other.example/room"], fetch)).toBe(1);
+      expect(fetch).not.toHaveBeenCalled();
+      const conflict = vi.fn(async () =>
+        json({ error: { code: "turn.conflict", message: "Wrong request or epoch" } }, 409),
+      );
+      expect(await f.run(["turn", "release", "--request-id=unknown"], conflict)).toBe(1);
+      expect(await f.run(["turn", "release", `--request-id=${id}`, "--epoch=2"], conflict)).toBe(1);
+      expect(conflict).toHaveBeenCalledTimes(2);
+    });
+  }
+  it("retains consumed history through an idle read, but a new request supersedes it even if its response is lost", async () => {
+    const f = fixture();
+    await f.run(["read"], async () => json(read()));
+    expect(await f.run(["discuss", "A contribution"], async () => json({ id: "posted" }))).toBe(0);
+    await f.run(["read"], async () =>
+      json({ ...read(), speaking_turn: { ...turn(), own: null, observation: null } }),
+    );
+    expect(await f.run(["turn", "release"]), f.errors.join("\n")).toBe(0);
+    expect(await f.run(["turn", "request"])).toBe(1);
+    expect(f.state().speakingTurn.consumed).toBeUndefined();
+    expect(f.state().speakingTurn.requestId).toBeTruthy();
+    expect(await f.run(["turn", "release"])).toBe(1);
+  });
+  it("an observed active turn replaces consumed history and release goes to the host", async () => {
+    const f = fixture();
+    await f.run(["read"], async () => json(read()));
+    expect(await f.run(["discuss", "A contribution"], async () => json({ id: "posted" }))).toBe(0);
+    await f.run(["read"], async () =>
+      json({ ...read(), speaking_turn: { ...turn(true, "2"), observation: null } }),
+    );
+    expect(f.state().speakingTurn.consumed).toBeUndefined();
+    const fetch = vi.fn(async () => json({ speaking_turn: { ...turn(), own: null } }));
+    expect(await f.run(["turn", "release"], fetch)).toBe(0);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  for (const failure of ["rejected", "uncertain", "not-accepted"] as const) {
+    it(`does not record consumption for ${failure} contributions`, async () => {
+      const f = fixture();
+      await f.run(["read"], async () => json(read()));
+      await f.run(["propose", "East"], async () => {
+        if (failure === "uncertain") throw new Error("connection lost");
+        return failure === "rejected"
+          ? json({ error: { code: "turn.expired", message: "Expired" } }, 409)
+          : json({ accepted: false, reason: "Duplicate" });
+      });
+      expect(f.state().speakingTurn.consumed).toBeUndefined();
+      expect(f.output.join("")).not.toContain("Speaking turn complete;");
+      expect(await f.run(["turn", "release"])).toBe(1);
+    });
+  }
+  for (const flag of ["--json", "--quiet"]) {
+    it(`keeps successful contribution ${flag} output unchanged`, async () => {
+      const f = fixture();
+      await f.run(["read"], async () => json(read()));
+      const response = { id: "posted", state_revision: "7" };
+      expect(
+        await f.run(["discuss", "A contribution", flag], async () => json(response)),
+        f.errors.join("\n"),
+      ).toBe(0);
+      if (flag === "--json") expect(JSON.parse(f.output.at(-1) ?? "")).toEqual(response);
+      else expect(f.output.at(-1)).toBe("posted\n");
+      expect(await f.run(["turn", "release"])).toBe(0);
+    });
+  }
+  it("does not claim consumption for a contribution without a speaking observation", async () => {
+    const f = fixture();
+    expect(
+      await f.run(["discuss", "Concurrent contribution"], async () => json({ id: "posted" })),
+    ).toBe(0);
+    expect(f.state().speakingTurn?.consumed).toBeUndefined();
+    expect(f.output.join("")).not.toContain("Speaking turn complete;");
+    expect(await f.run(["turn", "release"])).toBe(1);
+  });
+  it("does not overwrite a newer grant when an older contribution response arrives", async () => {
+    const f = fixture();
+    await f.run(["read"], async () => json(read()));
+    expect(
+      await f.run(["discuss", "A contribution"], async () => {
+        expect(
+          await f.run(["turn", "request", "--request-id=new-request"], async () =>
+            json({
+              speaking_turn: {
+                ...turn(),
+                own: { ...turn().own, request_id: "new-request" },
+                holder: { ...turn().holder, request_id: "new-request", epoch: "2" },
+              },
+            }),
+          ),
+        ).toBe(0);
+        return json({ id: "posted", state_revision: "7" });
+      }),
+    ).toBe(0);
+    expect(f.state().speakingTurn).toMatchObject({ requestId: "new-request", epoch: "2" });
+    expect(f.state().speakingTurn.consumed).toBeUndefined();
+    expect(await f.run(["turn", "release"])).toBe(1);
+  });
+  it("does not infer consumption from an expired grant or retain history across an identity change", async () => {
+    const f = fixture();
+    await f.run(["read"], async () => json(read()));
+    const idle = {
+      ...read(),
+      speaking_turn: { ...turn(), holder: null, own: null, observation: null },
+    };
+    await f.run(["read"], async () => json(idle));
+    expect(await f.run(["turn", "release"])).toBe(1);
+    await f.run(["read"], async () => json(read()));
+    expect(await f.run(["discuss", "A contribution"], async () => json({ id: "posted" }))).toBe(0);
+    expect(f.state().speakingTurn.consumed).toBeDefined();
+    await f.run(["read", "--token=other"], async () => json(idle));
+    expect(f.state().speakingTurn.consumed).toBeUndefined();
+    expect(await f.run(["turn", "release", "--token=other"])).toBe(1);
+    expect(await f.run(["turn", "release"])).toBe(1);
+  });
   for (const mode of ["snapshot", "delta"] as const)
     for (const reason of [null, "Need another estimate.\nThe current range is too wide."])
       it(`renders ${mode} abstentions with reason=${reason !== null} without acknowledging`, async () => {

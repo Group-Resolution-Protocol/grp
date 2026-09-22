@@ -3956,6 +3956,7 @@ async function roomAsk(
   const question = requireQuestion(flags);
   const context = await resolveDecisionContext(flags, io);
   let response: unknown;
+  let turnConsumed = false;
   try {
     response = await actionRequest(
       ref,
@@ -3973,6 +3974,9 @@ async function roomAsk(
         agreement: flags.agreement !== undefined ? parseOptionalBool(flags.agreement) : undefined,
       },
       true,
+      () => {
+        turnConsumed = true;
+      },
     );
   } catch (error) {
     const remembered = findRememberedRoom(readProviderConfig(io.env), ref.slug, ref.baseUrl);
@@ -3997,7 +4001,7 @@ async function roomAsk(
     writeStructured(response, flags, io);
     return;
   }
-  io.stdout(renderQuestionOpened(response, ref, question, io.env));
+  io.stdout(renderQuestionOpened(response, ref, question, io.env, turnConsumed));
 }
 
 function parseDecisionCancellationRef(raw: string | undefined): string {
@@ -4077,6 +4081,7 @@ async function roomPropose(
       `option text is too long (max 500,000 characters); this one is ${option.length}. Split the proposal or move commentary to discussion.`,
     );
   }
+  let turnConsumed = false;
   const response = await actionRequest(
     ref,
     "/options",
@@ -4087,12 +4092,15 @@ async function roomPropose(
       decision: parseDecisionFlag(flags.decision),
     },
     true,
+    () => {
+      turnConsumed = true;
+    },
   );
   if (isJson(flags) || flags.quiet === "true") {
     writeStructured(response, flags, io);
     return;
   }
-  io.stdout(renderOptionProposed(response, ref, option, io.env));
+  io.stdout(renderOptionProposed(response, ref, option, io.env, turnConsumed));
 }
 
 async function roomDiscuss(
@@ -4152,6 +4160,7 @@ async function roomDiscuss(
       ].join("\n"),
     );
   }
+  let turnConsumed = false;
   const response = await actionRequest(
     ref,
     "/discuss",
@@ -4163,12 +4172,15 @@ async function roomDiscuss(
       decision: parseDecisionFlag(flags.decision),
     },
     true,
+    () => {
+      turnConsumed = true;
+    },
   );
   if (isJson(flags) || flags.quiet === "true") {
     writeStructured(response, flags, io, "id");
     return;
   }
-  io.stdout(renderDiscussionPosted(response, ref, io.env));
+  io.stdout(renderDiscussionPosted(response, ref, io.env, turnConsumed));
 }
 
 async function roomAction(
@@ -7615,6 +7627,31 @@ async function roomTurn(
     ref.baseUrl,
   )?.speakingTurn;
   const own = previous?.identity === identity ? previous : undefined;
+  const consumed = own?.consumed;
+  if (
+    operation === "release" &&
+    !own?.requestId &&
+    consumed &&
+    (flags["request-id"] === undefined || flags["request-id"] === consumed.requestId) &&
+    (flags.epoch === undefined || flags.epoch === consumed.epoch)
+  ) {
+    if (isJson(flags))
+      io.stdout(
+        renderJson({
+          _cli: { schema: "grp.turn-release.v1", source: "local" },
+          operation: "release",
+          status: "already_consumed",
+          request_id: consumed.requestId,
+          epoch: consumed.epoch,
+          consumed_by: consumed.by,
+        }),
+      );
+    else if (flags.quiet !== "true")
+      io.stdout(
+        `That speaking turn already ended when your ${consumed.by === "question" ? "question was opened" : `${consumed.by} was posted`}.\nNothing to release.\n`,
+      );
+    return;
+  }
   const requestId =
     flags["request-id"] ??
     own?.requestId ??
@@ -9106,6 +9143,7 @@ async function actionRequest(
   io: RoomCliIo,
   body: Record<string, unknown>,
   guardRoomState = false,
+  onTurnConsumed?: () => void,
 ): Promise<unknown> {
   const auth = authFromFlags(flags, ref, io.env);
   const normalizedBody = withoutUndefined(body);
@@ -9161,10 +9199,29 @@ async function actionRequest(
     const identity = speakingTurnIdentity(ref, flags, io.env);
     updateProviderConfig((config) => {
       const turn = findRememberedRoom(config, ref.slug, ref.baseUrl)?.speakingTurn;
-      return turn?.identity === identity &&
-        turn.observation === options.headers?.["x-grp-speaking-observation"]
-        ? setRoomSpeakingTurn(config, ref.slug, ref.baseUrl, { identity })
-        : config;
+      if (
+        turn?.identity !== identity ||
+        turn.observation !== options.headers?.["x-grp-speaking-observation"]
+      )
+        return config;
+      const consumed =
+        turn.requestId && turn.epoch
+          ? {
+              requestId: turn.requestId,
+              epoch: turn.epoch,
+              by:
+                path === "/ask"
+                  ? ("question" as const)
+                  : path === "/options"
+                    ? ("proposal" as const)
+                    : ("discussion" as const),
+            }
+          : undefined;
+      if (consumed) onTurnConsumed?.();
+      return setRoomSpeakingTurn(config, ref.slug, ref.baseUrl, {
+        identity,
+        ...(consumed ? { consumed } : {}),
+      });
     }, io.env);
   }
   // Only a successful guarded transition can safely advance the observation
@@ -11015,6 +11072,7 @@ function renderQuestionOpened(
   ref: RoomRef,
   requestedQuestion: string,
   env: Record<string, string | undefined>,
+  turnConsumed = false,
 ): string {
   const record = isRecord(response) ? response : {};
   const room = roomHintArg(String(record.slug ?? ref.slug), ref, env);
@@ -11026,6 +11084,7 @@ function renderQuestionOpened(
       ? `Question opened (agreement): "${question}"${writeDestinationNote(ref, env)}`
       : `Question opened: "${question}"${writeDestinationNote(ref, env)}`,
   ];
+  if (turnConsumed) lines.push("Speaking turn complete; no release needed.");
   appendDecisionContext(lines, decision);
   if (agreement) {
     lines.push(
@@ -11078,6 +11137,7 @@ function renderOptionProposed(
   ref: RoomRef,
   option: string,
   env: Record<string, string | undefined>,
+  turnConsumed = false,
 ): string {
   const record = isRecord(response) ? response : {};
   const room = roomHintArg(String(record.slug ?? ref.slug), ref, env);
@@ -11087,6 +11147,7 @@ function renderOptionProposed(
           `Option not added: "${option}" — ${stringOrNull(record.reason) ?? "not accepted"}.${writeDestinationNote(ref, env)}`,
         ]
       : [`Option proposed: "${option}"${writeDestinationNote(ref, env)}`];
+  if (turnConsumed) lines.push("Speaking turn complete; no release needed.");
   const count = Array.isArray(record.options) ? record.options.length : null;
   if (count !== null) lines.push(`Options on the slate: ${count}`);
   // Spec 118 (WR10-2) — the next gate depends on the decision's phase, which
@@ -11120,6 +11181,7 @@ function renderDiscussionPosted(
   response: unknown,
   ref: RoomRef,
   env: Record<string, string | undefined>,
+  turnConsumed = false,
 ): string {
   const record = isRecord(response) ? response : {};
   const postedAs = isRecord(record.posted_as) ? record.posted_as : null;
@@ -11129,6 +11191,7 @@ function renderDiscussionPosted(
   const destination = ` Room: ${ref.slug}.`;
   const lines = [
     `Discussion posted${author ? ` as ${author}` : ""}.${destination}`,
+    ...(turnConsumed ? ["Speaking turn complete; no release needed."] : []),
     ...(stringOrNull(record.id) ? [`Discussion ID: ${record.id}.`] : []),
     ...(aboutActionId ? [`Commentary on action: ${aboutActionId}.`] : []),
   ];

@@ -68,7 +68,14 @@ export interface RoomContext {
    * authenticated phased response. This is a decimal equality token, not a
    * client-side counter. */
   observedForegroundEpoch?: string;
-  speakingTurn?: { identity: string; requestId?: string; epoch?: string; observation?: string };
+  speakingTurn?: {
+    identity: string;
+    requestId?: string;
+    epoch?: string;
+    observation?: string;
+    /** Historical local confirmation only; never reusable speaking authority. */
+    consumed?: { requestId: string; epoch: string; by: "discussion" | "question" | "proposal" };
+  };
   /** Legacy deserialization type only. Normalization always discards it. */
   staleWriteRecovery?: StaleWriteRecovery;
 }
@@ -630,8 +637,20 @@ export function setRoomSpeakingTurn(
   const next = normalizeProviderConfig(config);
   const apply = (room: RoomContext): RoomContext => {
     if (!roomMatches(next, room, slug, normalizeBaseUrl(baseUrl))) return room;
-    const { speakingTurn: _old, ...rest } = room;
-    return normalizeRoomContext({ ...rest, ...(speakingTurn ? { speakingTurn } : {}) });
+    const { speakingTurn: previous, ...rest } = room;
+    // Idle projections need not erase a known consumption. Any active request
+    // or identity change supersedes it; never infer consumption from absence.
+    const consumed =
+      speakingTurn && !speakingTurn.requestId
+        ? (speakingTurn.consumed ??
+          (previous?.identity === speakingTurn.identity ? previous.consumed : undefined))
+        : undefined;
+    return normalizeRoomContext({
+      ...rest,
+      ...(speakingTurn
+        ? { speakingTurn: { ...speakingTurn, ...(consumed ? { consumed } : {}) } }
+        : {}),
+    });
   };
   return {
     ...next,
@@ -1112,6 +1131,14 @@ function normalizeRoomContext(raw: Partial<RoomContext>): RoomContext {
       ? {
           speakingTurn: {
             identity: raw.speakingTurn.identity,
+            ...(!raw.speakingTurn.requestId &&
+            typeof raw.speakingTurn.consumed?.requestId === "string" &&
+            raw.speakingTurn.consumed.requestId.length > 0 &&
+            typeof raw.speakingTurn.consumed.epoch === "string" &&
+            /^[0-9]+$/.test(raw.speakingTurn.consumed.epoch) &&
+            ["discussion", "question", "proposal"].includes(raw.speakingTurn.consumed.by)
+              ? { consumed: raw.speakingTurn.consumed }
+              : {}),
             ...(typeof raw.speakingTurn.requestId === "string"
               ? { requestId: raw.speakingTurn.requestId }
               : {}),
