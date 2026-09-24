@@ -4234,6 +4234,33 @@ async function roomAction(
     // Read before any remote lookup/write so a missing file cannot leave an
     // action behind.
     const artifactContent = artifactFile ? readFileSync(artifactFile, "utf8") : undefined;
+    if (startsArtifact && supersedesActionId) {
+      const predecessor = actionFromResponse(
+        await experimentalResourceRequest(
+          ref,
+          `/actions/${encodeURIComponent(supersedesActionId)}`,
+          flags,
+          io,
+          "GET",
+        ),
+      );
+      const inheritedArtifactId = stringOrNull(predecessor.target_artifact_id);
+      const review = isRecord(predecessor.review) ? predecessor.review : null;
+      if (
+        predecessor.status === "completed" &&
+        review?.state === "approved" &&
+        inheritedArtifactId
+      ) {
+        throw new Error(
+          [
+            `This successor inherits artifact ${inheritedArtifactId} from the reviewed action.`,
+            "Nothing was written. --artifact-name and --artifact-file create a new artifact; they cannot be used for this successor.",
+            "Start the successor without those two flags, then publish a new revision of the inherited artifact using the returned action ID.",
+            `Inspect: ${grpCommand(`artifact read ${inheritedArtifactId}${roomHintArg(ref.slug, ref, io.env)}`)}`,
+          ].join("\n"),
+        );
+      }
+    }
     const toParticipantId = flags.to
       ? await resolveParticipantSelector(ref, flags.to, flags, io)
       : undefined;
@@ -4272,6 +4299,20 @@ async function roomAction(
       const action = actionFromResponse(response);
       const actionId = stringOrNull(action.id);
       if (!actionId) throw new Error("host did not return the started action ID");
+      // The host is authoritative about inheritance; a preflight read must not
+      // cause us to create a second artifact or silently overwrite its target.
+      const existingArtifactId = stringOrNull(action.target_artifact_id);
+      if (existingArtifactId) {
+        const roomArg = roomHintArg(ref.slug, ref, io.env);
+        throw new Error(
+          [
+            `Action ${actionId} started and already targets artifact ${existingArtifactId}.`,
+            "No artifact was created or published. The action remains in the room; do not start it again.",
+            `Inspect: ${grpCommand(`act read ${actionId}${roomArg}`)}`,
+            `Publish a revision: ${grpCommand(`artifact publish ${existingArtifactId} --action=${actionId} --file=${JSON.stringify(artifactFile)}${roomArg}`)}`,
+          ].join("\n"),
+        );
+      }
       let artifactResponse: unknown;
       try {
         artifactResponse = await experimentalResourceRequest(
