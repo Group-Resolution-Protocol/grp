@@ -1,0 +1,127 @@
+---
+title: Coordination candidate contract
+description: Draft coverage and speaking-turn wire format; not an amendment to published base conformance.
+---
+
+# Coordination candidate contract
+
+**Draft, unreleased and non-normative.** This is an implementer review record for
+the candidate, not an amendment to the frozen base specification. See
+[candidate support](/docs/coordination-candidate) and the repository governance
+process. Final protocol/capability versions, OpenAPI integration and live
+conformance remain promotion gates. No existing REST/MCP parity requirement is
+waived by this page.
+
+## Coverage ledger
+
+| Area | This draft | Remaining gate |
+| --- | --- | --- |
+| Speaking-turn projections | Wire fields and offline consistency checks below | OpenAPI schemas, live authorization/lifecycle/fencing tests |
+| Turn operations and contribution | Descriptive request, observation and transition rules below | Error/status vectors, atomicity, expiry and retry live tests |
+| Actions and exact artifact review | CLI implementation and guides exist | Complete operation schemas, authority rules and live conformance |
+| Successors and authoritative results | Candidate functionality | Complete lineage/read-projection contract and tests |
+| Read delivery | CLI behavior documented separately | Host/client compatibility and full public revision contract |
+
+The offline helper described below is intentionally not part of the base `core`,
+`transport` or `operator` pass/fail verdict. Adding a helper does not close the
+remaining gates.
+
+## Speaking-turn operation
+
+`POST /api/rooms/{slug}/turns` accepts JSON with:
+
+| Field | Shape | Meaning |
+| --- | --- | --- |
+| `operation` | `request`, `renew`, or `release` | Operation on a participant's request |
+| `request_id` | String, 1–128 ASCII letters/digits/underscore/hyphen | Stable retry identity; additional fresh-request constraint below |
+| `epoch` | Optional decimal string, 1–30 digits | Exact held generation for renewal or release |
+
+Use a participant bearer token in `Authorization`. The candidate shared-resource
+mutation path does not accept `X-Mandate`, including when also given a token.
+Observer status does not permit requesting a turn. Enabled host capability and
+an operator-enabled speaking-turn room are prerequisites. Body identity fields
+do not establish the actor. Credentials do not belong in query strings.
+
+The current candidate's fresh request ID is a 13-digit Unix-millisecond timestamp,
+an underscore and a lowercase UUID-style random suffix (36 hex/hyphen characters).
+The timestamp limits retry retention, not queue priority. Unknown fresh requests
+older than 24 hours or more than five minutes in the future are rejected. Retrying
+an existing live ID returns that request; a second ID while the same participant
+has live work aliases the existing request rather than reserving another turn.
+An ended request must not be replayed into new work. Queue order uses server
+acceptance order, not client timestamps.
+
+The success envelope is `{ "speaking_turn": PROJECTION }`. The operation itself
+does not return a read observation. Expiry/removal reconciliation can still take
+effect when the requested operation is denied; an error is not proof that all
+room state stayed unchanged. Current lease/queue deadlines are visible state,
+not a promise that an agent will return.
+
+## Speaking-turn projection
+
+Candidate JSON fields use strings for revision and epoch counters; clients must
+not coerce them through floating-point numbers. The current wire counters are
+decimal strings. Treat them as equality/fencing values, not elapsed time or a
+way to calculate future grants.
+
+| Field | Shape |
+| --- | --- |
+| `policy` | `speaking_turns` |
+| `revision` | Nonnegative decimal string |
+| `concluded` | Boolean |
+| `holder` | Null, or `{ participant_id, request_id, epoch, expires_at, max_until }` |
+| `own` | Null, or `{ request_id, status, queue_position, expires_at }` |
+| `next_deadline_at` | Null or timestamp for earliest live request expiry |
+| `observation` | Optional null/string; only coherent room reads may supply it |
+| `target` | Optional `{ request_id, status }` for a request-targeted wait |
+
+Timestamps are ISO date-time strings. Holder epoch is a positive decimal string;
+its lease cannot extend beyond `max_until`. Own status is `queued` or `held`.
+A queued request has a positive integer queue position. A held request has null
+queue position and matches the holder request and expiry. Concluded state has no
+holder, own live request or next deadline. Unknown additive fields remain allowed.
+
+Target status is `waiting`, `granted`, `completed`, `released`, `expired`,
+`removed`, `concluded`, or `missing`. An ended old target can coexist with a
+different current request. Request-targeted waits use
+`GET /api/rooms/{slug}/next-action?for=activity&turn_request=REQUEST_ID&wait=25`;
+the caller still needs authentication. A speaking-turn wake uses status
+`speaking_turn` with the projection; an owed action/decision can instead wake
+the wait. A timeout is not permission to contribute.
+
+## Observation and consumption
+
+A coherent authenticated room read may supply an opaque `observation` for the
+current holder. It binds the participant, held request/generation and relevant
+conversation state; do not parse or fabricate it. Requests and watches do not
+supply that proof. The CLI additionally tracks complete local delivery; the
+server cannot detect a caller discarding stdout.
+
+The contribution sends the observation in `X-GRP-Speaking-Observation`, alongside
+its applicable `X-GRP-Expected-Room-Revision`. A successful discussion, question
+opening or option proposal consumes one held grant atomically with the domain
+mutation. A failed domain mutation does not consume it. Structured work, choices
+and review responses retain separate guards and do not consume conversational
+permission. A conversation change can require a new read without taking the
+holder's unexpired turn away.
+
+Renewal is explicit and bounded by maximum tenure; queued presence also expires.
+Request/read/watch does not renew a lease. Release, successful consumption,
+expiry, ineligibility or room conclusion ends a request. Reconciliation grants
+the next eligible queued request. Old held generations are fenced. This does
+not extend a decision deadline or count as task completion.
+
+## Offline checks and missing proof
+
+The candidate conformance package exposes
+`validateSpeakingTurnProjection(value, { surface: "read" | "operation" | "wait" })`.
+It validates the fields and visible consistency constraints above, including
+that operation/wait surfaces do not issue an observation. Synthetic positive and
+negative vectors exercise this helper. No host calls are made.
+
+Still required before a supported capability claim: machine-readable operation
+schemas, current error/status mappings, credential/role denial probes, queue and
+retry semantics, concurrent contribution atomicity, stale-generation fencing,
+observation authenticity, expiry recovery, live wait behavior and historical-host
+compatibility. The other coordination resources also need their own coverage.
+Neither a single valid projection nor a successful scenario substitutes for it.

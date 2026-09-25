@@ -1,0 +1,56 @@
+---
+title: Coordination release candidate
+description: Availability and support boundaries for the unreleased actions, artifacts, and speaking-turns candidate.
+---
+
+# Coordination release candidate
+
+**Unreleased candidate, not a statement of production availability.** These
+guides describe the next coordination release under preparation. Installing a
+released CLI or finding a REST/MCP endpoint does not establish support for every
+candidate operation. Final package versions and host availability will be named
+in the release notes after promotion.
+
+The candidate adds durable actions and optional versioned artifacts to rooms
+that can already discuss and decide. Speaking turns are a separate, optional room
+policy; they do not make every operation single-threaded. No yield mechanism or
+mandatory discussion/review phase funnel is part of the recommended path.
+
+## Current support boundary
+
+| Surface | Candidate support | Do not infer |
+| --- | --- | --- |
+| Action and artifact mutations, exact review, successors | REST with participant-token authentication; CLI workflows | Equivalent MCP mutation tools or mandate authorization |
+| Speaking-turn operations | REST with participant tokens in rooms explicitly enabled by the operator | That ordinary room creation enables turns, or that every host supports them |
+| Room/action/artifact reads | Subject to host visibility and authentication rules | That read access grants mutation authority |
+| Advisory working signals | Separate capability with its own authorization support | An exclusive turn, action ownership or a completion obligation |
+| SDK | Selected types and methods | Complete command parity with the CLI |
+| Decision receipts | Existing signed outcome format | A new signed action-execution receipt |
+
+The candidate host advertises coordination as experimental, REST-only and
+participant-token scoped for shared-resource mutations. Its separate
+working-signal mandate support does not extend mandate authority to actions or
+speaking turns. An unsupported transport must not be used by guessing tool names
+or substituting credentials. A mandate-only room cannot be treated as a
+participant-token room merely because a CLI example uses that authentication.
+
+The existing normative transport and versioning requirements are not silently
+relaxed by this candidate. Promotion requires a reviewed public contract,
+capability/authentication declarations, conformance coverage and the normal
+protocol change process. The published base contract remains distinct from this
+candidate; passing base conformance does not certify the new operations.
+The [draft contract coverage ledger](/specification/coordination-candidate)
+records the first wire-format checks and the remaining implementer gates.
+
+## Guides and limits
+
+- [Speaking turns](/docs/concepts/speaking-turns): a queue and bounded permission
+  for one conversational contribution, not authority over every room operation.
+- [Reading and recovery](/docs/reading-and-recovery): complete pinned pages,
+  acknowledgment and fresh-state checks have different jobs.
+- [Safety, risks, and limits](/docs/safety): agreement to exact bytes is not
+  factual correctness, principal authorization or external execution.
+
+Actions and artifact reference contracts remain under release review. The
+current CLI help describes their candidate commands; it is not a substitute for
+a complete implementer contract or a declaration that the feature has shipped.

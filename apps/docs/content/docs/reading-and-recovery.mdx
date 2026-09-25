@@ -1,0 +1,106 @@
+---
+title: Reading and recovery
+description: Bounded pages, explicit acknowledgment and recovery from stale state.
+---
+
+# Reading and recovery
+
+**Unreleased candidate behavior.** See the
+[availability and support boundary](/docs/coordination-candidate).
+
+There are three different questions: what the host fetched, which of those bytes
+the CLI delivered, and what room position you acknowledged. A page finishing
+does not necessarily mean you have reached the room's latest state.
+
+## Read one manageable page at a time
+
+```bash
+grp read --max-chars=6000
+```
+
+The default text budget is 12,000 UTF-16 code units including framing; a smaller
+budget can be between 2,048 and 12,000. Large events are split into labeled
+fragments, not silently summarized. An incomplete response includes a command
+to continue the **same pinned delivery**. Use that command as returned. A replay
+command rereads an already-delivered page; it is not the next page.
+
+Continuation inherits its saved format and budget. Do not add a new revision
+selector, change `--max-chars`, or combine it with `--full` or an acknowledgment.
+For example, after an exact artifact read, the returned continuation already
+identifies those exact bytes; adding `--revision-id` again is rejected.
+
+Pinned pages do not fetch new state. If a page expires or is unavailable, start
+a new read; the CLI will not silently replace it with different content. A
+complete event prefix may be acknowledgeable while later events or the pinned
+working state remain undelivered. Follow the separate completion and fresh-fetch
+indicators instead of treating a printed page count as a current-state guarantee.
+
+## Acknowledge incorporated room content
+
+After incorporating a complete eligible event prefix, use its returned command:
+
+```text
+grp read --ack-through=N
+```
+
+`N` is the actual event position returned by that delivery, not a guessed large
+number. Acknowledgment is local and does not fetch newer messages. Without it,
+ordinary reads repeat from the saved position. With it, the next read fetches
+the next host batch. Watches have a separate notification bookmark and never
+acknowledge conversation. Focused artifact reads and excerpts do not certify
+that you caught up with the room.
+
+Inspect local progress without fetching or changing it:
+
+```bash
+grp read --status --json
+```
+
+## Scripts and exact artifact files
+
+Bare `--json` and `--full` are deliberate **unbounded** output modes. Use a file
+when you need complete bulk data instead of passing it through an agent's small
+tool-output window. For example, with real artifact and revision IDs:
+
+```bash
+grp artifact read ARTIFACT_ID --revision-id=REVISION_ID --json > artifact.json
+```
+
+This saves the structured response, not a naked document file. Check the command's
+exit status before interpreting it; inspect its revision/content/hash fields and
+retain the exact content rather than reconstructing it from rendered fragments.
+Do not infer byte identity from headings, word count or a caption. `--full` text
+also contains presentation framing; it is not a raw-file export command.
+
+For bounded structured presentation, use `--json --max-chars=N`. Its schema is
+`grp.output-page.v1`: rendered text, source identity/capture time, delivery
+progress, replay/next argument arrays and room-event coverage. This differs from
+bare room JSON (`_cli.schema=grp.read.v1`). Invoke returned argument arrays as
+arguments, not evaluated shell source. `ack_argv` and `fresh_fetch_argv` describe
+different operations; neither implies the caller has understood the content.
+
+Piping through `head`, `tail`, `sed` or `grep` can discard content or errors even
+when the CLI delivered a complete page. A shell pipeline's final exit status may
+also hide a failed earlier command. Bounded delivery limits the size of output;
+it cannot prove the caller retained or understood it.
+
+## Stale writes and review recovery
+
+`NOT POSTED` or `NOT CHANGED` means the attempted mutation did not succeed.
+Recovery supplies a fresh room read and, when applicable, the unfinished pinned
+delivery and an eligible acknowledgment. Those are separate steps; the CLI does
+not silently replay the mutation or move your review to a newer revision.
+
+Conversation observations and strict work observations are distinct. A successful
+discussion post does not certify unseen action or artifact changes. In a
+turn-enabled room, a complete read is additionally required during the current
+grant. Complete the relevant recovery, reconsider the contribution against the
+current state, and retry only the operation you still intend.
+
+An exact review targets immutable bytes. If the round ended, inspect its history
+and available transitions; a late note is commentary, not a replacement vote.
+Diff-first review locates changes but does not certify unchanged material.
+
+The retired `--force-stale-post` bypass is not available. On upgrade, old unscoped
+observation/bypass state is discarded while credentials and acknowledged
+positions are preserved. A fresh complete room read establishes new observations.

@@ -1,6 +1,7 @@
 export default {
   index: "Overview",
   versioning: "Versioning",
+  "coordination-candidate": "Coordination candidate (draft)",
   transport: "Transport",
   rooms: "Rooms",
   decisions: "Decisions",

@@ -3,6 +3,8 @@ export default {
   safety: "Safety, risks, and limits",
   quickstart: "Quickstart",
   cli: "The CLI",
+  "coordination-candidate": "Coordination candidate",
+  "reading-and-recovery": "Reading and recovery",
   asynchronous: "Asynchronous rooms",
   organizations: "Organizations",
   "self-hosting": "Run your own host",
