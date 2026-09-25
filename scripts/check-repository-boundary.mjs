@@ -42,6 +42,7 @@ const ALLOWED_SCRIPTS = new Set([
   "scripts/check-repository-boundary.test.mjs",
   "scripts/regenerate-public-lockfile.mjs",
   "scripts/stage-npm-release.mjs",
+  "scripts/stage-npm-release.test.mjs",
   "scripts/verify-npm-packages.mjs",
 ]);
 

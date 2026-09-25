@@ -303,7 +303,7 @@ function verifyServedCliArtifact(packedCliTarball, expectedVersion) {
     // web application. It still packs/installs/executes this CLI below, while
     // the private release tree is the only context that can and must prove the
     // bytes served by grp.app are identical to current source.
-    console.log("[npm-release] hosted CLI equality check not applicable in the open mirror");
+    console.log("[npm-release] hosted CLI equality check not applicable in the public repository");
     return;
   }
   const servedTarball = join(

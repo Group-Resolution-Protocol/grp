@@ -10,16 +10,21 @@
   },
   "overrides": {
     "postcss": "8.5.26",
-    "sharp": "0.35.3",
+    "next": "15.5.24",
+    "sharp": "0.35.4",
+    "hono": "4.13.9",
+    "fast-uri": "3.1.8",
+    "qs": "6.16.0",
     "speech-rule-engine": {
-      "@xmldom/xmldom": "0.9.11"
+      "@xmldom/xmldom": "0.9.12"
     },
     "yaml": "2.8.4"
   },
   "workspaces": ["packages/*", "apps/docs"],
   "scripts": {
     "build": "npm run docs:check && npm run build --workspaces --if-present",
-    "test": "npm run test:repository-boundary && npm run test --workspaces --if-present",
+    "test": "npm run test:repository-boundary && npm run test:release && npm run test --workspaces --if-present",
+    "test:release": "node --test scripts/stage-npm-release.test.mjs",
     "test:repository-boundary": "node --test scripts/check-repository-boundary.test.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "biome check --diagnostic-level=error .",

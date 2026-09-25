@@ -15,6 +15,7 @@ test("accepts the intended public source surface and synthetic env examples", ()
       entry("packages/cli/src/example.ts"),
       entry("packages/agent-sdk/.env.local.example", "API_ORIGIN=https://example.test"),
       entry("packages/cli/bin/grp.js", "#!/usr/bin/env node", "100755"),
+      entry("scripts/stage-npm-release.test.mjs"),
     ]),
     [],
   );
