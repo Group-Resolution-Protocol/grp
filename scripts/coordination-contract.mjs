@@ -528,7 +528,7 @@ for (const transition of ["complete", "fail", "cancel"]) {
     `${transition}Action`,
     transition === "cancel" ? "Cancel" : "Transition",
     ref("ActionMutation"),
-    "Single-holder transitions require expected_revision; all-participant complete/fail updates the actor's fixed report. Group complete proposes an agreement decision, requires the room revision header, and does not immediately complete. Cancellation abandons rather than approves.",
+    "Single-holder transitions require expected_revision; all-participant complete/fail updates the actor's fixed report. Group complete proposes an agreement decision, requires the room revision header, and does not immediately complete. A successor to a completed exact-reviewed artifact result must request exact review instead; complete rejects with 400. Cancellation abandons rather than approves.",
   );
 }
 operation(

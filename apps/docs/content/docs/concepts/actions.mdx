@@ -64,8 +64,9 @@ rewrites an already sealed decision or treats silence as approval.
 
 Terminal actions cannot be restarted in place. A new action may name a terminal
 predecessor as `supersedes_action_id`. Amending a completed exact-reviewed result
-inherits its artifact lineage and group-completion policy; it cannot silently
-switch to holder-only completion or a different artifact. See
+inherits its artifact lineage and exact-review requirement; a completion ballot
+cannot replace that review. It cannot silently switch to holder-only completion
+or a different artifact. See
 [artifacts and review](/docs/concepts/artifacts).
 
 For exact inputs, revision fences and remaining draft limits, see the

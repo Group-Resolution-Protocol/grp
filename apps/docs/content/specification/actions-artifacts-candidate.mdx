@@ -69,6 +69,10 @@ required set, and has neither a holder nor one attached artifact. A successor
 must name a terminal action in this room. When that predecessor is a completed
 exact-reviewed result, the successor inherits the artifact lineage and group
 completion; holder completion and cross-artifact substitution are rejected.
+Such an amendment must use exact review: ordinary `/complete` is rejected with
+a 400 validation error rather than opening a completion ballot. The original
+reviewed result remains authoritative while its amendment is open. This is the
+candidate rule, not a claim that every older experimental host enforces it.
 
 An action result is either bounded multiline text (at most 4,096 Unicode code
 points) or an exact `{artifact_id, revision_id, sha256}` reference; the reference
