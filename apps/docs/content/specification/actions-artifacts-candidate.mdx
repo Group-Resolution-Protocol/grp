@@ -19,8 +19,9 @@ npm run test:coordination-contract
 The checks compile schemas and exercise canonical positive/negative inputs.
 They do not prove live authorization, transactions, retry safety or complete
 host conformance. Schemas intentionally leave additive fields open except where
-the payload itself demands an exact shape. Historical/presentation/change
-metadata and complete error/query/header coverage remain explicit draft gaps.
+the payload itself demands an exact shape. Review history, viewer-relative
+presentation and native change metadata have explicit schemas. Full room/wait
+envelopes and complete error/query/header coverage remain explicit draft gaps.
 
 ## Credentials and concurrency
 
@@ -119,6 +120,38 @@ External references currently require provider `git`, credential-free HTTPS
 without query/fragment, a 40- or 64-hex commit, optional relative path without
 `..`, lowercase SHA-256 and `verification=asserted`. No provider adapter verifies
 the content. Schema shape validation alone does not certify URL safety or bytes.
+
+## Review history and diff presentation
+
+The normal focused action read can include `superseded_by` and `review_round`.
+The latter reports `can_approve` while the round is pending: `false` means a
+required reviewer has requested changes, not that remaining responses have
+already been waived. `reviews=1` selects an `ActionReviewHistory` response with
+ordered `rounds` and an optional `review_presentation` instead.
+
+Presentation refers to the latest **requested review round**, which may be older
+than an unsubmitted artifact draft. Its `current` and nullable `base` pin revision
+IDs, ordinals and hashes. The base is the latest earlier round this viewer
+reviewed, not automatically the immediately preceding artifact revision. With
+usable native block maps, `mode=diff` supplies inserted/modified/deleted block
+identities and revision-local numbers. Otherwise `mode=full` explains the fallback
+(`first_revision`, `no_trusted_base` or `external_artifact`). Retrieve full content
+by the pinned ID; the changed-block list is not a text patch or proof that
+unchanged text is correct. Anonymous or previously uninvolved readers may have
+no trusted base even when the editor has one.
+
+`roster` records who has responded and `your_obligation` is `review` only for an
+outstanding required reviewer. An optional checkpoint exposes elapsed time,
+round counts, byte growth (which may be negative), prior dispositions and
+outstanding reviewers at the implemented round thresholds. It creates no new
+approval, expiry or compulsory stopping rule.
+
+History preserves original dispositions alongside `later_corrected` and linked
+non-dispositive `corrections`; late notes also remain separately retrievable.
+It does not silently turn an earlier approval into a rejection. Native revision
+`change` separately describes initial/whole/legacy snapshots, recorded block
+patch operations or block-sync counts. Those write-method records are not the
+same as a viewer-relative review diff.
 
 ## Failure and compatibility boundaries
 

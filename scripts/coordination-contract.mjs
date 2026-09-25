@@ -308,10 +308,7 @@ const schemas = {
           }),
         ),
       ),
-      change: nullable({
-        type: "object",
-        description: "Additive native change metadata; detailed schema is a remaining gate.",
-      }),
+      change: nullable(ref("NativeChange")),
       sha256: sha,
       authored_by: id,
       claim_epoch: nullable(positive),
@@ -554,6 +551,173 @@ const schemas = {
     revision: ref("ArtifactRevision"),
     reviews: array(ref("Review")),
   }),
+  NativeChange: {
+    oneOf: [
+      object({ kind: enumeration("initial", "whole_snapshot", "legacy_snapshot") }),
+      object({
+        kind: { const: "block_patch" },
+        operations: { ...array(ref("PatchOperation")), minItems: 1, maxItems: 50 },
+      }),
+      object({
+        kind: { const: "block_sync" },
+        preserved: integer,
+        replaced: integer,
+        inserted: integer,
+        deleted: integer,
+        ambiguous_hunks: integer,
+      }),
+    ],
+  },
+  RevisionPointer: object({ id, ordinal: { type: "integer", minimum: 1 }, sha256: sha }),
+  ReviewChangedBlock: {
+    oneOf: [
+      object({
+        id,
+        change: { const: "inserted" },
+        current_number: { type: "integer", minimum: 1 },
+        base_number: { type: "null" },
+      }),
+      object({
+        id,
+        change: { const: "modified" },
+        current_number: { type: "integer", minimum: 1 },
+        base_number: { type: "integer", minimum: 1 },
+      }),
+      object({
+        id,
+        change: { const: "deleted" },
+        current_number: { type: "null" },
+        base_number: { type: "integer", minimum: 1 },
+      }),
+    ],
+  },
+  ReviewCheckpoint: object({
+    threshold: { type: "integer", enum: [3, 5, 8, 13] },
+    elapsed_seconds: integer,
+    current_round: { type: "integer", minimum: 1 },
+    total_rounds: { type: "integer", minimum: 1 },
+    artifact_bytes: nullable(integer),
+    growth_bytes: nullable({ type: "integer" }),
+    changed_block_count: nullable(integer),
+    prior_round: nullable(object({ approvals: integer, changes_requested: integer })),
+    outstanding_participant_ids: { ...array(id), uniqueItems: true },
+  }),
+  ReviewPresentation: {
+    ...object({
+      mode: enumeration("full", "diff"),
+      fallback_reason: nullable(
+        enumeration("first_revision", "no_trusted_base", "external_artifact"),
+      ),
+      current: ref("RevisionPointer"),
+      base: nullable(ref("RevisionPointer")),
+      changed_blocks: nullable(array(ref("ReviewChangedBlock"))),
+      round: { type: "integer", minimum: 1 },
+      roster: array(object({ participant_id: id, display_name: string, responded: boolean })),
+      your_obligation: nullable({ const: "review" }),
+      checkpoint: nullable(ref("ReviewCheckpoint")),
+    }),
+    oneOf: [
+      {
+        properties: {
+          mode: { const: "diff" },
+          fallback_reason: { type: "null" },
+          base: ref("RevisionPointer"),
+          changed_blocks: array(ref("ReviewChangedBlock")),
+        },
+      },
+      {
+        properties: {
+          mode: { const: "full" },
+          fallback_reason: enumeration("first_revision", "no_trusted_base", "external_artifact"),
+          changed_blocks: { type: "null" },
+        },
+      },
+    ],
+    description:
+      "Viewer-relative presentation of the latest requested round, not necessarily the artifact's newest draft. Base is the latest earlier round reviewed by this viewer. Diff is navigation, not approval or a complete text patch; retrieve exact content by revision ID.",
+  },
+  NamedReviewNote: {
+    allOf: [ref("ReviewNote"), object({ reviewer_name: string })],
+  },
+  HistoricalReview: {
+    allOf: [
+      ref("Review"),
+      object({
+        reviewer_name: string,
+        later_corrected: boolean,
+        corrections: array(ref("NamedReviewNote")),
+      }),
+    ],
+    description:
+      "Later correction notes do not replace the recorded disposition or rewrite settled outcomes.",
+  },
+  ReviewRoundHistory: object({
+    event: { type: "integer", minimum: 1 },
+    artifact: ref("Artifact"),
+    revision: object({
+      id,
+      ordinal: { type: "integer", minimum: 1 },
+      base_revision_id: nullable(id),
+      source: enumeration("native", "external"),
+      sha256: sha,
+      authored_by: id,
+      created_at: timestamp,
+    }),
+    reviews: array(ref("HistoricalReview")),
+    notes: array(ref("NamedReviewNote")),
+  }),
+  ActionReviewHistory: object(
+    {
+      action: ref("Action"),
+      review_presentation: ref("ReviewPresentation"),
+      rounds: array(ref("ReviewRoundHistory")),
+    },
+    ["action", "rounds"],
+  ),
+  ActionRead: {
+    ...object(
+      {
+        action: ref("Action"),
+        superseded_by: object({
+          action_id: id,
+          status: enumeration(
+            "open",
+            "in_progress",
+            "in_review",
+            "awaiting_decision",
+            "awaiting_completion",
+            "completed",
+            "failed",
+            "cancelled",
+          ),
+        }),
+        review_round: {
+          ...object({ can_approve: boolean }, []),
+          anyOf: [
+            ref("ReviewPresentation"),
+            {
+              required: ["can_approve"],
+              not: {
+                anyOf: [
+                  "mode",
+                  "fallback_reason",
+                  "current",
+                  "base",
+                  "changed_blocks",
+                  "round",
+                  "roster",
+                  "your_obligation",
+                  "checkpoint",
+                ].map((key) => ({ required: [key] })),
+              },
+            },
+          ],
+        },
+      },
+      ["action"],
+    ),
+    not: { required: ["rounds"] },
+  },
 };
 
 const paths = {};
@@ -674,8 +838,8 @@ operation(
   "get",
   "readAction",
   null,
-  object({ action: ref("Action") }),
-  "Focused current action. reviews=1 adds round history; those additional history/presentation fields are not fully schematized in this draft.",
+  { oneOf: [ref("ActionRead"), ref("ActionReviewHistory")] },
+  "Focused current action; reviews=1 selects ordered exact-round history. Presentation is viewer-relative and can describe the last requested round while a newer draft exists. Corrections are non-dispositive. Presence of a valid shape does not prove authorization or agreement correctness.",
 );
 operation(
   `${action}/claim`,
@@ -900,7 +1064,7 @@ export const coordinationContract = {
   },
   "x-grp-status": "draft-unreleased",
   "x-grp-remaining-gates": [
-    "full history/presentation/change schemas",
+    "complete room-read/wait and foreground envelopes",
     "complete error/status and query/header contracts",
     "speaking-turn read/wait integration and exhaustive cross-field/error semantics",
     "live authorization/lifecycle and historical-host probes",

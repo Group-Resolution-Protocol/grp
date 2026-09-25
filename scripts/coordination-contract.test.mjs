@@ -15,6 +15,18 @@ const validate = (name, value) => {
   return check(value);
 };
 const hash = "a".repeat(64);
+const pointer = { id: "revision", ordinal: 1, sha256: hash };
+const presentation = {
+  mode: "full",
+  fallback_reason: "first_revision",
+  current: pointer,
+  base: null,
+  changed_blocks: null,
+  round: 1,
+  roster: [{ participant_id: "p", display_name: "Peer", responded: false }],
+  your_obligation: "review",
+  checkpoint: null,
+};
 
 test("every component compiles, path parameters match, operations have unique identities", () => {
   for (const name of Object.keys(doc.components.schemas)) {
@@ -286,4 +298,143 @@ test("revision publication pins the base and selects one update form", () => {
     { operations: [{ op: "delete", block_id: "b" }] },
   ])
     assert(!validate("PublishRevision", { ...base, ...update }));
+});
+
+test("presentation requires a trusted base for diff and preserves explicit full fallbacks", () => {
+  assert(validate("ReviewPresentation", presentation));
+  const diff = {
+    ...presentation,
+    mode: "diff",
+    fallback_reason: null,
+    base: pointer,
+    changed_blocks: [],
+  };
+  assert(validate("ReviewPresentation", diff));
+  assert(
+    validate("ReviewPresentation", {
+      ...presentation,
+      fallback_reason: "external_artifact",
+      base: pointer,
+    }),
+  );
+  for (const value of [
+    { ...diff, base: null },
+    { ...diff, changed_blocks: null },
+    { ...diff, fallback_reason: "no_trusted_base" },
+    { ...presentation, fallback_reason: null },
+    { ...presentation, changed_blocks: [] },
+    { ...presentation, current: { ...pointer, sha256: "wrong" } },
+    { ...presentation, your_obligation: "approve" },
+    { ...presentation, roster: [{ participant_id: "p", display_name: "Peer" }] },
+  ])
+    assert(!validate("ReviewPresentation", value), JSON.stringify(value));
+});
+test("changed block numbers distinguish insertion, deletion and modification", () => {
+  for (const value of [
+    { id: "b", change: "inserted", current_number: 2, base_number: null },
+    { id: "b", change: "deleted", current_number: null, base_number: 1 },
+    { id: "b", change: "modified", current_number: 3, base_number: 2 },
+  ])
+    assert(validate("ReviewChangedBlock", value));
+  for (const value of [
+    { id: "b", change: "inserted", current_number: 0, base_number: null },
+    { id: "b", change: "deleted", current_number: 1, base_number: null },
+    { id: "b", change: "modified", current_number: 1, base_number: null },
+  ])
+    assert(!validate("ReviewChangedBlock", value));
+});
+test("checkpoint allows shrinkage and unknown external byte counts, not invented closure", () => {
+  const checkpoint = {
+    threshold: 3,
+    elapsed_seconds: 12,
+    current_round: 3,
+    total_rounds: 3,
+    artifact_bytes: 10,
+    growth_bytes: -100,
+    changed_block_count: 2,
+    prior_round: { approvals: 1, changes_requested: 1 },
+    outstanding_participant_ids: ["p"],
+  };
+  assert(validate("ReviewCheckpoint", checkpoint));
+  assert(
+    validate("ReviewCheckpoint", {
+      ...checkpoint,
+      artifact_bytes: null,
+      growth_bytes: null,
+      changed_block_count: null,
+    }),
+  );
+  assert(!validate("ReviewCheckpoint", { ...checkpoint, artifact_bytes: -1 }));
+  assert(!validate("ReviewCheckpoint", { ...checkpoint, threshold: 4 }));
+});
+test("native changes distinguish write metadata from review diffs", () => {
+  for (const kind of ["initial", "whole_snapshot", "legacy_snapshot"])
+    assert(validate("NativeChange", { kind }));
+  const op = { op: "replace_text", find: "old", replace: "new", expected_matches: 1 };
+  assert(validate("NativeChange", { kind: "block_patch", operations: [op] }));
+  assert(validate("NativeChange", { kind: "block_patch", operations: Array(50).fill(op) }));
+  assert(
+    validate("NativeChange", {
+      kind: "block_sync",
+      preserved: 1,
+      replaced: 2,
+      inserted: 0,
+      deleted: 3,
+      ambiguous_hunks: 1,
+    }),
+  );
+  for (const value of [
+    { kind: "block_patch", operations: [] },
+    { kind: "block_patch", operations: Array(51).fill(op) },
+    { kind: "block_patch", operations: [{ op: "delete", block_id: "b" }] },
+    { kind: "block_sync", preserved: 1 },
+    { kind: "modified" },
+  ])
+    assert(!validate("NativeChange", value));
+});
+test("correction history requires original review plus attributed non-dispositive notes", () => {
+  const time = "2026-01-01T00:00:00Z";
+  const note = {
+    id: "n",
+    action_id: "a",
+    artifact_revision_id: "r",
+    reviewer_id: "p",
+    reviewer_name: "Peer",
+    kind: "correction",
+    corrects_review_id: "review",
+    body: "Correction",
+    non_dispositive: true,
+    created_at: time,
+  };
+  const review = {
+    id: "review",
+    revision: "1",
+    artifact_revision_id: "r",
+    reviewer_id: "p",
+    disposition: "approve",
+    body: null,
+    created_at: time,
+    updated_at: time,
+    reviewer_name: "Peer",
+    later_corrected: true,
+    corrections: [note],
+  };
+  assert(validate("HistoricalReview", review));
+  assert(
+    !validate("HistoricalReview", {
+      ...review,
+      corrections: [{ ...note, non_dispositive: false }],
+    }),
+  );
+  const { later_corrected, ...missing } = review;
+  assert(!validate("HistoricalReview", missing));
+  const revision = {
+    ...pointer,
+    base_revision_id: null,
+    source: "native",
+    authored_by: "p",
+    created_at: time,
+  };
+  // A history revision is metadata, not ArtifactRevision's full content payload.
+  assert(!validate("ArtifactRevision", revision));
 });

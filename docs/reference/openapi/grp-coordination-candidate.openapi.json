@@ -8,7 +8,7 @@
   },
   "x-grp-status": "draft-unreleased",
   "x-grp-remaining-gates": [
-    "full history/presentation/change schemas",
+    "complete room-read/wait and foreground envelopes",
     "complete error/status and query/header contracts",
     "speaking-turn read/wait integration and exhaustive cross-field/error semantics",
     "live authorization/lifecycle and historical-host probes",
@@ -704,7 +704,7 @@
       "get": {
         "operationId": "readAction",
         "summary": "readAction",
-        "description": "Focused current action. reviews=1 adds round history; those additional history/presentation fields are not fully schematized in this draft.",
+        "description": "Focused current action; reviews=1 selects ordered exact-round history. Presentation is viewer-relative and can describe the last requested round while a newer draft exists. Corrections are non-dispositive. Presence of a valid shape does not prove authorization or agreement correctness.",
         "parameters": [
           {
             "name": "slug",
@@ -739,14 +739,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "action": {
-                      "$ref": "#/components/schemas/Action"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ActionRead"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ActionReviewHistory"
                     }
-                  },
-                  "required": [
-                    "action"
                   ]
                 }
               }
@@ -3571,8 +3570,7 @@
           "change": {
             "anyOf": [
               {
-                "type": "object",
-                "description": "Additive native change metadata; detailed schema is a remaining gate."
+                "$ref": "#/components/schemas/NativeChange"
               },
               {
                 "type": "null"
@@ -4706,6 +4704,698 @@
           "revision",
           "reviews"
         ]
+      },
+      "NativeChange": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "initial",
+                  "whole_snapshot",
+                  "legacy_snapshot"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "block_patch"
+              },
+              "operations": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PatchOperation"
+                },
+                "minItems": 1,
+                "maxItems": 50
+              }
+            },
+            "required": [
+              "kind",
+              "operations"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "block_sync"
+              },
+              "preserved": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "replaced": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "inserted": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "deleted": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "ambiguous_hunks": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "kind",
+              "preserved",
+              "replaced",
+              "inserted",
+              "deleted",
+              "ambiguous_hunks"
+            ]
+          }
+        ]
+      },
+      "RevisionPointer": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "id",
+          "ordinal",
+          "sha256"
+        ]
+      },
+      "ReviewChangedBlock": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "change": {
+                "const": "inserted"
+              },
+              "current_number": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "base_number": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "id",
+              "change",
+              "current_number",
+              "base_number"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "change": {
+                "const": "modified"
+              },
+              "current_number": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "base_number": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "id",
+              "change",
+              "current_number",
+              "base_number"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "change": {
+                "const": "deleted"
+              },
+              "current_number": {
+                "type": "null"
+              },
+              "base_number": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "id",
+              "change",
+              "current_number",
+              "base_number"
+            ]
+          }
+        ]
+      },
+      "ReviewCheckpoint": {
+        "type": "object",
+        "properties": {
+          "threshold": {
+            "type": "integer",
+            "enum": [
+              3,
+              5,
+              8,
+              13
+            ]
+          },
+          "elapsed_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "current_round": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "total_rounds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "artifact_bytes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "growth_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "changed_block_count": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "prior_round": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "approvals": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "changes_requested": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "approvals",
+                  "changes_requested"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outstanding_participant_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "threshold",
+          "elapsed_seconds",
+          "current_round",
+          "total_rounds",
+          "artifact_bytes",
+          "growth_bytes",
+          "changed_block_count",
+          "prior_round",
+          "outstanding_participant_ids"
+        ]
+      },
+      "ReviewPresentation": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "full",
+              "diff"
+            ]
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "first_revision",
+                  "no_trusted_base",
+                  "external_artifact"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current": {
+            "$ref": "#/components/schemas/RevisionPointer"
+          },
+          "base": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RevisionPointer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "changed_blocks": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ReviewChangedBlock"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "roster": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "participant_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "display_name": {
+                  "type": "string"
+                },
+                "responded": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "participant_id",
+                "display_name",
+                "responded"
+              ]
+            }
+          },
+          "your_obligation": {
+            "anyOf": [
+              {
+                "const": "review"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checkpoint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewCheckpoint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "mode",
+          "fallback_reason",
+          "current",
+          "base",
+          "changed_blocks",
+          "round",
+          "roster",
+          "your_obligation",
+          "checkpoint"
+        ],
+        "oneOf": [
+          {
+            "properties": {
+              "mode": {
+                "const": "diff"
+              },
+              "fallback_reason": {
+                "type": "null"
+              },
+              "base": {
+                "$ref": "#/components/schemas/RevisionPointer"
+              },
+              "changed_blocks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ReviewChangedBlock"
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "mode": {
+                "const": "full"
+              },
+              "fallback_reason": {
+                "type": "string",
+                "enum": [
+                  "first_revision",
+                  "no_trusted_base",
+                  "external_artifact"
+                ]
+              },
+              "changed_blocks": {
+                "type": "null"
+              }
+            }
+          }
+        ],
+        "description": "Viewer-relative presentation of the latest requested round, not necessarily the artifact's newest draft. Base is the latest earlier round reviewed by this viewer. Diff is navigation, not approval or a complete text patch; retrieve exact content by revision ID."
+      },
+      "NamedReviewNote": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ReviewNote"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "reviewer_name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "reviewer_name"
+            ]
+          }
+        ]
+      },
+      "HistoricalReview": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Review"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "reviewer_name": {
+                "type": "string"
+              },
+              "later_corrected": {
+                "type": "boolean"
+              },
+              "corrections": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/NamedReviewNote"
+                }
+              }
+            },
+            "required": [
+              "reviewer_name",
+              "later_corrected",
+              "corrections"
+            ]
+          }
+        ],
+        "description": "Later correction notes do not replace the recorded disposition or rewrite settled outcomes."
+      },
+      "ReviewRoundHistory": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "artifact": {
+            "$ref": "#/components/schemas/Artifact"
+          },
+          "revision": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ordinal": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "base_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "native",
+                  "external"
+                ]
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "authored_by": {
+                "type": "string",
+                "minLength": 1
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "id",
+              "ordinal",
+              "base_revision_id",
+              "source",
+              "sha256",
+              "authored_by",
+              "created_at"
+            ]
+          },
+          "reviews": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoricalReview"
+            }
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedReviewNote"
+            }
+          }
+        },
+        "required": [
+          "event",
+          "artifact",
+          "revision",
+          "reviews",
+          "notes"
+        ]
+      },
+      "ActionReviewHistory": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/Action"
+          },
+          "review_presentation": {
+            "$ref": "#/components/schemas/ReviewPresentation"
+          },
+          "rounds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewRoundHistory"
+            }
+          }
+        },
+        "required": [
+          "action",
+          "rounds"
+        ]
+      },
+      "ActionRead": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/Action"
+          },
+          "superseded_by": {
+            "type": "object",
+            "properties": {
+              "action_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "in_progress",
+                  "in_review",
+                  "awaiting_decision",
+                  "awaiting_completion",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ]
+              }
+            },
+            "required": [
+              "action_id",
+              "status"
+            ]
+          },
+          "review_round": {
+            "type": "object",
+            "properties": {
+              "can_approve": {
+                "type": "boolean"
+              }
+            },
+            "required": [],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewPresentation"
+              },
+              {
+                "required": [
+                  "can_approve"
+                ],
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "mode"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "fallback_reason"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "current"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "base"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "changed_blocks"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "round"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "roster"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "your_obligation"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "checkpoint"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "not": {
+          "required": [
+            "rounds"
+          ]
+        }
       }
     }
   }
