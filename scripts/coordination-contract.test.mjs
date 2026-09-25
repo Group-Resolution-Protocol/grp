@@ -37,11 +37,125 @@ test("every component compiles, path parameters match, operations have unique id
         components: doc.components,
         ...op.responses["200"].content["application/json"].schema,
       });
-      assert.deepEqual(op.security, [{ ParticipantToken: [] }]);
+      assert.deepEqual(
+        op.security,
+        op.operationId.endsWith("WorkingSignal")
+          ? [{ ParticipantToken: [] }, { Mandate: [] }]
+          : [{ ParticipantToken: [] }],
+      );
+      for (const response of Object.values(op.responses)) {
+        ajv.compile({ components: doc.components, ...response.content["application/json"].schema });
+      }
     }
   }
-  assert.equal(ids.size, 20);
+  assert.equal(ids.size, 25);
   assert.equal(doc["x-grp-status"], "draft-unreleased");
+});
+test("turn operations preserve string epochs and separate fresh-ID semantics from shape", () => {
+  for (const operation of ["request", "renew", "release"]) {
+    assert(
+      validate("TurnOperation", {
+        operation,
+        request_id: "1234567890123_00000000-0000-4000-8000-000000000000",
+      }),
+    );
+  }
+  assert(
+    validate("TurnOperation", {
+      operation: "renew",
+      request_id: "known",
+      epoch: "9007199254740993",
+    }),
+  );
+  for (const value of [
+    { operation: "contribute", request_id: "known" },
+    { operation: "renew", request_id: "known", epoch: 1 },
+    { operation: "renew", request_id: "known", epoch: "1".repeat(31) },
+    { operation: "release", request_id: "invalid.id" },
+    { operation: "request" },
+  ])
+    assert(!validate("TurnOperation", value));
+  // Fresh ID age and held-versus-queued epoch requirements are state checks.
+  assert(validate("TurnOperation", { operation: "request", request_id: "known" }));
+});
+test("turn operation responses cannot issue read observations", () => {
+  const empty = {
+    policy: "speaking_turns",
+    revision: "0",
+    concluded: false,
+    holder: null,
+    own: null,
+    next_deadline_at: null,
+  };
+  assert(validate("SpeakingTurn", { ...empty, observation: null }));
+  assert(validate("TurnMutation", { speaking_turn: empty }));
+  assert(!validate("TurnMutation", { speaking_turn: { ...empty, observation: null } }));
+  assert(!validate("TurnMutation", { speaking_turn: null }));
+  const queued = {
+    request_id: "known",
+    status: "queued",
+    queue_position: 1,
+    expires_at: "2026-01-01T01:00:00Z",
+  };
+  assert(validate("SpeakingTurn", { ...empty, own: queued, next_deadline_at: queued.expires_at }));
+  assert(!validate("SpeakingTurn", { ...empty, own: { ...queued, queue_position: null } }));
+  assert(!validate("SpeakingTurn", { ...empty, concluded: true, own: queued }));
+  assert(!validate("SpeakingTurn", { ...empty, revision: 0 }));
+});
+test("presence has a bounded TTL and typed same-room scope, not a grant", () => {
+  const uuid = "00000000-0000-4000-8000-000000000000";
+  for (const scope of [
+    { kind: "room" },
+    ...["decision", "action", "artifact"].map((kind) => ({ kind, id: uuid })),
+  ]) {
+    assert(validate("StartWorkingSignal", { scope, kind: "reviewing", ttl_seconds: 15 }));
+  }
+  for (const scope of [
+    { kind: "room", id: uuid },
+    { kind: "action" },
+    { kind: "decision", id: "1" },
+  ]) {
+    assert(!validate("StartWorkingSignal", { scope, kind: "responding" }));
+  }
+  for (const ttl_seconds of [14, 301, 15.5, "120"]) {
+    assert(!validate("Compose", { ttl_seconds }));
+    assert(!validate("RenewWorkingSignal", { lease_token: "opaque", ttl_seconds }));
+  }
+  assert(validate("Compose", {}));
+  assert(
+    validate("StartWorkingSignal", { scope: { kind: "room" }, kind: "drafting", summary: "" }),
+  );
+  for (const summary of ["a".repeat(241), "line\nbreak"]) {
+    assert(!validate("StartWorkingSignal", { scope: { kind: "room" }, kind: "drafting", summary }));
+  }
+  assert(!validate("RenewWorkingSignal", {}));
+  assert(!validate("StopWorkingSignal", { lease_token: "" }));
+});
+test("presence authentication and foreground fences are not generalized to all operations", () => {
+  const turn = doc.paths["/api/rooms/{slug}/turns"].post;
+  const compose = doc.paths["/api/rooms/{slug}/composing"].post;
+  const start = doc.paths["/api/rooms/{slug}/working-signals"].post;
+  assert(!turn.parameters.some((p) => p.in === "header"));
+  assert(!start.parameters.some((p) => p.in === "header"));
+  assert(compose.parameters.some((p) => p.name === "X-GRP-Expected-Foreground-Epoch"));
+  assert.equal(compose.requestBody.required, false);
+  assert.equal(turn.requestBody.required, true);
+  assert.deepEqual(start.security, [{ ParticipantToken: [] }, { Mandate: [] }]);
+  for (const code of [400, 401, 403, 404, 409]) assert(turn.responses[code]);
+  assert(compose.responses[412]);
+});
+test("error envelopes preserve stable codes and allow additive diagnostic fields", () => {
+  assert(
+    validate("Error", {
+      error: {
+        code: "turn.fenced",
+        message: "Read current state",
+        details: { current_epoch: "2" },
+      },
+    }),
+  );
+  assert(!validate("Error", { error: "turn.fenced" }));
+  assert(!validate("Error", { error: { code: "turn.fenced" } }));
 });
 test("full artifact responses cannot pass through the metadata-only branch", () => {
   const operation = doc.paths["/api/rooms/{slug}/artifacts/{artifactId}"].get;

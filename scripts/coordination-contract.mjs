@@ -32,7 +32,133 @@ const multiline = (max) => ({
   pattern: "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$",
 });
 const policy = enumeration("none", "advisory", "enforced");
+const turnRequestId = { type: "string", pattern: "^[a-zA-Z0-9_-]{1,128}$" };
+const turnEpoch = { type: "string", pattern: "^[0-9]{1,30}$" };
+const signalTtl = { type: "integer", minimum: 15, maximum: 300, default: 120 };
 const schemas = {
+  Error: object({
+    error: object(
+      { code: id, message: string, hint: string, request_id: string, details: { type: "object" } },
+      ["code", "message"],
+    ),
+  }),
+  TurnOperation: object(
+    {
+      operation: enumeration("request", "renew", "release"),
+      request_id: turnRequestId,
+      epoch: turnEpoch,
+    },
+    ["operation", "request_id"],
+  ),
+  SpeakingTurn: {
+    ...object(
+      {
+        policy: { const: "speaking_turns" },
+        revision: counter,
+        concluded: boolean,
+        holder: nullable(
+          object({
+            participant_id: id,
+            request_id: turnRequestId,
+            epoch: { type: "string", pattern: "^[1-9][0-9]*$" },
+            expires_at: timestamp,
+            max_until: timestamp,
+          }),
+        ),
+        own: nullable({
+          oneOf: [
+            object({
+              request_id: turnRequestId,
+              status: { const: "queued" },
+              queue_position: { type: "integer", minimum: 1 },
+              expires_at: timestamp,
+            }),
+            object({
+              request_id: turnRequestId,
+              status: { const: "held" },
+              queue_position: { type: "null" },
+              expires_at: timestamp,
+            }),
+          ],
+        }),
+        next_deadline_at: nullable(timestamp),
+        observation: nullable(id),
+        target: object({
+          request_id: turnRequestId,
+          status: enumeration(
+            "waiting",
+            "granted",
+            "completed",
+            "released",
+            "expired",
+            "removed",
+            "concluded",
+            "missing",
+          ),
+        }),
+      },
+      ["policy", "revision", "concluded", "holder", "own", "next_deadline_at"],
+    ),
+    allOf: [
+      {
+        if: { properties: { concluded: { const: true } }, required: ["concluded"] },
+        // biome-ignore lint/suspicious/noThenProperty: JSON Schema conditional keyword
+        then: {
+          properties: {
+            holder: { type: "null" },
+            own: { type: "null" },
+            next_deadline_at: { type: "null" },
+          },
+        },
+      },
+    ],
+  },
+  TurnMutation: object({
+    speaking_turn: {
+      allOf: [ref("SpeakingTurn"), { not: { required: ["observation"] } }],
+    },
+  }),
+  SignalScope: {
+    oneOf: [
+      { ...object({ kind: { const: "room" } }), not: { required: ["id"] } },
+      object({
+        kind: enumeration("decision", "action", "artifact"),
+        id: {
+          type: "string",
+          pattern:
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$",
+        },
+      }),
+    ],
+  },
+  WorkingSignal: object({
+    id,
+    participant_id: id,
+    display_name: nullable(string),
+    scope: ref("SignalScope"),
+    kind: enumeration("responding", "drafting", "reviewing", "external_work"),
+    summary: nullable(string),
+    started_at: timestamp,
+    expires_at: timestamp,
+  }),
+  StartWorkingSignal: object(
+    {
+      scope: ref("SignalScope"),
+      kind: enumeration("responding", "drafting", "reviewing", "external_work"),
+      summary: nullable({ ...singleLine(240), minLength: 0 }),
+      ttl_seconds: signalTtl,
+    },
+    ["scope", "kind"],
+  ),
+  RenewWorkingSignal: object({ lease_token: id, ttl_seconds: signalTtl }, ["lease_token"]),
+  StopWorkingSignal: object({ lease_token: id }),
+  Compose: object({ ttl_seconds: signalTtl }, []),
+  ComposingSignal: object({
+    participant_id: id,
+    display_name: nullable(string),
+    started_at: timestamp,
+    expires_at: timestamp,
+  }),
   ActionResult: {
     oneOf: [
       {
@@ -446,6 +572,7 @@ function operation(path, method, name, input, output, description, extra = {}) {
     default: {
       description:
         "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+      content: { "application/json": { schema: ref("Error") } },
     },
   };
   paths[path] ??= {};
@@ -465,6 +592,75 @@ function operation(path, method, name, input, output, description, extra = {}) {
 const base = "/api/rooms/{slug}";
 const action = `${base}/actions/{actionId}`;
 const artifact = `${base}/artifacts/{artifactId}`;
+operation(
+  `${base}/turns`,
+  "post",
+  "operateSpeakingTurn",
+  "TurnOperation",
+  ref("TurnMutation"),
+  "Participant-token only. Request, renew or release one speaking request. Fresh request IDs require a 13-digit Unix-millisecond prefix, underscore and 36 lowercase hex/hyphen characters; server checks retry age. Held renew/release requires the current epoch; queued operations need no epoch. No observation is issued. Reconciliation may commit even on denial.",
+);
+operation(
+  `${base}/composing`,
+  "post",
+  "signalComposing",
+  "Compose",
+  object({ composing: ref("ComposingSignal") }),
+  "Participant-token only. Ephemeral presence, not a speaking grant or work claim. Omitted body uses default TTL. No durable event or room revision advance.",
+);
+paths[`${base}/composing`].post.requestBody.required = false;
+const workingAuth = { security: [{ ParticipantToken: [] }, { Mandate: [] }] };
+operation(
+  `${base}/working-signals`,
+  "post",
+  "startWorkingSignal",
+  "StartWorkingSignal",
+  object({ working_signal: ref("WorkingSignal"), lease_token: id }),
+  "Retained experimental presence surface, not a recommended new workflow. Requires a joined non-observer. Mandate form requires react permission and an existing joined seat. Same participant/scope/kind replaces its lease; maximum eight active distinct signals per participant. Scope target must exist in this room. No speaking authority, durable history or room revision advance.",
+  workingAuth,
+);
+operation(
+  `${base}/working-signals/{signalId}`,
+  "put",
+  "renewWorkingSignal",
+  "RenewWorkingSignal",
+  object({ working_signal: ref("WorkingSignal") }),
+  "Same participant plus exact live lease token; no token rotation. Does not grant speaking authority. Mandate form uses react permission and an existing joined seat.",
+  workingAuth,
+);
+operation(
+  `${base}/working-signals/{signalId}`,
+  "delete",
+  "stopWorkingSignal",
+  "StopWorkingSignal",
+  object({ stopped: { const: true }, signal_id: id }),
+  "Same participant plus exact live lease token. May stop after conclusion; an absent, expired or replaced lease is a conflict, not success. Mandate form uses react permission and an existing joined seat.",
+  workingAuth,
+);
+for (const path of [
+  `${base}/turns`,
+  `${base}/composing`,
+  `${base}/working-signals`,
+  `${base}/working-signals/{signalId}`,
+]) {
+  for (const op of Object.values(paths[path])) {
+    for (const [status, description] of Object.entries({
+      400: "Invalid input, missing credential, unsupported credential form or disabled host capability.",
+      401: "Invalid participant token, auth-mode conflict or invalid mandate where supported.",
+      403: "Ineligible observer, missing mandate seat or denied authority.",
+      404: "Room not found.",
+      409: "Turn disabled/conflicted/fenced/ended, or working_signal.lease_invalid; inspect current state.",
+    }))
+      op.responses[status] = {
+        description,
+        content: { "application/json": { schema: ref("Error") } },
+      };
+  }
+}
+paths[`${base}/composing`].post.responses[412] = {
+  description: "Stale or missing foreground epoch in a separately configured phased room.",
+  content: { "application/json": { schema: ref("Error") } },
+};
 operation(
   `${base}/actions`,
   "post",
@@ -655,7 +851,12 @@ paths[artifact].get.parameters.push(
 );
 for (const [path, item] of Object.entries(paths)) {
   for (const [method, op] of Object.entries(item)) {
-    if (method !== "get" && !path.endsWith("/review-notes")) {
+    if (
+      method !== "get" &&
+      !path.endsWith("/review-notes") &&
+      op.operationId !== "operateSpeakingTurn" &&
+      !op.operationId.endsWith("WorkingSignal")
+    ) {
       op.parameters.push({
         name: "X-GRP-Expected-Foreground-Epoch",
         in: "header",
@@ -701,7 +902,7 @@ export const coordinationContract = {
   "x-grp-remaining-gates": [
     "full history/presentation/change schemas",
     "complete error/status and query/header contracts",
-    "turn and working-signal operation schemas",
+    "speaking-turn read/wait integration and exhaustive cross-field/error semantics",
     "live authorization/lifecycle and historical-host probes",
     "transport/versioning governance",
   ],
@@ -712,7 +913,14 @@ export const coordinationContract = {
         type: "http",
         scheme: "bearer",
         description:
-          "Mutation credential scoped to participant and room. X-Mandate is rejected on these mutations. Reads use room visibility policy; bearer security shown here is a supported read form, not a requirement on every public room.",
+          "Credential scoped to participant and room. Shared-resource/turn/composing mutations reject X-Mandate. Working-signal operations additionally support the separate Mandate form. Reads use room visibility policy; bearer security shown here is a supported read form, not a requirement on every public room.",
+      },
+      Mandate: {
+        type: "apiKey",
+        in: "header",
+        name: "X-Mandate",
+        description:
+          "Verified mandate envelope; only the three working-signal operations in this draft accept it, requiring react scope and an existing joined seat. Not equivalent action/artifact/turn support.",
       },
     },
     schemas,

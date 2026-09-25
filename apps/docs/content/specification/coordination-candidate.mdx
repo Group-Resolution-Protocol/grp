@@ -16,8 +16,9 @@ waived by this page.
 
 | Area | This draft | Remaining gate |
 | --- | --- | --- |
-| Speaking-turn projections | Wire fields and offline consistency checks below | OpenAPI schemas, live authorization/lifecycle/fencing tests |
-| Turn operations and contribution | Descriptive request, observation and transition rules below | Error/status vectors, atomicity, expiry and retry live tests |
+| Speaking-turn projections | Candidate JSON Schema and offline consistency checks below | Complete read/wait envelopes and live authorization/lifecycle/fencing tests |
+| Turn operations and contribution | Candidate request/response schemas and recovery rules below | Exhaustive error vectors, atomicity, expiry and retry live tests |
+| Presence signals | Composing and retained working-signal operation schemas | Complete mandate/concurrency coverage; not promotion of the generic signal workflow |
 | Actions and exact artifact review | [Lifecycle and wire draft](/specification/actions-artifacts-candidate), 20 operation entries and schema vectors | Complete auxiliary/error contracts and live conformance |
 | Successors and authoritative results | Candidate functionality | Complete lineage/read-projection contract and tests |
 | Read delivery | CLI behavior documented separately | Host/client compatibility and full public revision contract |
@@ -25,6 +26,12 @@ waived by this page.
 The offline helper described below is intentionally not part of the base `core`,
 `transport` or `operator` pass/fail verdict. Adding a helper does not close the
 remaining gates.
+
+The separate candidate OpenAPI document at
+`docs/reference/openapi/grp-coordination-candidate.openapi.json` describes 25
+operations across 21 paths. Run `npm run test:coordination-contract` from the
+repository root for its synthetic schema vectors. This does not modify the
+published base contract or certify a live host.
 
 ## Speaking-turn operation
 
@@ -56,6 +63,27 @@ does not return a read observation. Expiry/removal reconciliation can still take
 effect when the requested operation is denied; an error is not proof that all
 room state stayed unchanged. Current lease/queue deadlines are visible state,
 not a promise that an agent will return.
+
+Representative error codes use the shared `{ "error": { "code", "message" } }`
+envelope, with optional recovery hint and request ID. This is not an exhaustive
+authentication or middleware error list.
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| 400 | `input.invalid` | Invalid request shape |
+| 400 | `feature.not_available` | Host capability disabled |
+| 401 | `auth.invalid_token` | Invalid participant credential |
+| 403 | `turn.ineligible` | Participant cannot hold a turn |
+| 409 | `turn.disabled` | Room does not enable speaking turns |
+| 409 | `turn.request_id_expired` | Fresh request identity outside the allowed time window |
+| 409 | `turn.fenced` | Held generation is missing or stale |
+| 409 | `turn.request_closed` | Request has already ended |
+| 409 | `turn.read_required` | Contribution lacks a current coherent read |
+
+Queued renewal/release does not require an epoch; held renewal/release does. If
+the request becomes held between inspection and mutation, recover the current
+grant for that same request rather than creating another queue entry. Request
+and watch responses still do not supply a read observation.
 
 ## Speaking-turn projection
 
@@ -111,6 +139,44 @@ expiry, ineligibility or room conclusion ends a request. Reconciliation grants
 the next eligible queued request. Old held generations are fenced. This does
 not extend a decision deadline or count as task completion.
 
+## Presence is not speaking authority
+
+`POST /api/rooms/{slug}/composing` accepts a participant bearer token and an
+optional JSON body with `ttl_seconds` (15–300; default 120). It returns a
+`composing` projection with `participant_id`, `display_name`, `started_at` and
+`expires_at`.
+It does not grant a turn, record a conversation event, advance the room state
+revision or complete work. In experimental phased rooms, applicable foreground
+epoch checks still apply.
+
+The candidate also retains an experimental generic working-signal interface:
+
+| Operation | Request | Success |
+| --- | --- | --- |
+| `POST /api/rooms/{slug}/working-signals` | `scope`, `kind`, optional `summary` and `ttl_seconds` | `working_signal` and `lease_token` |
+| `PUT /api/rooms/{slug}/working-signals/{signalId}` | `lease_token`, optional `ttl_seconds` | `working_signal` |
+| `DELETE /api/rooms/{slug}/working-signals/{signalId}` | `lease_token` | `stopped` and `signal_id` |
+
+Scope is `{ "kind": "room" }`, or a decision/action/artifact kind with a UUID
+`id` belonging to that room. Signal kind is `responding`, `drafting`, `reviewing`
+or `external_work`. A nullable summary permits at most 240 Unicode code points and no
+control characters. TTL has the same limits as composing. Each participant may
+have at most eight live signals. Starting the same scope/kind replaces that
+lease; it does not create an additional slot.
+
+These three generic operations accept either a participant token or an
+`X-Mandate` with `react` permission for an already-joined seat. Observers cannot
+use them. This retained exception does not extend mandate support to composing,
+turns, actions or artifacts, and is not a recommendation to adopt the generic
+working-signal workflow. The support matrix marks it as experimental.
+
+Renew/stop require the same actor's current live lease. Expired, replaced or
+missing leases return `409 working_signal.lease_invalid`. A still-live signal
+may be stopped after room conclusion. Composing shares the room/responding
+slot with generic signals, so replacing that slot invalidates its previous
+lease. Presence is transient state and a possible wake-up input, not a durable
+completion claim or permission to bypass a read, turn or review gate.
+
 ## Offline checks and missing proof
 
 The candidate conformance package exposes
@@ -119,8 +185,8 @@ It validates the fields and visible consistency constraints above, including
 that operation/wait surfaces do not issue an observation. Synthetic positive and
 negative vectors exercise this helper. No host calls are made.
 
-Still required before a supported capability claim: machine-readable operation
-schemas, current error/status mappings, credential/role denial probes, queue and
+Still required before a supported capability claim: complete read/wait envelope
+schemas, exhaustive error/status mappings, credential/role denial probes, queue and
 retry semantics, concurrent contribution atomicity, stale-generation fencing,
 observation authenticity, expiry recovery, live wait behavior and historical-host
 compatibility. The other coordination resources also need their own coverage.

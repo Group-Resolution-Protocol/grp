@@ -10,11 +10,622 @@
   "x-grp-remaining-gates": [
     "full history/presentation/change schemas",
     "complete error/status and query/header contracts",
-    "turn and working-signal operation schemas",
+    "speaking-turn read/wait integration and exhaustive cross-field/error semantics",
     "live authorization/lifecycle and historical-host probes",
     "transport/versioning governance"
   ],
   "paths": {
+    "/api/rooms/{slug}/turns": {
+      "post": {
+        "operationId": "operateSpeakingTurn",
+        "summary": "operateSpeakingTurn",
+        "description": "Participant-token only. Request, renew or release one speaking request. Fresh request IDs require a 13-digit Unix-millisecond prefix, underscore and 36 lowercase hex/hyphen characters; server checks retry age. Held renew/release requires the current epoch; queued operations need no epoch. No observation is issued. Reconciliation may commit even on denial.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TurnOperation"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnMutation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input, missing credential, unsupported credential form or disabled host capability.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid participant token, auth-mode conflict or invalid mandate where supported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Ineligible observer, missing mandate seat or denied authority.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Room not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Turn disabled/conflicted/fenced/ended, or working_signal.lease_invalid; inspect current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/composing": {
+      "post": {
+        "operationId": "signalComposing",
+        "summary": "signalComposing",
+        "description": "Participant-token only. Ephemeral presence, not a speaking grant or work claim. Omitted body uses default TTL. No durable event or room revision advance.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Compose"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "composing": {
+                      "$ref": "#/components/schemas/ComposingSignal"
+                    }
+                  },
+                  "required": [
+                    "composing"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input, missing credential, unsupported credential form or disabled host capability.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid participant token, auth-mode conflict or invalid mandate where supported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Ineligible observer, missing mandate seat or denied authority.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Room not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Turn disabled/conflicted/fenced/ended, or working_signal.lease_invalid; inspect current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Stale or missing foreground epoch in a separately configured phased room.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/working-signals": {
+      "post": {
+        "operationId": "startWorkingSignal",
+        "summary": "startWorkingSignal",
+        "description": "Retained experimental presence surface, not a recommended new workflow. Requires a joined non-observer. Mandate form requires react permission and an existing joined seat. Same participant/scope/kind replaces its lease; maximum eight active distinct signals per participant. Scope target must exist in this room. No speaking authority, durable history or room revision advance.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartWorkingSignal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "working_signal": {
+                      "$ref": "#/components/schemas/WorkingSignal"
+                    },
+                    "lease_token": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "working_signal",
+                    "lease_token"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input, missing credential, unsupported credential form or disabled host capability.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid participant token, auth-mode conflict or invalid mandate where supported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Ineligible observer, missing mandate seat or denied authority.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Room not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Turn disabled/conflicted/fenced/ended, or working_signal.lease_invalid; inspect current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          },
+          {
+            "Mandate": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/working-signals/{signalId}": {
+      "put": {
+        "operationId": "renewWorkingSignal",
+        "summary": "renewWorkingSignal",
+        "description": "Same participant plus exact live lease token; no token rotation. Does not grant speaking authority. Mandate form uses react permission and an existing joined seat.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "signalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenewWorkingSignal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "working_signal": {
+                      "$ref": "#/components/schemas/WorkingSignal"
+                    }
+                  },
+                  "required": [
+                    "working_signal"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input, missing credential, unsupported credential form or disabled host capability.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid participant token, auth-mode conflict or invalid mandate where supported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Ineligible observer, missing mandate seat or denied authority.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Room not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Turn disabled/conflicted/fenced/ended, or working_signal.lease_invalid; inspect current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          },
+          {
+            "Mandate": []
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "stopWorkingSignal",
+        "summary": "stopWorkingSignal",
+        "description": "Same participant plus exact live lease token. May stop after conclusion; an absent, expired or replaced lease is a conflict, not success. Mandate form uses react permission and an existing joined seat.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "signalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StopWorkingSignal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "stopped": {
+                      "const": true
+                    },
+                    "signal_id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "stopped",
+                    "signal_id"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input, missing credential, unsupported credential form or disabled host capability.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid participant token, auth-mode conflict or invalid mandate where supported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Ineligible observer, missing mandate seat or denied authority.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Room not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Turn disabled/conflicted/fenced/ended, or working_signal.lease_invalid; inspect current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          },
+          {
+            "Mandate": []
+          }
+        ]
+      }
+    },
     "/api/rooms/{slug}/actions": {
       "post": {
         "operationId": "createAction",
@@ -72,7 +683,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -135,7 +753,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -201,7 +826,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -265,7 +897,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -331,7 +970,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -397,7 +1043,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -473,7 +1126,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -549,7 +1209,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -625,7 +1292,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -701,7 +1375,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -767,7 +1448,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -833,7 +1521,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -903,7 +1598,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -998,7 +1700,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1100,7 +1809,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1166,7 +1882,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1230,7 +1953,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1294,7 +2024,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1387,7 +2124,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1485,7 +2229,14 @@
             }
           },
           "default": {
-            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1501,10 +2252,514 @@
       "ParticipantToken": {
         "type": "http",
         "scheme": "bearer",
-        "description": "Mutation credential scoped to participant and room. X-Mandate is rejected on these mutations. Reads use room visibility policy; bearer security shown here is a supported read form, not a requirement on every public room."
+        "description": "Credential scoped to participant and room. Shared-resource/turn/composing mutations reject X-Mandate. Working-signal operations additionally support the separate Mandate form. Reads use room visibility policy; bearer security shown here is a supported read form, not a requirement on every public room."
+      },
+      "Mandate": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Mandate",
+        "description": "Verified mandate envelope; only the three working-signal operations in this draft accept it, requiring react scope and an existing joined seat. Not equivalent action/artifact/turn support."
       }
     },
     "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1
+              },
+              "message": {
+                "type": "string"
+              },
+              "hint": {
+                "type": "string"
+              },
+              "request_id": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "TurnOperation": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "request",
+              "renew",
+              "release"
+            ]
+          },
+          "request_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+          },
+          "epoch": {
+            "type": "string",
+            "pattern": "^[0-9]{1,30}$"
+          }
+        },
+        "required": [
+          "operation",
+          "request_id"
+        ]
+      },
+      "SpeakingTurn": {
+        "type": "object",
+        "properties": {
+          "policy": {
+            "const": "speaking_turns"
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
+          },
+          "concluded": {
+            "type": "boolean"
+          },
+          "holder": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "participant_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "request_id": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+                  },
+                  "epoch": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]*$"
+                  },
+                  "expires_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "max_until": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": [
+                  "participant_id",
+                  "request_id",
+                  "epoch",
+                  "expires_at",
+                  "max_until"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "own": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "request_id": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+                      },
+                      "status": {
+                        "const": "queued"
+                      },
+                      "queue_position": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "expires_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    },
+                    "required": [
+                      "request_id",
+                      "status",
+                      "queue_position",
+                      "expires_at"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "request_id": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+                      },
+                      "status": {
+                        "const": "held"
+                      },
+                      "queue_position": {
+                        "type": "null"
+                      },
+                      "expires_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    },
+                    "required": [
+                      "request_id",
+                      "status",
+                      "queue_position",
+                      "expires_at"
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next_deadline_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observation": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target": {
+            "type": "object",
+            "properties": {
+              "request_id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "waiting",
+                  "granted",
+                  "completed",
+                  "released",
+                  "expired",
+                  "removed",
+                  "concluded",
+                  "missing"
+                ]
+              }
+            },
+            "required": [
+              "request_id",
+              "status"
+            ]
+          }
+        },
+        "required": [
+          "policy",
+          "revision",
+          "concluded",
+          "holder",
+          "own",
+          "next_deadline_at"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "concluded": {
+                  "const": true
+                }
+              },
+              "required": [
+                "concluded"
+              ]
+            },
+            "then": {
+              "properties": {
+                "holder": {
+                  "type": "null"
+                },
+                "own": {
+                  "type": "null"
+                },
+                "next_deadline_at": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "TurnMutation": {
+        "type": "object",
+        "properties": {
+          "speaking_turn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SpeakingTurn"
+              },
+              {
+                "not": {
+                  "required": [
+                    "observation"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "required": [
+          "speaking_turn"
+        ]
+      },
+      "SignalScope": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "room"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "not": {
+              "required": [
+                "id"
+              ]
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "decision",
+                  "action",
+                  "artifact"
+                ]
+              },
+              "id": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ]
+          }
+        ]
+      },
+      "WorkingSignal": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "participant_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SignalScope"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "responding",
+              "drafting",
+              "reviewing",
+              "external_work"
+            ]
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "participant_id",
+          "display_name",
+          "scope",
+          "kind",
+          "summary",
+          "started_at",
+          "expires_at"
+        ]
+      },
+      "StartWorkingSignal": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/SignalScope"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "responding",
+              "drafting",
+              "reviewing",
+              "external_work"
+            ]
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 240,
+                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "minimum": 15,
+            "maximum": 300,
+            "default": 120
+          }
+        },
+        "required": [
+          "scope",
+          "kind"
+        ]
+      },
+      "RenewWorkingSignal": {
+        "type": "object",
+        "properties": {
+          "lease_token": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "minimum": 15,
+            "maximum": 300,
+            "default": 120
+          }
+        },
+        "required": [
+          "lease_token"
+        ]
+      },
+      "StopWorkingSignal": {
+        "type": "object",
+        "properties": {
+          "lease_token": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "lease_token"
+        ]
+      },
+      "Compose": {
+        "type": "object",
+        "properties": {
+          "ttl_seconds": {
+            "type": "integer",
+            "minimum": 15,
+            "maximum": 300,
+            "default": 120
+          }
+        },
+        "required": []
+      },
+      "ComposingSignal": {
+        "type": "object",
+        "properties": {
+          "participant_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "participant_id",
+          "display_name",
+          "started_at",
+          "expires_at"
+        ]
+      },
       "ActionResult": {
         "oneOf": [
           {
