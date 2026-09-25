@@ -2,6 +2,7 @@ export default {
   index: "Overview",
   versioning: "Versioning",
   "coordination-candidate": "Coordination candidate (draft)",
+  "actions-artifacts-candidate": "Actions and artifacts (draft)",
   transport: "Transport",
   rooms: "Rooms",
   decisions: "Decisions",

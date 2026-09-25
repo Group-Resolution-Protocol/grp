@@ -16,6 +16,9 @@ test("accepts the intended public source surface and synthetic env examples", ()
       entry("packages/agent-sdk/.env.local.example", "API_ORIGIN=https://example.test"),
       entry("packages/cli/bin/grp.js", "#!/usr/bin/env node", "100755"),
       entry("scripts/stage-npm-release.test.mjs"),
+      entry("scripts/coordination-contract.mjs"),
+      entry("scripts/coordination-contract.test.mjs"),
+      entry("scripts/generate-coordination-contract.mjs"),
     ]),
     [],
   );
@@ -32,6 +35,12 @@ test("rejects private application and package roots", () => {
   ]);
   assert.equal(failures.length, 3);
   assert.ok(failures.every((failure) => failure.includes("tracked-path allowlist")));
+});
+
+test("candidate contract tools do not grant a wildcard scripts allowlist", () => {
+  const failures = validateTrackedEntries([entry("scripts/unreviewed-helper.mjs")]);
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /tracked-path allowlist/);
 });
 
 test("rejects internal, provider, migration, and credential-shaped paths", () => {

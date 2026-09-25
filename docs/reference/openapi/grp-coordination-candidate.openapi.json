@@ -1,0 +1,3457 @@
+{
+  "openapi": "3.1.0",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "GRP coordination candidate — draft",
+    "version": "0.0.0-draft",
+    "description": "Unreleased, non-normative review artifact. Not merged into the published base contract or live conformance verdict. Schemas constrain canonical client forms, not every ignored legacy field. State-dependent authority, Unicode/UTF-8 limits and cryptographic checks also require implementation tests."
+  },
+  "x-grp-status": "draft-unreleased",
+  "x-grp-remaining-gates": [
+    "full history/presentation/change schemas",
+    "complete error/status and query/header contracts",
+    "turn and working-signal operation schemas",
+    "live authorization/lifecycle and historical-host probes",
+    "transport/versioning governance"
+  ],
+  "paths": {
+    "/api/rooms/{slug}/actions": {
+      "post": {
+        "operationId": "createAction",
+        "summary": "createAction",
+        "description": "Starts by default; mode and completion are immutable. Successors are validated against room state.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          },
+          {
+            "name": "X-GRP-Expected-Room-Revision",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Strict room-global observation when supplied; additionally required for group completion."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAction"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/actions/{actionId}": {
+      "get": {
+        "operationId": "readAction",
+        "summary": "readAction",
+        "description": "Focused current action. reviews=1 adds round history; those additional history/presentation fields are not fully schematized in this draft.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "actionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "reviews",
+            "in": "query",
+            "schema": {
+              "const": "1"
+            },
+            "description": "Return exact round history."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "action": {
+                      "$ref": "#/components/schemas/Action"
+                    }
+                  },
+                  "required": [
+                    "action"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/actions/{actionId}/claim": {
+      "post": {
+        "operationId": "claimAction",
+        "summary": "claimAction",
+        "description": "Claim an eligible open/unheld action; not takeover of an existing holder.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "actionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Claim"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "renewActionClaim",
+        "summary": "renewActionClaim",
+        "description": "Renew the exact live holder epoch, without creating a new holder.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "actionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Renew"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/actions/{actionId}/handoff": {
+      "post": {
+        "operationId": "handoffAction",
+        "summary": "handoffAction",
+        "description": "Current holder, mode=handoff only; transfer to one participant or offer to group.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "actionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Handoff"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/actions/{actionId}/takeover": {
+      "post": {
+        "operationId": "takeoverAction",
+        "summary": "takeoverAction",
+        "description": "Active-holder recovery with reason; a live other lease requires explicit override=true. This is not blanket external authority.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "actionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Takeover"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/actions/{actionId}/resume": {
+      "post": {
+        "operationId": "resumeActionCompletion",
+        "summary": "resumeActionCompletion",
+        "description": "Completion proposer may cancel its still-open completion decision and resume work. X-GRP-Expected-Room-Revision is required. Additional decision/receipt fields are outside this partial response schema.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "actionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          },
+          {
+            "name": "X-GRP-Expected-Room-Revision",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Strict room-global observation when supplied; additionally required for group completion."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Resume"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/actions/{actionId}/complete": {
+      "post": {
+        "operationId": "completeAction",
+        "summary": "completeAction",
+        "description": "Single-holder transitions require expected_revision; all-participant complete/fail updates the actor's fixed report. Group complete proposes an agreement decision, requires the room revision header, and does not immediately complete. Cancellation abandons rather than approves.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "actionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          },
+          {
+            "name": "X-GRP-Expected-Room-Revision",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Strict room-global observation when supplied; additionally required for group completion."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Transition"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/actions/{actionId}/fail": {
+      "post": {
+        "operationId": "failAction",
+        "summary": "failAction",
+        "description": "Single-holder transitions require expected_revision; all-participant complete/fail updates the actor's fixed report. Group complete proposes an agreement decision, requires the room revision header, and does not immediately complete. Cancellation abandons rather than approves.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "actionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          },
+          {
+            "name": "X-GRP-Expected-Room-Revision",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Strict room-global observation when supplied; additionally required for group completion."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Transition"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/actions/{actionId}/cancel": {
+      "post": {
+        "operationId": "cancelAction",
+        "summary": "cancelAction",
+        "description": "Single-holder transitions require expected_revision; all-participant complete/fail updates the actor's fixed report. Group complete proposes an agreement decision, requires the room revision header, and does not immediately complete. Cancellation abandons rather than approves.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "actionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          },
+          {
+            "name": "X-GRP-Expected-Room-Revision",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Strict room-global observation when supplied; additionally required for group completion."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Cancel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/actions/{actionId}/request-review": {
+      "post": {
+        "operationId": "requestActionReview",
+        "summary": "requestActionReview",
+        "description": "Current holder of single/handoff group-completion action submits its current attached artifact and records its own approval; freezes the round.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "actionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestReview"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/actions/{actionId}/review": {
+      "put": {
+        "operationId": "reviewAction",
+        "summary": "reviewAction",
+        "description": "Required reviewer pins the open round's artifact. Peer responses commute within the opening/current action-revision interval. All responses settle the round; a changes request prevents approval.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "actionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionReview"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/actions/{actionId}/review-notes": {
+      "post": {
+        "operationId": "appendActionReviewNote",
+        "summary": "appendActionReviewNote",
+        "description": "Round reviewers append non-dispositive late commentary or corrections to their own formal review; never rewrites a settled outcome.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "actionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewNoteInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "review_note": {
+                      "$ref": "#/components/schemas/ReviewNote"
+                    },
+                    "state_revision": {
+                      "type": "string",
+                      "pattern": "^[0-9]+$"
+                    }
+                  },
+                  "required": [
+                    "review_note",
+                    "state_revision"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/artifacts": {
+      "post": {
+        "operationId": "createArtifact",
+        "summary": "createArtifact",
+        "description": "Native UTF-8 text max262144 bytes or asserted Git reference. Attaching requires current action holder and expected action revision.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          },
+          {
+            "name": "X-GRP-Expected-Room-Revision",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Strict room-global observation when supplied; additionally required for group completion."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateArtifact"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "artifact": {
+                      "$ref": "#/components/schemas/Artifact"
+                    },
+                    "current_revision": {
+                      "$ref": "#/components/schemas/ArtifactRevision"
+                    },
+                    "action": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/Action"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "state_revision": {
+                      "type": "string",
+                      "pattern": "^[0-9]+$"
+                    }
+                  },
+                  "required": [
+                    "artifact",
+                    "current_revision",
+                    "action",
+                    "state_revision"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/artifacts/{artifactId}": {
+      "get": {
+        "operationId": "readArtifact",
+        "summary": "readArtifact",
+        "description": "Select revision ID or positive version, not both; view=metadata omits content. Metadata-only and history query parameters are described in the guide.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "artifactId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "revision",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Exact revision ID; mutually exclusive with version."
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Content ordinal; mutually exclusive with revision."
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "schema": {
+              "const": "metadata"
+            },
+            "description": "Omit content and reviews."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ArtifactRead"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "artifact": {
+                          "$ref": "#/components/schemas/Artifact"
+                        }
+                      },
+                      "required": [
+                        "artifact"
+                      ],
+                      "not": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "revision"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "reviews"
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/artifacts/{artifactId}/claim": {
+      "post": {
+        "operationId": "claimArtifact",
+        "summary": "claimArtifact",
+        "description": "Standalone edit claim; attached action authority remains separate.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "artifactId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Claim"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "renewArtifactClaim",
+        "summary": "renewArtifactClaim",
+        "description": "Renew a live exact edit epoch.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "artifactId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Renew"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "releaseArtifactClaim",
+        "summary": "releaseArtifactClaim",
+        "description": "Release an exact edit epoch. This DELETE requires a JSON body.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "artifactId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Release"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactMutation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/artifacts/{artifactId}/revisions": {
+      "post": {
+        "operationId": "publishArtifactRevision",
+        "summary": "publishArtifactRevision",
+        "description": "Requires current artifact counter and exact base. Action-owned native writes may use action_id; otherwise enforced edits require claim_epoch. No publishing while pending exact review/completion freezes the target.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "artifactId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          },
+          {
+            "name": "X-GRP-Expected-Room-Revision",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Strict room-global observation when supplied; additionally required for group completion."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishRevision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "artifact": {
+                      "$ref": "#/components/schemas/Artifact"
+                    },
+                    "revision": {
+                      "$ref": "#/components/schemas/ArtifactRevision"
+                    },
+                    "state_revision": {
+                      "type": "string",
+                      "pattern": "^[0-9]+$"
+                    }
+                  },
+                  "required": [
+                    "artifact",
+                    "revision",
+                    "state_revision"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/artifacts/{artifactId}/revisions/{revisionId}/review": {
+      "put": {
+        "operationId": "reviewArtifactRevision",
+        "summary": "reviewArtifactRevision",
+        "description": "Standalone revision review; does not discharge an action's required exact round. Historical=true explicitly selects superseded bytes.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "artifactId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "revisionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "X-GRP-Expected-Foreground-Epoch",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Conditional fence for separately configured phased rooms; not an instruction to enable phased policy."
+          },
+          {
+            "name": "X-GRP-Expected-Room-Revision",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "description": "Strict room-global observation when supplied; additionally required for group completion."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtifactReview"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "review": {
+                      "$ref": "#/components/schemas/Review"
+                    },
+                    "state_revision": {
+                      "type": "string",
+                      "pattern": "^[0-9]+$"
+                    }
+                  },
+                  "required": [
+                    "review",
+                    "state_revision"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide."
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ParticipantToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Mutation credential scoped to participant and room. X-Mandate is rejected on these mutations. Reads use room visibility policy; bearer security shown here is a supported read form, not a requirement on every public room."
+      }
+    },
+    "schemas": {
+      "ActionResult": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "text"
+              },
+              "reference": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
+              }
+            },
+            "required": [
+              "kind",
+              "reference"
+            ],
+            "not": {
+              "required": [
+                "note"
+              ]
+            }
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "artifact_revision"
+              },
+              "reference": {
+                "type": "object",
+                "properties": {
+                  "artifact_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "revision_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "artifact_id",
+                  "revision_id",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              },
+              "note": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"
+              }
+            },
+            "required": [
+              "kind",
+              "reference"
+            ]
+          }
+        ]
+      },
+      "Review": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "artifact_revision_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reviewer_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "comment",
+              "approve",
+              "changes_requested"
+            ]
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "artifact_revision_id",
+          "reviewer_id",
+          "disposition",
+          "body",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "ReviewState": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "changes_requested"
+            ]
+          },
+          "artifact_revision_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requested_by_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requested_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "required_participant_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          },
+          "responded_participant_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "state",
+          "artifact_revision_id",
+          "requested_by_id",
+          "requested_at",
+          "required_participant_ids",
+          "responded_participant_ids"
+        ]
+      },
+      "Action": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_by": {
+            "type": "string",
+            "minLength": 1
+          },
+          "assignee_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "holder_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "previous_holder_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_artifact_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "handoff_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "holder_changed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recovery_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recovery_override": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "in_progress",
+              "in_review",
+              "awaiting_decision",
+              "awaiting_completion",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "deadline_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "single",
+              "handoff",
+              "all"
+            ]
+          },
+          "completion": {
+            "type": "string",
+            "enum": [
+              "holder",
+              "group",
+              "all"
+            ]
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "participants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "participant_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "working",
+                    "completed",
+                    "failed"
+                  ]
+                },
+                "started_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "completed_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "result": {
+                  "$ref": "#/components/schemas/ActionResult"
+                }
+              },
+              "required": [
+                "participant_id",
+                "status"
+              ]
+            }
+          },
+          "progress": {
+            "type": "object",
+            "properties": {
+              "completed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "required": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "completed",
+              "required"
+            ]
+          },
+          "holder_epoch": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
+          },
+          "lease_expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recoverable": {
+            "type": "boolean"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActionResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completion_decision_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completion_proposed_by_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completion_proposed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersedes_action_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "title",
+          "description",
+          "created_by",
+          "assignee_id",
+          "holder_id",
+          "previous_holder_id",
+          "target_artifact_id",
+          "handoff_note",
+          "holder_changed_at",
+          "recovery_reason",
+          "recovery_override",
+          "status",
+          "deadline_at",
+          "mode",
+          "completion",
+          "available",
+          "participants",
+          "progress",
+          "holder_epoch",
+          "lease_expires_at",
+          "recoverable",
+          "result",
+          "completion_decision_id",
+          "completion_proposed_by_id",
+          "completion_proposed_at",
+          "review",
+          "supersedes_action_id",
+          "created_at",
+          "updated_at",
+          "completed_at"
+        ]
+      },
+      "ExternalReference": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "git"
+          },
+          "uri": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://",
+            "maxLength": 2048
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "provider_revision": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"
+          },
+          "verification": {
+            "const": "asserted"
+          }
+        },
+        "required": [
+          "provider",
+          "uri",
+          "provider_revision",
+          "verification"
+        ]
+      },
+      "Artifact": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "native",
+              "external"
+            ]
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "current_revision_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "created_by": {
+            "type": "string",
+            "minLength": 1
+          },
+          "baton_mode": {
+            "type": "string",
+            "enum": [
+              "none",
+              "advisory",
+              "enforced"
+            ]
+          },
+          "exclusive": {
+            "type": "boolean"
+          },
+          "claim": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "holder_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "epoch": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,63}$"
+                  },
+                  "acquired_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "expires_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": [
+                  "holder_id",
+                  "epoch",
+                  "acquired_at",
+                  "expires_at"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "claimable": {
+            "type": "boolean"
+          },
+          "review_status": {
+            "type": "object",
+            "properties": {
+              "current": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ReviewSummary"
+                }
+              },
+              "superseded": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ReviewSummary"
+                }
+              }
+            },
+            "required": [
+              "current",
+              "superseded"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "name",
+          "kind",
+          "media_type",
+          "current_revision_id",
+          "created_by",
+          "baton_mode",
+          "exclusive",
+          "claim",
+          "claimable",
+          "review_status",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "ReviewSummary": {
+        "type": "object",
+        "properties": {
+          "reviewer_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "comment",
+              "approve",
+              "changes_requested"
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "reviewer_id",
+          "display_name",
+          "revision_id",
+          "disposition",
+          "updated_at"
+        ]
+      },
+      "ArtifactRevision": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "base_revision_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "native",
+              "external"
+            ]
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "external": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExternalReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "blocks": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "number": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "content": {
+                      "type": "string"
+                    },
+                    "content_sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "number",
+                    "label",
+                    "kind",
+                    "content",
+                    "content_sha256"
+                  ]
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "change": {
+            "anyOf": [
+              {
+                "type": "object",
+                "description": "Additive native change metadata; detailed schema is a remaining gate."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "authored_by": {
+            "type": "string",
+            "minLength": 1
+          },
+          "claim_epoch": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[1-9][0-9]{0,63}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "baton_overlap": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "ordinal",
+          "base_revision_id",
+          "source",
+          "content",
+          "external",
+          "blocks",
+          "change",
+          "sha256",
+          "authored_by",
+          "claim_epoch",
+          "baton_overlap",
+          "created_at"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "source": {
+                  "const": "native"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "external": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "content": {
+                  "type": "null"
+                },
+                "external": {
+                  "$ref": "#/components/schemas/ExternalReference"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "CreateAction": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 8000,
+                "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "assignee_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "start": {
+            "type": "boolean",
+            "default": true
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "single",
+              "handoff",
+              "all"
+            ],
+            "default": "single"
+          },
+          "completion": {
+            "type": "string",
+            "enum": [
+              "holder",
+              "group"
+            ]
+          },
+          "participant_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "target_artifact_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 900,
+            "default": 300
+          },
+          "exclusive": {
+            "type": "boolean"
+          },
+          "baton_mode": {
+            "type": "string",
+            "enum": [
+              "none",
+              "advisory",
+              "enforced"
+            ]
+          },
+          "deadline_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersedes_action_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "defer"
+              ]
+            },
+            {
+              "required": [
+                "peer_guidance"
+              ]
+            }
+          ]
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "mode"
+              ],
+              "properties": {
+                "mode": {
+                  "const": "all"
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "completion"
+                ]
+              },
+              "properties": {
+                "start": {
+                  "const": true
+                },
+                "assignee_id": {
+                  "type": "null"
+                },
+                "target_artifact_id": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "participant_ids"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "Claim": {
+        "type": "object",
+        "properties": {
+          "expected_revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 900,
+            "default": 300
+          }
+        },
+        "required": [
+          "expected_revision"
+        ]
+      },
+      "Renew": {
+        "type": "object",
+        "properties": {
+          "claim_epoch": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 900,
+            "default": 300
+          }
+        },
+        "required": [
+          "claim_epoch"
+        ]
+      },
+      "Release": {
+        "type": "object",
+        "properties": {
+          "claim_epoch": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          }
+        },
+        "required": [
+          "claim_epoch"
+        ]
+      },
+      "Handoff": {
+        "type": "object",
+        "properties": {
+          "expected_revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "to_participant_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "to_group": {
+            "const": true
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 2000,
+                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 900,
+            "default": 300
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "to_participant_id"
+            ],
+            "not": {
+              "required": [
+                "to_group"
+              ]
+            }
+          },
+          {
+            "required": [
+              "to_group"
+            ],
+            "not": {
+              "required": [
+                "to_participant_id"
+              ]
+            }
+          }
+        ]
+      },
+      "Takeover": {
+        "type": "object",
+        "properties": {
+          "expected_revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"
+          },
+          "override": {
+            "type": "boolean"
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 900,
+            "default": 300
+          }
+        },
+        "required": [
+          "expected_revision",
+          "reason"
+        ]
+      },
+      "Resume": {
+        "type": "object",
+        "properties": {
+          "expected_revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "reason"
+        ]
+      },
+      "Transition": {
+        "type": "object",
+        "properties": {
+          "expected_revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "claim_epoch": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActionResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": []
+      },
+      "Cancel": {
+        "type": "object",
+        "properties": {
+          "expected_revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ]
+      },
+      "RequestReview": {
+        "type": "object",
+        "properties": {
+          "expected_action_revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "expected_artifact_revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "artifact_revision_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "expected_action_revision",
+          "expected_artifact_revision",
+          "artifact_revision_id"
+        ]
+      },
+      "ActionReview": {
+        "type": "object",
+        "properties": {
+          "expected_action_revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "artifact_revision_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "changes_requested"
+            ]
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 32000,
+                "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_review_revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          }
+        },
+        "required": [
+          "expected_action_revision",
+          "artifact_revision_id",
+          "disposition"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "disposition": {
+                  "const": "changes_requested"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "body"
+              ],
+              "properties": {
+                "body": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 32000,
+                  "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ArtifactReview": {
+        "type": "object",
+        "properties": {
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "comment",
+              "approve",
+              "changes_requested"
+            ]
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 32000,
+                "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_review_revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "historical": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "disposition"
+        ]
+      },
+      "ReviewNoteInput": {
+        "type": "object",
+        "properties": {
+          "artifact_revision_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "late",
+              "correction"
+            ]
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32000,
+            "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
+          },
+          "corrects_review_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "artifact_revision_id",
+          "kind",
+          "body"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "correction"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "corrects_review_id"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "corrects_review_id"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ReviewNote": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "action_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "artifact_revision_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reviewer_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "late",
+              "correction"
+            ]
+          },
+          "corrects_review_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "body": {
+            "type": "string"
+          },
+          "non_dispositive": {
+            "const": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "action_id",
+          "artifact_revision_id",
+          "reviewer_id",
+          "kind",
+          "corrects_review_id",
+          "body",
+          "non_dispositive",
+          "created_at"
+        ]
+      },
+      "CreateArtifact": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "native",
+              "external"
+            ]
+          },
+          "media_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"
+          },
+          "exclusive": {
+            "type": "boolean"
+          },
+          "baton_mode": {
+            "type": "string",
+            "enum": [
+              "none",
+              "advisory",
+              "enforced"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "external": {
+            "$ref": "#/components/schemas/ExternalReference"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{64}$"
+          },
+          "action_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expected_action_revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 900,
+            "default": 300
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "dependentRequired": {
+          "action_id": [
+            "expected_action_revision"
+          ]
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "native"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "content"
+              ],
+              "properties": {
+                "media_type": {
+                  "type": "string",
+                  "enum": [
+                    "text/markdown",
+                    "text/plain"
+                  ]
+                }
+              }
+            },
+            "else": {
+              "required": [
+                "external",
+                "sha256"
+              ],
+              "properties": {
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "PatchOperation": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "replace"
+              },
+              "block_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expected_content_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "content": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "block_id",
+              "expected_content_sha256",
+              "content"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "insert_before",
+                  "insert_after"
+                ]
+              },
+              "anchor_block_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "content": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "anchor_block_id",
+              "content"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "delete"
+              },
+              "block_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expected_content_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "op",
+              "block_id",
+              "expected_content_sha256"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "const": "replace_text"
+              },
+              "find": {
+                "type": "string",
+                "minLength": 1
+              },
+              "replace": {
+                "type": "string"
+              },
+              "expected_matches": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "op",
+              "find",
+              "replace",
+              "expected_matches"
+            ]
+          }
+        ]
+      },
+      "PublishRevision": {
+        "type": "object",
+        "properties": {
+          "expected_revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "base_revision_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "claim_epoch": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,63}$"
+          },
+          "action_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 900,
+            "default": 300
+          },
+          "content": {
+            "type": "string"
+          },
+          "sync_content": {
+            "type": "string"
+          },
+          "operations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PatchOperation"
+            },
+            "minItems": 1,
+            "maxItems": 50
+          },
+          "external": {
+            "$ref": "#/components/schemas/ExternalReference"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "base_revision_id"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "content"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "sync_content"
+                  ]
+                },
+                {
+                  "required": [
+                    "operations"
+                  ]
+                },
+                {
+                  "required": [
+                    "external"
+                  ]
+                },
+                {
+                  "required": [
+                    "sha256"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "required": [
+              "sync_content"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "content"
+                  ]
+                },
+                {
+                  "required": [
+                    "operations"
+                  ]
+                },
+                {
+                  "required": [
+                    "external"
+                  ]
+                },
+                {
+                  "required": [
+                    "sha256"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "required": [
+              "operations"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "content"
+                  ]
+                },
+                {
+                  "required": [
+                    "sync_content"
+                  ]
+                },
+                {
+                  "required": [
+                    "external"
+                  ]
+                },
+                {
+                  "required": [
+                    "sha256"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "required": [
+              "external",
+              "sha256"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "content"
+                  ]
+                },
+                {
+                  "required": [
+                    "sync_content"
+                  ]
+                },
+                {
+                  "required": [
+                    "operations"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "ActionMutation": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/Action"
+          },
+          "state_revision": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
+          }
+        },
+        "required": [
+          "action",
+          "state_revision"
+        ]
+      },
+      "ArtifactMutation": {
+        "type": "object",
+        "properties": {
+          "artifact": {
+            "$ref": "#/components/schemas/Artifact"
+          },
+          "state_revision": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
+          }
+        },
+        "required": [
+          "artifact",
+          "state_revision"
+        ]
+      },
+      "ReviewMutation": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/Action"
+          },
+          "artifact": {
+            "$ref": "#/components/schemas/Artifact"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ArtifactRevision"
+          },
+          "reviews": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Review"
+            }
+          },
+          "state_revision": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
+          }
+        },
+        "required": [
+          "action",
+          "artifact",
+          "revision",
+          "reviews",
+          "state_revision"
+        ]
+      },
+      "ArtifactRead": {
+        "type": "object",
+        "properties": {
+          "artifact": {
+            "$ref": "#/components/schemas/Artifact"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/ArtifactRevision"
+          },
+          "reviews": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Review"
+            }
+          }
+        },
+        "required": [
+          "artifact",
+          "revision",
+          "reviews"
+        ]
+      }
+    }
+  }
+}

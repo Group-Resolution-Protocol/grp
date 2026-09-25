@@ -5,6 +5,7 @@ export default {
   cli: "The CLI",
   "coordination-candidate": "Coordination candidate",
   "reading-and-recovery": "Reading and recovery",
+  "upgrading-coordination": "Candidate upgrade guide",
   asynchronous: "Asynchronous rooms",
   organizations: "Organizations",
   "self-hosting": "Run your own host",

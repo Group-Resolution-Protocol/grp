@@ -1,0 +1,72 @@
+---
+title: Actions and completion
+description: Track responsibility and reported work without confusing agreement with execution.
+---
+
+# Actions and completion
+
+**Unreleased coordination candidate.** Check the
+[availability and transport boundary](/docs/coordination-candidate).
+
+A decision records a group choice. An action records work: its purpose, who has
+it, what they report, and what must happen before it counts as complete. An
+action does not run an agent or execute an external tool. An artifact is optional.
+Discussion remains available alongside work in the normal open-foreground room.
+
+## Choose responsibility and completion separately
+
+| Mode | Responsibility | Completion |
+| --- | --- | --- |
+| `single` | One holder | Holder report by default; group agreement if selected at creation |
+| `handoff` | One holder at a time, with explicit transfer | Same completion choices as `single` |
+| `all` | A fixed set of required participant reports | Everyone reports complete; a failure fails the action |
+
+Mode and completion policy are fixed at creation. `all` has no single holder or
+single attached artifact and does not take a separate completion policy. Its
+required roster is fixed; adding members later does not silently add work.
+
+A normal action starts immediately. Deferred creation is represented by
+`start=false` at the API, not by the retired `defer` option. Focused reads expose
+the actual status and current holder; do not infer ownership from who spoke last.
+
+## Three ways work reaches completion
+
+1. **Holder report.** The authorized holder reports completion, optionally with
+   a text result or an exact artifact reference. This is a report, not independent
+   evidence that the work happened.
+2. **Group completion decision.** For `completion=group`, ordinary completion
+   proposes an agreement over a fixed result. The action waits for that decision;
+   proposing it is not the same as completing the action.
+3. **Exact artifact review.** The holder of a group-completion action submits
+   the current attached revision for review. The request records the holder's
+   approval. Once every required response arrives, unanimous approval completes
+   the action; requested changes return it to the editor. This path does not
+   require a duplicate decision just to approve the same draft.
+
+The result only answers the action's stated commission. Approval of “draft a
+letter” is not permission to send it. External signing, spending, publication or
+execution needs its own authority and evidence. See [Safety](/docs/safety).
+
+## Handoff, recovery and cancellation
+
+In `handoff` mode the current holder can transfer to one participant or offer
+the work back to the group. A lease does not transfer ownership merely because
+time passes. Recovery uses a takeover with a reason; overriding someone else's
+still-live lease is explicit and recorded. It is not a general override of
+reviews or external permissions.
+
+Cancellation abandons work; it does not approve it. In the normal holder
+lifecycle the creator or current holder may cancel; during exact review the
+review requester also retains that path. Only the creator cancels an `all`
+action. A pending completion decision has its own recovery: its proposer can
+resume work by canceling that still-open decision with a reason. No transition
+rewrites an already sealed decision or treats silence as approval.
+
+Terminal actions cannot be restarted in place. A new action may name a terminal
+predecessor as `supersedes_action_id`. Amending a completed exact-reviewed result
+inherits its artifact lineage and group-completion policy; it cannot silently
+switch to holder-only completion or a different artifact. See
+[artifacts and review](/docs/concepts/artifacts).
+
+For exact inputs, revision fences and remaining draft limits, see the
+[actions/artifacts contract](/specification/actions-artifacts-candidate).

@@ -1,0 +1,53 @@
+---
+title: Upgrading to the coordination candidate
+description: Preparation checklist for changed reading, shared work and capability boundaries.
+---
+
+# Upgrading to the coordination candidate
+
+**Unreleased.** Final package versions and host rollout are not yet announced.
+This checklist describes the candidate migration; it is not an instruction to
+install an unpublished build or assume the production host already supports it.
+
+## Keep the version boundaries separate
+
+CLI package version, protocol contract version and host capabilities are different
+things. New CLI commands do not add server support. Check the
+[support matrix](/docs/coordination-candidate); actions/artifacts/turn mutations
+currently use participant tokens over REST, not equivalent MCP or mandate paths.
+The new machine-readable contract is a separate draft, not an amendment silently
+inserted into the published base specification.
+
+## Reading and scripts
+
+- Ordinary reads no longer mean automatic consumption. Incorporate the returned
+  complete prefix, acknowledge its actual position, then fetch the next batch.
+  Follow pinned continuation commands without adding selectors or format flags.
+- Read the [bounded-output contract](/docs/reading-and-recovery) before parsing
+  stdout. Bare JSON remains bulk data; JSON plus a character budget is a different
+  presentation envelope. Save bulk output to a file and check the command status.
+- Credentials and acknowledged positions survive local-state migration, but old
+  unscoped observation certificates and stale-post bypass state are discarded.
+  Establish fresh scoped observations with a complete room read.
+- Remove `--force-stale-post` from automation: it fails locally rather than
+  bypassing the guard. A failed mutation is not automatically retried.
+- Watch notifications never acknowledge conversation. Focused reads do not
+  replace catching up with the room, and historical continuations cannot prove
+  that a pending review or turn is still current.
+
+## Shared work and authority
+
+Existing decision-only workflows remain useful; do not turn every task into an
+action plus a duplicate approval decision. Add an [action](/docs/concepts/actions)
+when responsibility, status or completion needs shared structure. Add an
+[artifact](/docs/concepts/artifacts) when exact shared bytes matter. Record the
+desired completion policy when starting work; it is not editable mid-action.
+
+Speaking turns are separately enabled per room, not a new universal default.
+Votes/reviews keep their own authority and timing. A timeout or expired edit
+claim is neither permission to speak nor approval of work.
+
+Before promotion, operators still need compatibility testing against their
+actual older hosts/clients, retained receipt verification, package/protocol
+version review and rollback checks. These documentation changes do not certify
+that rollout or authorize changing live operator settings.

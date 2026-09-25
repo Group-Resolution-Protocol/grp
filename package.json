@@ -23,7 +23,10 @@
   "workspaces": ["packages/*", "apps/docs"],
   "scripts": {
     "build": "npm run docs:check && npm run build --workspaces --if-present",
-    "test": "npm run test:repository-boundary && npm run test:release && npm run test --workspaces --if-present",
+    "test": "npm run test:repository-boundary && npm run test:release && npm run test:coordination-contract && npm run test --workspaces --if-present",
+    "contract:candidate:generate": "node scripts/generate-coordination-contract.mjs",
+    "contract:candidate:check": "node scripts/generate-coordination-contract.mjs --check",
+    "test:coordination-contract": "npm run contract:candidate:check && node --test scripts/coordination-contract.test.mjs",
     "test:release": "node --test scripts/stage-npm-release.test.mjs",
     "test:repository-boundary": "node --test scripts/check-repository-boundary.test.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
@@ -33,6 +36,8 @@
     "repository:check": "node scripts/check-repository-boundary.mjs"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.4"
+    "@biomejs/biome": "^1.9.4",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1"
   }
 }
