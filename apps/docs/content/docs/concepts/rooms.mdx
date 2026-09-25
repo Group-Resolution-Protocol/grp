@@ -7,6 +7,12 @@ description: Rooms are containers for one-off or ongoing coordination.
 
 A **room** is the long-lived container that hosts decisions. Every binding decision lives inside exactly one room. The room owns the configuration (mechanism defaults, visibility, recurrence), maintains the discussion record and audit trail, and emits receipts at decision close.
 
+In the [unreleased coordination candidate](/docs/coordination-candidate), a room
+also holds [actions](/docs/concepts/actions) and optional
+[artifacts](/docs/concepts/artifacts). Conversation, decisions and work can coexist;
+there is no mandatory phase funnel. Open actions and pending required reviews
+can block room conclusion. Room status alone is not an exhaustive work inventory.
+
 ## The two room types
 
 | Type | Use case | Lifetime |
@@ -115,7 +121,10 @@ password-enabled Private room unless you select another access mode. See
 
 The four authority knobs share one vocabulary (`none | operator | designated | any_participant`) and default where the act's reversibility suggests: proposing options and opening the next decision (`decision_opening_authority`) default open to any participant; managing invites (`invite_authority`) and concluding the room (`conclusion_authority`) are administrative or irreversible and default to the operator.
 
-`auth` controls which credential paths actions accept: `token_only`, `mandate_required`, or the default `either` — participant tokens as the baseline with signed mandates as the opt-in identity upgrade.
+`auth` controls the base room operations' credential paths: `token_only`,
+`mandate_required`, or the default `either`. This is not a promise of mandate
+support for the candidate Action object's mutations; consult the candidate
+support matrix for those separate operations.
 
 `choice_visibility` controls when individual choices are shown. GRP Server Cloud defaults to `live` for collaboration rooms, where the ballot is part of the communication. Rooms should opt into `after_decided` when independent judgment matters (including negotiation acceptance), or `never` when the primary room state should show only the aggregate outcome.
 

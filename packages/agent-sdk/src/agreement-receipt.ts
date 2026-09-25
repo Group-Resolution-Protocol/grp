@@ -42,6 +42,9 @@ function sameTallies(actual: Record<string, unknown>, expected: Record<string, n
  * compatibility. A choice-visibility `never` receipt can prove its aggregate
  * result was signed, but cannot replay attribution that was deliberately
  * omitted, so that case is reported as unavailable rather than verified.
+ * Cancellation replay checks the signed attribution shape, not independent
+ * evidence that the actor held the claimed room authority. That requires the
+ * relevant authenticated room history; it is not contained in this payload.
  */
 export function verifyAgreementReceiptSemantics(payload: unknown): AgreementReceiptVerification {
   if (!isRecord(payload) || !isRecord(payload.grp)) {
@@ -137,7 +140,7 @@ export function verifyAgreementReceiptSemantics(payload: unknown): AgreementRece
 
   // A cancellation is an administrative terminal state, not a computed vote
   // outcome. The signed votes remain replayable evidence of participation,
-  // while the empty tally and one attributed conclusion-authority override
+  // while the empty tally and one attributed cancellation override
   // make clear that no option won and no history was rewritten.
   if (grp.outcome.status === "canceled") {
     if (

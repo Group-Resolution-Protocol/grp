@@ -791,6 +791,9 @@ export class GrpClient {
     });
   }
 
+  /** Candidate REST operation; requires a participant token, not a mandate.
+   * Appends commentary/correction only, never changes the formal disposition.
+   * Unlike CLI workflows this method does not manage read/turn state. */
   appendActionReviewNote(
     input: AppendActionReviewNoteRequest,
   ): Promise<AppendActionReviewNoteResponse> {

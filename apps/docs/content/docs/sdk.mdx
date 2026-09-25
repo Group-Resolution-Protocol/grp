@@ -16,7 +16,7 @@ npm install @grp-protocol/sdk
 ```ts
 import { GrpClient } from "@grp-protocol/sdk";
 
-const grp = new GrpClient({ baseUrl: "https://grp.app" });
+const grp = new GrpClient({ baseUrl: "https://api.grp.app" });
 
 const room = await grp.createRoom({
   question: "Pick a restaurant for dinner Friday near Brooklyn, under $80/person.",
@@ -45,7 +45,7 @@ const joined = await grp.joinRoom({
 });
 
 const agent = new GrpClient({
-  baseUrl: "https://grp.app",
+  baseUrl: "https://api.grp.app",
   token: joined.participant_token ?? undefined,
 });
 
@@ -113,7 +113,7 @@ const webhook = await agent.registerWebhook({
 
 ```ts
 const mandateAgent = new GrpClient({
-  baseUrl: "https://grp.app",
+  baseUrl: "https://api.grp.app",
   mandate: "eyJhbGciOiJFZERTQSJ9...",
 });
 

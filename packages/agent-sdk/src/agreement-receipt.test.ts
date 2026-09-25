@@ -170,6 +170,66 @@ describe("verifyAgreementReceiptSemantics", () => {
     });
   });
 
+  it.each([
+    { by: "" },
+    { by: "actor\nspoof" },
+    { reason: "" },
+    { reason: " trailing " },
+    { reason: "line\nbreak" },
+    { reason: "x".repeat(501) },
+    { fired_at: "not-a-date" },
+    { fired_at: "2026-08-21" },
+    { fired_at: "2026-08-21T12:34:56.000+01:00" },
+    { authority_source: "action_submission:reviewer" },
+  ])("rejects malformed cancellation attribution %j", (change) => {
+    expect(
+      verifyAgreementReceiptSemantics(
+        receipt({
+          overrides: [
+            {
+              by: "participant:operator",
+              reason: "Canceled for a reason.",
+              fired_at: "2026-08-21T12:34:56.000Z",
+              authority_source: "conclusion_authority:operator",
+              ...change,
+            },
+          ],
+          outcome: {
+            status: "canceled",
+            winning_option: null,
+            tallies: {},
+            diagnostics: { cast_votes: 2, eligible_voters: 2 },
+          },
+        }),
+      ).status,
+    ).toBe("failed");
+  });
+
+  it("rejects cancellation winners, tallies and multiple override records", () => {
+    const override = {
+      by: "participant:operator",
+      reason: "Canceled for a reason.",
+      fired_at: "2026-08-21T12:34:56.000Z",
+      authority_source: "conclusion_authority:operator",
+    };
+    const outcome = {
+      status: "canceled",
+      winning_option: null,
+      tallies: {},
+      diagnostics: { cast_votes: 2, eligible_voters: 2 },
+    };
+    for (const change of [{ winning_option: "yes" }, { tallies: { yes: 2 } }]) {
+      expect(
+        verifyAgreementReceiptSemantics(
+          receipt({ overrides: [override], outcome: { ...outcome, ...change } }),
+        ).status,
+      ).toBe("failed");
+    }
+    expect(
+      verifyAgreementReceiptSemantics(receipt({ overrides: [override, override], outcome })).status,
+    ).toBe("failed");
+  });
+
   it("rejects agreement markers without the effective unanimity parameters", () => {
     const payload = receipt();
     const grp = payload.grp as Record<string, unknown>;

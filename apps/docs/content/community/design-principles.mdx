@@ -42,6 +42,12 @@ REST and MCP Streamable HTTP both expose the same operations against the same ba
 
 Both transports are required for conformance. This prevents transport-specific lock-in.
 
+The unreleased coordination implementation currently lacks equivalent MCP
+action/artifact/turn mutations. Its [support matrix](/docs/coordination-candidate)
+records that gap. Calling it an optional candidate is not a waiver of this
+principle or base conformance: the support/version boundary must pass the public
+change process before promotion.
+
 ## 6. Structured errors, structured types
 
 Numbers are numbers, booleans are booleans, durations are integer seconds. No ambiguous string-encoded durations like `"1h"`. Error codes are language-neutral and structured.
