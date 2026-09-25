@@ -7716,21 +7716,90 @@ async function roomTurn(
         setRoomSpeakingTurn(config, ref.slug, ref.baseUrl, { ...own, identity, requestId }),
       io.env,
     );
-  const response = await requestJson<Record<string, unknown>>(
-    ref.baseUrl,
-    `/api/rooms/${encodeURIComponent(ref.slug)}/turns`,
-    io,
-    {
-      method: "POST",
-      auth,
-      body: { operation, request_id: requestId, ...(epoch !== undefined ? { epoch } : {}) },
-      headers: {
-        "idempotency-key": validatedIdempotencyKey(flags["idempotency-key"]) ?? randomUUID(),
+  const submit = (grantEpoch: string | undefined, key: string) =>
+    requestJson<Record<string, unknown>>(
+      ref.baseUrl,
+      `/api/rooms/${encodeURIComponent(ref.slug)}/turns`,
+      io,
+      {
+        method: "POST",
+        auth,
+        body: {
+          operation,
+          request_id: requestId,
+          ...(grantEpoch !== undefined ? { epoch: grantEpoch } : {}),
+        },
+        headers: { "idempotency-key": key },
       },
-    },
-  );
+    );
+  const unchanged = () => {
+    const current = findRememberedRoom(
+      readProviderConfig(io.env),
+      ref.slug,
+      ref.baseUrl,
+    )?.speakingTurn;
+    return (
+      current?.identity === identity && current.requestId === requestId && current.epoch === epoch
+    );
+  };
+  let response: Record<string, unknown>;
+  let recovered = false;
+  try {
+    response = await submit(
+      epoch,
+      validatedIdempotencyKey(flags["idempotency-key"]) ?? randomUUID(),
+    );
+  } catch (error) {
+    // A queued request can be granted between commands. Refresh only that
+    // positively rejected operation; never retry ambiguous writes or posts.
+    if (
+      !(error instanceof CliHttpError) ||
+      error.status !== 409 ||
+      error.code !== "turn.fenced" ||
+      operation === "request" ||
+      epoch !== undefined ||
+      own?.requestId !== requestId ||
+      flags["request-id"] !== undefined ||
+      flags.epoch !== undefined ||
+      flags["idempotency-key"] !== undefined ||
+      !unchanged()
+    )
+      throw error;
+    let fresh: Record<string, unknown>;
+    try {
+      fresh = await requestJson<Record<string, unknown>>(
+        ref.baseUrl,
+        `/api/rooms/${encodeURIComponent(ref.slug)}/next-action`,
+        io,
+        { auth, query: { for: "activity", turn_request: requestId, wait: 0 } },
+      );
+    } catch {
+      throw error;
+    }
+    const turn = isRecord(fresh.speaking_turn) ? fresh.speaking_turn : {};
+    const target = isRecord(turn.target) ? turn.target : {};
+    const caller = isRecord(turn.own) ? turn.own : {};
+    const holder = isRecord(turn.holder) ? turn.holder : {};
+    const grantedEpoch = stringOrNull(holder.epoch);
+    if (
+      turn.concluded === true ||
+      target.request_id !== requestId ||
+      target.status !== "granted" ||
+      caller.request_id !== requestId ||
+      caller.status !== "held" ||
+      holder.request_id !== requestId ||
+      !grantedEpoch ||
+      !/^[0-9]{1,30}$/.test(grantedEpoch) ||
+      !unchanged()
+    )
+      throw error;
+    // No observation is adopted. A changed payload needs a fresh idempotency
+    // key; the first operation is known to have been rejected by its fence.
+    response = await submit(grantedEpoch, randomUUID());
+    recovered = true;
+  }
   if (!isRecord(response.speaking_turn)) throw new Error("host did not return speaking-turn state");
-  rememberSpeakingTurn(ref, flags, io, response.speaking_turn);
+  if (!recovered || unchanged()) rememberSpeakingTurn(ref, flags, io, response.speaking_turn);
   if (isJson(flags)) io.stdout(renderJson(response));
   else if (flags.quiet !== "true")
     io.stdout(

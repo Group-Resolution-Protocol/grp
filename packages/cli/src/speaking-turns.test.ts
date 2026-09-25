@@ -74,6 +74,176 @@ function fixture() {
 }
 
 describe("optional speaking turns", () => {
+  const granted = () => ({
+    ...turn(true, "2"),
+    target: { request_id: id, status: "granted" },
+    observation: "must-not-adopt",
+  });
+  const fenced = () =>
+    json({ error: { code: "turn.fenced", message: "Read current turn state" } }, 409);
+  for (const operation of ["release", "renew"] as const) {
+    for (const status of ["speaking_turn", "actionable", "action_required"]) {
+      it(`recovers ${operation} of the same queued request after promotion, alongside ${status}`, async () => {
+        const f = fixture();
+        await f.run(["turn", "request"], async () => json({ speaking_turn: turn(false) }));
+        const keys: string[] = [];
+        let posts = 0;
+        const fetch = vi.fn(async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith("/next-action")) {
+            expect(url.searchParams.get("turn_request")).toBe(id);
+            expect(url.searchParams.get("wait")).toBe("0");
+            expect(url.searchParams.get("for")).toBe("activity");
+            return json({ status, speaking_turn: granted() });
+          }
+          expect(url.pathname.endsWith("/turns")).toBe(true);
+          const body = JSON.parse(String(init?.body));
+          expect(body).toEqual({ operation, request_id: id, ...(posts ? { epoch: "2" } : {}) });
+          keys.push(new Headers(init?.headers).get("idempotency-key") ?? "");
+          posts++;
+          return posts === 1
+            ? fenced()
+            : json({
+                speaking_turn: operation === "release" ? { ...turn(), own: null } : granted(),
+              });
+        });
+        expect(await f.run(["turn", operation], fetch)).toBe(0);
+        expect(fetch).toHaveBeenCalledTimes(3);
+        expect(new Set(keys).size).toBe(2);
+        expect(keys.every(Boolean)).toBe(true);
+        expect(f.state().lastSeenSeq).toBe(5);
+        expect(f.state().observations.conversation).toBe("5");
+        expect(f.state().speakingTurn.observation).toBeUndefined();
+        expect(f.errors).toEqual([]);
+      });
+    }
+    it(`does not refresh a successful queued ${operation}`, async () => {
+      const f = fixture();
+      await f.run(["turn", "request"], async () => json({ speaking_turn: turn(false) }));
+      const fetch = vi.fn(async () => json({ speaking_turn: turn(false) }));
+      expect(await f.run(["turn", operation], fetch)).toBe(0);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+    for (const override of [
+      [`--request-id=${id}`],
+      ["--epoch=1"],
+      ["--idempotency-key=explicit-turn-key"],
+    ]) {
+      it(`does not replace explicit ${operation} override ${override[0]}`, async () => {
+        const f = fixture();
+        await f.run(["turn", "request"], async () => json({ speaking_turn: turn(false) }));
+        const fetch = vi.fn(async () => fenced());
+        expect(await f.run(["turn", operation, ...override], fetch)).toBe(1);
+        expect(fetch).toHaveBeenCalledTimes(1);
+      });
+    }
+    for (const terminal of ["expired", "removed", "missing", "completed", "concluded", "waiting"]) {
+      it(`does not retry ${operation} after target ${terminal}`, async () => {
+        const f = fixture();
+        await f.run(["turn", "request"], async () => json({ speaking_turn: turn(false) }));
+        const fetch = vi.fn(async (input) =>
+          new URL(String(input)).pathname.endsWith("/turns")
+            ? fenced()
+            : json({
+                status: "speaking_turn",
+                speaking_turn: { ...granted(), target: { request_id: id, status: terminal } },
+              }),
+        );
+        expect(await f.run(["turn", operation], fetch)).toBe(1);
+        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(f.state().speakingTurn.epoch).toBeUndefined();
+      });
+    }
+    it(`bounds a second ${operation} conflict and does not retry uncertainty`, async () => {
+      const f = fixture();
+      await f.run(["turn", "request"], async () => json({ speaking_turn: turn(false) }));
+      const fetch = vi.fn(async (input) =>
+        new URL(String(input)).pathname.endsWith("/turns")
+          ? fenced()
+          : json({ status: "speaking_turn", speaking_turn: granted() }),
+      );
+      expect(await f.run(["turn", operation], fetch)).toBe(1);
+      expect(fetch).toHaveBeenCalledTimes(3);
+      const lost = vi.fn(async () => {
+        throw new Error("lost response");
+      });
+      expect(await f.run(["turn", operation], lost)).toBe(1);
+      expect(lost).toHaveBeenCalledTimes(1);
+    });
+    it(`does not refresh ${operation} with an already known epoch or another credential`, async () => {
+      const f = fixture();
+      await f.run(["turn", "request"], async () => json({ speaking_turn: turn() }));
+      const fetch = vi.fn(async () => fenced());
+      expect(await f.run(["turn", operation], fetch)).toBe(1);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(await f.run(["turn", operation, "--token=other"], fetch)).toBe(1);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+    for (const when of ["refresh", "retry"]) {
+      it(`preserves a concurrent newer request during ${operation} ${when}`, async () => {
+        const f = fixture();
+        await f.run(["turn", "request"], async () => json({ speaking_turn: turn(false) }));
+        let posts = 0;
+        const newer = async () => {
+          await f.run(["turn", "request", "--request-id=newer"], async () =>
+            json({
+              speaking_turn: {
+                ...turn(),
+                own: { ...turn().own, request_id: "newer" },
+                holder: { ...turn().holder, request_id: "newer", epoch: "3" },
+              },
+            }),
+          );
+        };
+        const fetch = vi.fn(async (input) => {
+          if (new URL(String(input)).pathname.endsWith("/next-action")) {
+            if (when === "refresh") await newer();
+            return json({ status: "speaking_turn", speaking_turn: granted() });
+          }
+          posts++;
+          if (posts === 1) return fenced();
+          await newer();
+          return json({ speaking_turn: granted() });
+        });
+        expect(await f.run(["turn", operation], fetch)).toBe(when === "refresh" ? 1 : 0);
+        expect(posts).toBe(when === "refresh" ? 1 : 2);
+        expect(f.state().speakingTurn).toMatchObject({ requestId: "newer", epoch: "3" });
+      });
+    }
+  }
+  for (const invalid of [
+    "wrong-target",
+    "wrong-holder",
+    "wrong-own",
+    "invalid-epoch",
+    "concluded",
+    "missing-state",
+    "refresh-error",
+  ]) {
+    it(`refuses queued recovery with ${invalid}`, async () => {
+      const f = fixture();
+      await f.run(["turn", "request"], async () => json({ speaking_turn: turn(false) }));
+      const fresh = granted();
+      if (invalid === "wrong-target") fresh.target.request_id = "other";
+      if (invalid === "wrong-holder") fresh.holder.request_id = "other";
+      if (invalid === "wrong-own") fresh.own.request_id = "other";
+      if (invalid === "invalid-epoch") fresh.holder.epoch = "not-an-epoch";
+      if (invalid === "concluded") fresh.concluded = true;
+      const fetch = vi.fn(async (input) => {
+        if (new URL(String(input)).pathname.endsWith("/turns")) return fenced();
+        if (invalid === "refresh-error") throw new Error("refresh unavailable");
+        return json(
+          invalid === "missing-state"
+            ? { status: "timeout" }
+            : { status: "speaking_turn", speaking_turn: fresh },
+        );
+      });
+      expect(await f.run(["turn", "release"], fetch)).toBe(1);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(f.errors.join("")).toContain("Read current turn state");
+      expect(f.state().speakingTurn.epoch).toBeUndefined();
+    });
+  }
   for (const [args, by] of [
     [["discuss", "A contribution"], "discussion"],
     [["ask", "Which route?"], "question"],
