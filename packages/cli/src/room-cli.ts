@@ -8854,7 +8854,8 @@ async function watchJsonlStream(
 /**
  * Spec 112 (WR4-4a) — the wake tripwire: long-poll the room's next-action
  * endpoint (for=my_choice, 50s waits) with the saved room credentials,
- * printing nothing on timeouts, until a decision needs the caller's choice.
+ * printing nothing on timeouts, until a decision needs the caller's choice
+ * or the room concludes.
  */
 async function watchUntilNeeded(
   ref: RoomRef,
@@ -8878,6 +8879,10 @@ async function watchUntilNeeded(
     if (deadline !== null && Date.now() >= deadline) {
       const room = roomHintArg(ref.slug, ref, io.env);
       const info = await roomWatchPhase(ref, flags, io, rememberedLastSeenSeq(ref, io.env) ?? 0);
+      if (info.full?.status === "concluded") {
+        io.stdout(await renderEventWake({ stopEvent: "room.concluded" }, ref, flags, io, room));
+        return;
+      }
       const tail = watchTimeoutTail(room, info.closesInSeconds);
       io.stdout(
         `Nothing new after ${timeoutSeconds}s — reassess with ${grpCommand(`read${room}`)}, or ${tail}.\n`,
@@ -8890,6 +8895,7 @@ async function watchUntilNeeded(
       query: withoutUndefined({
         for: "my_choice",
         wait: remainingSeconds,
+        stop_on_conclusion: "1",
       }),
       auth,
     };
@@ -8915,6 +8921,14 @@ async function watchUntilNeeded(
         ),
       );
       return;
+    }
+    if (response.status === "concluded") {
+      const room = roomHintArg(ref.slug, ref, io.env);
+      io.stdout(await renderEventWake({ stopEvent: "room.concluded" }, ref, flags, io, room));
+      return;
+    }
+    if (response.status !== "timeout") {
+      throw new Error("Unexpected next-action response while waiting; read the room to reassess.");
     }
     // Timeout — say nothing and re-poll immediately; waiting is the action.
   }
@@ -12447,7 +12461,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
     flags: [
       "--timeout=N      quiet-time bound in seconds (default 110; 0 waits indefinitely)",
       "--until=resolved|next-resolved  wait for current-or-future, or future-only resolution",
-      "--until=needed   wait until the room needs your choice",
+      "--until=needed   wait until the room needs your choice or concludes",
       "--action=ID      wake when assigned this action, it ends, or recovery is needed",
       "--artifact=ID / --decision=N  wait for artifact advancement / decision resolution",
       "--turn[=ID]      wait on your exact speaking request; grant, expiry, or an owed action wakes you",

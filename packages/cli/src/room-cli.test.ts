@@ -3446,6 +3446,7 @@ describe("room CLI requests", () => {
     expect(url.pathname).toBe("/api/rooms/abc123/next-action");
     expect(url.searchParams.get("for")).toBe("my_choice");
     expect(url.searchParams.get("wait")).toBe("50");
+    expect(url.searchParams.get("stop_on_conclusion")).toBe("1");
     expect(url.searchParams.get("token")).toBeNull();
     expect(requests[0]?.headers.get("authorization")).toBe("Bearer t_1");
     // Nothing printed for the timeout; one compact wake line at the end.
@@ -3453,6 +3454,75 @@ describe("room CLI requests", () => {
     expect(stdout).toContain("grp read abc123");
     expect(stdout).toContain('grp choose "<option>"');
     expect(stdout).not.toContain("timeout");
+  });
+
+  it.each(["already closed", "closed during wait"])(
+    "ends needed-watch when the room is %s without another poll or acknowledgment",
+    async (scenario) => {
+      let stdout = "";
+      const fetch = vi.fn(async () => {
+        if (scenario === "closed during wait") await new Promise((r) => setTimeout(r, 20));
+        return jsonResponse({ status: "concluded" });
+      });
+      const code = await runRoomCli(
+        ["watch", "https://operator.example/r/abc123?token=t_1", "--until=needed", "--timeout=120"],
+        {
+          fetch,
+          stdout: (t) => {
+            stdout += t;
+          },
+          stderr: () => {},
+          env: providerEnv({ providers: {} }),
+        },
+      );
+      expect(code).toBe(0);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(stdout).toContain("Room concluded.");
+      expect(stdout).toContain("grp outcome abc123");
+      expect(stdout).not.toMatch(/Nothing new|choose|stay armed|watch abc123/);
+    },
+  );
+
+  it("recognizes closure in the final timeout read on older hosts", async () => {
+    let stdout = "";
+    const code = await runRoomCli(
+      ["watch", "https://operator.example/r/abc123?token=t_1", "--until=needed", "--timeout=1"],
+      {
+        fetch: async (input) => {
+          if (String(input).includes("/next-action")) {
+            await new Promise((r) => setTimeout(r, 1100));
+            return jsonResponse({ status: "timeout" });
+          }
+          return jsonResponse({ slug: "abc123", status: "concluded", current_through: 5 });
+        },
+        stdout: (t) => {
+          stdout += t;
+        },
+        stderr: () => {},
+        env: providerEnv({ providers: {} }),
+      },
+    );
+    expect(code).toBe(0);
+    expect(stdout).toContain("Room concluded.");
+    expect(stdout).toContain("grp outcome abc123");
+    expect(stdout).not.toContain("Nothing new");
+  });
+
+  it("fails once on an unknown needed-watch reply instead of tight-looping", async () => {
+    const fetch = vi.fn(async () => jsonResponse({ status: "unknown" }));
+    let stderr = "";
+    expect(
+      await runRoomCli(["watch", "https://operator.example/r/abc123?token=t_1", "--until=needed"], {
+        fetch,
+        stdout: () => {},
+        stderr: (t) => {
+          stderr += t;
+        },
+        env: providerEnv({ providers: {} }),
+      }),
+    ).toBe(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(stderr).toContain("Unexpected next-action response");
   });
 
   // Spec 125 (WR12-1) — the opener-seal wake: a resolved-status actionable

@@ -292,7 +292,7 @@ function printAdvancedHelp(programName: string): void {
     "  watch --until=resolved  report an existing resolved boundary, or wait for one",
     "  watch --until=next-resolved",
     "                          wait only for a future completion or room close",
-    "  watch --until=needed    exit only when the room needs your choice",
+    "  watch --until=needed    exit when the room needs your choice or concludes",
   ];
   process.stdout.write(`${out.join("\n")}\n`);
 }
