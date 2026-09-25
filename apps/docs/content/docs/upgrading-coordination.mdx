@@ -47,6 +47,12 @@ Speaking turns are separately enabled per room, not a new universal default.
 Votes/reviews keep their own authority and timing. A timeout or expired edit
 claim is neither permission to speak nor approval of work.
 
+An older client can still use base operations in an ordinary open room without
+understanding the additive coordination fields. This does not make that client
+compatible with every room policy: a client without speaking-turn support cannot
+post in a turn-required room. Upgrade the client or choose an appropriate room
+policy explicitly; the host must not silently bypass the configured rule.
+
 Before promotion, operators still need compatibility testing against their
 actual older hosts/clients, retained receipt verification, package/protocol
 version review and rollback checks. These documentation changes do not certify

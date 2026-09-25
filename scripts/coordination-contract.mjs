@@ -1,5 +1,6 @@
 // Public-owned candidate contract. Generate/check the JSON with the companion
 // script; do not modify the published base contract or infer live conformance.
+import { addReadContracts } from "./coordination-read-contract.mjs";
 const ref = (name) => ({ $ref: `#/components/schemas/${name}` });
 const string = { type: "string" };
 const id = { type: "string", minLength: 1 };
@@ -720,6 +721,7 @@ const schemas = {
   },
 };
 
+addReadContracts(schemas);
 const paths = {};
 function operation(path, method, name, input, output, description, extra = {}) {
   const parameters = [...path.matchAll(/\{([^}]+)\}/g)].map((match) => ({
@@ -756,6 +758,71 @@ function operation(path, method, name, input, output, description, extra = {}) {
 const base = "/api/rooms/{slug}";
 const action = `${base}/actions/{actionId}`;
 const artifact = `${base}/artifacts/{artifactId}`;
+const readAuth = {
+  security: [{}, { ParticipantToken: [] }, { Mandate: [] }, { RoomPassword: [] }],
+};
+operation(
+  base,
+  "get",
+  "readRoom",
+  null,
+  ref("RoomRead"),
+  "Default working set; since=N selects a raw-event-bounded delta; include=full takes precedence over since. Snapshot head is not proof of full discussion delivery. Feature-gated coordination fields are additive. Public rooms allow anonymous reads; private/unlisted visibility controls apply. Prefer credential headers to legacy token/password query aliases.",
+  readAuth,
+);
+operation(
+  `${base}/next-action`,
+  "get",
+  "waitForRoom",
+  null,
+  ref("WaitResponse"),
+  "Requires an existing participant credential (including observers) or a verified mandate seat. Finite nonnegative wait defaults to25 seconds and is clamped to50; wait=0 scans. A target turn request wakes on its result, not a fresh observation. Reading and waiting can consume notification edges but never CLI acknowledgment.",
+  { security: [{ ParticipantToken: [] }, { Mandate: [] }] },
+);
+paths[base].get.parameters.push(
+  { name: "include", in: "query", schema: { const: "full" } },
+  {
+    name: "since",
+    in: "query",
+    schema: integer,
+    description:
+      "Raw event cursor, ignored by include=full. Up to500 raw events per delta; filtered rows still advance the cursor.",
+  },
+  { name: "X-Room-Password", in: "header", schema: string },
+);
+paths[`${base}/next-action`].get.parameters.push(
+  {
+    name: "wait",
+    in: "query",
+    schema: { type: "number", minimum: 0, default: 25 },
+    description: "Clamped to50 seconds, not rejected above50.",
+  },
+  {
+    name: "for",
+    in: "query",
+    schema: enumeration("my_choice", "completion", "activity", "my_vote"),
+    description: "my_vote is a compatibility alias for my_choice.",
+  },
+  {
+    name: "since_seq",
+    in: "query",
+    schema: integer,
+    description:
+      "Decision sequence for my_choice/completion; raw event sequence for activity. Never interchange them.",
+  },
+  { name: "stop_on_conclusion", in: "query", schema: { const: "1" } },
+  { name: "turn_request", in: "query", schema: turnRequestId },
+);
+for (const path of [base, `${base}/next-action`]) {
+  for (const status of [400, 401, 403, 404, 429, 503])
+    paths[path].get.responses[status] = {
+      description:
+        status === 503
+          ? "Retryable read assembly/service failure, never successful empty catch-up."
+          : "Input, credential, visibility, missing-room or rate-limit failure; inspect stable error.code.",
+      content: { "application/json": { schema: ref("Error") } },
+    };
+}
 operation(
   `${base}/turns`,
   "post",
@@ -840,6 +907,7 @@ operation(
   null,
   { oneOf: [ref("ActionRead"), ref("ActionReviewHistory")] },
   "Focused current action; reviews=1 selects ordered exact-round history. Presentation is viewer-relative and can describe the last requested round while a newer draft exists. Corrections are non-dispositive. Presence of a valid shape does not prove authorization or agreement correctness.",
+  readAuth,
 );
 operation(
   `${action}/claim`,
@@ -943,6 +1011,7 @@ operation(
     ],
   },
   "Select revision ID or positive version, not both; view=metadata omits content. Metadata-only and history query parameters are described in the guide.",
+  readAuth,
 );
 operation(
   `${artifact}/claim`,
@@ -1064,7 +1133,7 @@ export const coordinationContract = {
   },
   "x-grp-status": "draft-unreleased",
   "x-grp-remaining-gates": [
-    "complete room-read/wait and foreground envelopes",
+    "exhaustive legacy read leaf fields and cross-field semantic validation",
     "complete error/status and query/header contracts",
     "speaking-turn read/wait integration and exhaustive cross-field/error semantics",
     "live authorization/lifecycle and historical-host probes",
@@ -1084,7 +1153,14 @@ export const coordinationContract = {
         in: "header",
         name: "X-Mandate",
         description:
-          "Verified mandate envelope; only the three working-signal operations in this draft accept it, requiring react scope and an existing joined seat. Not equivalent action/artifact/turn support.",
+          "Verified mandate envelope. Supported on read/wait surfaces and working-signal mutations (react scope plus existing joined seat); not action/artifact/turn/composing mutations.",
+      },
+      RoomPassword: {
+        type: "apiKey",
+        in: "header",
+        name: "X-Room-Password",
+        description:
+          "Read visibility credential where configured; never participant mutation authority.",
       },
     },
     schemas,

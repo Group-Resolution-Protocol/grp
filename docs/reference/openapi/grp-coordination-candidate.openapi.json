@@ -8,13 +8,304 @@
   },
   "x-grp-status": "draft-unreleased",
   "x-grp-remaining-gates": [
-    "complete room-read/wait and foreground envelopes",
+    "exhaustive legacy read leaf fields and cross-field semantic validation",
     "complete error/status and query/header contracts",
     "speaking-turn read/wait integration and exhaustive cross-field/error semantics",
     "live authorization/lifecycle and historical-host probes",
     "transport/versioning governance"
   ],
   "paths": {
+    "/api/rooms/{slug}": {
+      "get": {
+        "operationId": "readRoom",
+        "summary": "readRoom",
+        "description": "Default working set; since=N selects a raw-event-bounded delta; include=full takes precedence over since. Snapshot head is not proof of full discussion delivery. Feature-gated coordination fields are additive. Public rooms allow anonymous reads; private/unlisted visibility controls apply. Prefer credential headers to legacy token/password query aliases.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "schema": {
+              "const": "full"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Raw event cursor, ignored by include=full. Up to500 raw events per delta; filtered rows still advance the cursor."
+          },
+          {
+            "name": "X-Room-Password",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoomRead"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input, credential, visibility, missing-room or rate-limit failure; inspect stable error.code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Input, credential, visibility, missing-room or rate-limit failure; inspect stable error.code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Input, credential, visibility, missing-room or rate-limit failure; inspect stable error.code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Input, credential, visibility, missing-room or rate-limit failure; inspect stable error.code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Input, credential, visibility, missing-room or rate-limit failure; inspect stable error.code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Retryable read assembly/service failure, never successful empty catch-up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {},
+          {
+            "ParticipantToken": []
+          },
+          {
+            "Mandate": []
+          },
+          {
+            "RoomPassword": []
+          }
+        ]
+      }
+    },
+    "/api/rooms/{slug}/next-action": {
+      "get": {
+        "operationId": "waitForRoom",
+        "summary": "waitForRoom",
+        "description": "Requires an existing participant credential (including observers) or a verified mandate seat. Finite nonnegative wait defaults to25 seconds and is clamped to50; wait=0 scans. A target turn request wakes on its result, not a fresh observation. Reading and waiting can consume notification edges but never CLI acknowledgment.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "wait",
+            "in": "query",
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "default": 25
+            },
+            "description": "Clamped to50 seconds, not rejected above50."
+          },
+          {
+            "name": "for",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "my_choice",
+                "completion",
+                "activity",
+                "my_vote"
+              ]
+            },
+            "description": "my_vote is a compatibility alias for my_choice."
+          },
+          {
+            "name": "since_seq",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Decision sequence for my_choice/completion; raw event sequence for activity. Never interchange them."
+          },
+          {
+            "name": "stop_on_conclusion",
+            "in": "query",
+            "schema": {
+              "const": "1"
+            }
+          },
+          {
+            "name": "turn_request",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful candidate response; additional fields may be present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaitResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input, credential, visibility, missing-room or rate-limit failure; inspect stable error.code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Input, credential, visibility, missing-room or rate-limit failure; inspect stable error.code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Input, credential, visibility, missing-room or rate-limit failure; inspect stable error.code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Input, credential, visibility, missing-room or rate-limit failure; inspect stable error.code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Input, credential, visibility, missing-room or rate-limit failure; inspect stable error.code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Retryable read assembly/service failure, never successful empty catch-up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Base GRP error envelope. State/authority/precondition failures are not success; do not retry blindly. Exact error coverage is listed in the draft guide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ParticipantToken": []
+          },
+          {
+            "Mandate": []
+          }
+        ]
+      }
+    },
     "/api/rooms/{slug}/turns": {
       "post": {
         "operationId": "operateSpeakingTurn",
@@ -763,8 +1054,15 @@
           }
         },
         "security": [
+          {},
           {
             "ParticipantToken": []
+          },
+          {
+            "Mandate": []
+          },
+          {
+            "RoomPassword": []
           }
         ]
       }
@@ -1819,8 +2117,15 @@
           }
         },
         "security": [
+          {},
           {
             "ParticipantToken": []
+          },
+          {
+            "Mandate": []
+          },
+          {
+            "RoomPassword": []
           }
         ]
       }
@@ -2257,7 +2562,13 @@
         "type": "apiKey",
         "in": "header",
         "name": "X-Mandate",
-        "description": "Verified mandate envelope; only the three working-signal operations in this draft accept it, requiring react scope and an existing joined seat. Not equivalent action/artifact/turn support."
+        "description": "Verified mandate envelope. Supported on read/wait surfaces and working-signal mutations (react scope plus existing joined seat); not action/artifact/turn/composing mutations."
+      },
+      "RoomPassword": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Room-Password",
+        "description": "Read visibility credential where configured; never participant mutation authority."
       }
     },
     "schemas": {
@@ -5396,6 +5707,2988 @@
             "rounds"
           ]
         }
+      },
+      "AgentRoomView": {
+        "description": "The default room read: a windowed, name-keyed working set whose size does not grow with the room's age. `brief` orients the reader; `decision` is the live ballot (null when nothing is open); `rules` say how to choose; `more` lists the next-action endpoints. The complete state is available via ?include=full (RoomState).",
+        "properties": {
+          "about": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "abstentions": {
+            "description": "Formal abstentions on the active decision. Procedural participation, not a preference.",
+            "items": {
+              "properties": {
+                "at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "who": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "who",
+                "reason",
+                "at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "agent": {
+            "description": "Constant-size self-onboarding sentence for agents landing here cold.",
+            "type": "string"
+          },
+          "brief": {
+            "description": "One-paragraph catch-up: what is happening now.",
+            "type": "string"
+          },
+          "choices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "who": {
+                  "type": "string"
+                },
+                "option": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "choice": {},
+                "rationale": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "required": [
+                "who",
+                "at"
+              ],
+              "oneOf": [
+                {
+                  "required": [
+                    "option"
+                  ],
+                  "not": {
+                    "required": [
+                      "choice"
+                    ]
+                  }
+                },
+                {
+                  "required": [
+                    "choice"
+                  ],
+                  "not": {
+                    "required": [
+                      "option"
+                    ]
+                  }
+                }
+              ]
+            },
+            "description": "Present only when visible; a known slate choice uses its option number, otherwise the underlying choice value. Omission is not an empty ballot."
+          },
+          "current_through": {
+            "description": "Snapshot head, not proof that the discussion tail includes every older body. Check page.content independently.",
+            "type": "integer"
+          },
+          "decided": {
+            "description": "Recent resolved decisions (short tail).",
+            "items": {
+              "properties": {
+                "outcome": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "question": {
+                  "type": "string"
+                },
+                "receipt": {
+                  "description": "Spec 119 — the signed receipt's hash (sha256:…), shown so the trust pitch is verifiable at the point of resolution. The full signed chain lives at GET /api/rooms/{slug}/outcome; standalone verification at the host's /receipt page.",
+                  "type": "string"
+                },
+                "seq": {
+                  "type": "integer"
+                },
+                "winner": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "seq",
+                "question",
+                "outcome"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "decided_earlier": {
+            "description": "Count of earlier resolved decisions outside the tail. Present only when nonzero.",
+            "type": "integer"
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "properties": {
+                  "agreement": {
+                    "description": "Present as true when this decision resolves only on unanimous acceptance.",
+                    "type": "boolean"
+                  },
+                  "can_propose_more": {
+                    "type": "boolean"
+                  },
+                  "can_start_choosing": {
+                    "type": "boolean"
+                  },
+                  "choices_cast": {
+                    "type": "integer"
+                  },
+                  "closes_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "context": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "eligible": {
+                    "description": "Voting-eligible participant display names allowed to choose; null = the room-level electorate. An explicit set can narrow that electorate but cannot add an observer or non-voting creator.",
+                    "oneOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "eligible_participant_ids": {
+                    "oneOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "eligible_voters": {
+                    "type": "integer"
+                  },
+                  "options": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "proposals_close_at": {
+                    "description": "Present only while status is proposing with a proposal window.",
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "question": {
+                    "type": "string"
+                  },
+                  "response_state": {
+                    "$ref": "#/components/schemas/DecisionResponseState"
+                  },
+                  "seconds_left": {
+                    "type": "integer"
+                  },
+                  "seconds_until_voting": {
+                    "type": "integer"
+                  },
+                  "seq": {
+                    "type": "integer"
+                  },
+                  "status": {
+                    "description": "The one phase encoding: proposing (slate open, no ballots yet), voting (choices open), or transiently expired before lazy resolution.",
+                    "enum": [
+                      "proposing",
+                      "voting",
+                      "expired"
+                    ],
+                    "type": "string"
+                  },
+                  "option_proposers": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "settling": {
+                    "type": "object",
+                    "properties": {
+                      "seals_in_seconds": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "presumptive": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "seals_in_seconds",
+                      "presumptive"
+                    ]
+                  },
+                  "action_completion": {
+                    "type": "object",
+                    "properties": {
+                      "action_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "action_revision": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^[0-9]+$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "result": {
+                        "anyOf": [
+                          {
+                            "$ref": "#/components/schemas/ActionResult"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "eligible": {
+                        "type": "boolean"
+                      },
+                      "accepted_by_you": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "action_id",
+                      "action_revision",
+                      "result",
+                      "eligible",
+                      "accepted_by_you"
+                    ]
+                  }
+                },
+                "required": [
+                  "seq",
+                  "question",
+                  "options",
+                  "status",
+                  "can_propose_more",
+                  "can_start_choosing",
+                  "closes_at",
+                  "seconds_left",
+                  "choices_cast",
+                  "eligible_voters",
+                  "response_state"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decisions_open": {
+            "description": "Spec 142 — present ONLY when more than one decision is open: the full slate of live ballots so an agent triages the room in one read. `decision` above stays the oldest-open projection; each row here names its selector (`seq`).",
+            "items": {
+              "properties": {
+                "agreement": {
+                  "description": "Present as true when this decision resolves only on unanimous acceptance.",
+                  "type": "boolean"
+                },
+                "choices_cast": {
+                  "type": "integer"
+                },
+                "closes_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "needs_you": {
+                  "description": "Present as true when the credentialed reader still owes this decision a choice.",
+                  "type": "boolean"
+                },
+                "options": {
+                  "description": "Option count (not the texts).",
+                  "type": "integer"
+                },
+                "question": {
+                  "description": "Clipped to 200 characters.",
+                  "type": "string"
+                },
+                "seconds_left": {
+                  "type": "integer"
+                },
+                "seq": {
+                  "type": "integer"
+                },
+                "status": {
+                  "enum": [
+                    "proposing",
+                    "voting",
+                    "expired"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "seq",
+                "question",
+                "status",
+                "options",
+                "choices_cast",
+                "closes_at",
+                "seconds_left"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "discussion": {
+            "description": "Recent discussion tail, keyed by display name.",
+            "items": {
+              "properties": {
+                "at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "said": {
+                  "type": "string"
+                },
+                "stance": {
+                  "type": "string"
+                },
+                "who": {
+                  "type": "string"
+                },
+                "about_action_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "who",
+                "said",
+                "at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "discussion_earlier": {
+            "description": "Count of earlier messages outside the tail. Present only when nonzero.",
+            "type": "integer"
+          },
+          "more": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Next-action endpoints, described in one line each (history, config, wait, outcome; plus abstain/ask/start_choosing when available to the reader).",
+            "type": "object"
+          },
+          "page": {
+            "$ref": "#/components/schemas/RoomReadPage"
+          },
+          "role": {
+            "description": "The reader's role in the room, present when the read is credentialed (participant token or mandate). Observer readers get read/watch guidance only: act affordances (more.ask / more.start_choosing / more.close, can_propose_more, can_start_choosing, rules.can_propose) are withheld.",
+            "enum": [
+              "participant",
+              "observer"
+            ],
+            "type": "string"
+          },
+          "roster": {
+            "properties": {
+              "expected": {
+                "items": {
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "enum": [
+                        "participant",
+                        "observer"
+                      ],
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "pending",
+                        "accepted",
+                        "revoked",
+                        "expired"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "role",
+                    "status"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "joined": {
+                "description": "Joined PARTICIPANTS only (count-first observer display): observers appear as the `observers` count, with names one level deeper via ?include=full or the members list.",
+                "items": {
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "enum": [
+                        "participant"
+                      ],
+                      "type": "string"
+                    },
+                    "room_role": {
+                      "description": "Present on the creator row when creator_votes=false, so the operator seat cannot be mistaken for a voter.",
+                      "enum": [
+                        "non_voting_host"
+                      ],
+                      "type": "string"
+                    },
+                    "voting_eligible": {
+                      "description": "Present as false on the non-voting creator row. Per-decision eligibility may further narrow other participants.",
+                      "enum": [
+                        false
+                      ],
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "role"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "observers": {
+                "description": "Count of joined observers. Present only when nonzero.",
+                "type": "integer"
+              },
+              "waiting_for": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "administrative_host": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "voting_eligible": {
+                    "const": false
+                  },
+                  "participant_obligation": {
+                    "const": false
+                  }
+                },
+                "required": [
+                  "name",
+                  "voting_eligible",
+                  "participant_obligation"
+                ]
+              }
+            },
+            "required": [
+              "joined",
+              "expected",
+              "waiting_for"
+            ],
+            "type": "object"
+          },
+          "rules": {
+            "properties": {
+              "can_propose": {
+                "type": "boolean"
+              },
+              "choices_lock": {
+                "enum": [
+                  "when_determined",
+                  "at_close"
+                ],
+                "type": "string"
+              },
+              "choices_visible": {
+                "enum": [
+                  "live",
+                  "after_decided",
+                  "never"
+                ],
+                "type": "string"
+              },
+              "how_to_choose": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "how_to_choose",
+              "can_propose",
+              "choices_lock",
+              "choices_visible"
+            ],
+            "type": "object"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "voting",
+              "resolved",
+              "expired",
+              "concluded",
+              "proposing"
+            ],
+            "type": "string"
+          },
+          "you": {
+            "type": "object",
+            "properties": {
+              "participant_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "participant",
+                  "observer"
+                ]
+              }
+            },
+            "required": [
+              "participant_id",
+              "name",
+              "role"
+            ]
+          }
+        },
+        "required": [
+          "slug",
+          "status",
+          "about",
+          "agent",
+          "brief",
+          "decision",
+          "discussion",
+          "roster",
+          "rules",
+          "more",
+          "current_through",
+          "page"
+        ],
+        "type": "object"
+      },
+      "DecisionResponseState": {
+        "description": "Choice-independent participation progress. This never reveals an individual choice beyond the room's choice_visibility policy.",
+        "properties": {
+          "eligible_count": {
+            "type": "integer"
+          },
+          "eligible": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "eligible_participant_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "responded_count": {
+            "type": "integer"
+          },
+          "responded": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "responded_participant_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "outstanding_count": {
+            "type": "integer"
+          },
+          "outstanding": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "outstanding_participant_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "quorum": {
+            "properties": {
+              "required": {
+                "type": "integer"
+              },
+              "met": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "required",
+              "met"
+            ],
+            "type": "object"
+          },
+          "threshold": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "choosing_opens_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "settle_until": {
+            "oneOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closes_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "caller": {
+            "properties": {
+              "eligible": {
+                "type": "boolean"
+              },
+              "responded": {
+                "type": "boolean"
+              },
+              "may_submit": {
+                "type": "boolean"
+              },
+              "may_revise": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "eligible",
+              "responded",
+              "may_submit",
+              "may_revise"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "eligible_count",
+          "eligible",
+          "responded_count",
+          "responded",
+          "outstanding_count",
+          "outstanding",
+          "quorum",
+          "threshold",
+          "choosing_opens_at",
+          "settle_until",
+          "closes_at",
+          "caller"
+        ],
+        "type": "object"
+      },
+      "RoomReadPage": {
+        "type": "object",
+        "properties": {
+          "displayed_from_event": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "displayed_through_event": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "through_event": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "room_event": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "bodies_elided": {
+            "const": false
+          },
+          "next_since": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "content": {
+            "type": "object",
+            "properties": {
+              "discussion_displayed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "discussion_total": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "discussion_complete": {
+                "type": "boolean"
+              },
+              "expand": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "discussion_displayed",
+              "discussion_total",
+              "discussion_complete"
+            ]
+          }
+        },
+        "required": [
+          "displayed_from_event",
+          "displayed_through_event",
+          "through_event",
+          "room_event",
+          "complete",
+          "bodies_elided"
+        ],
+        "oneOf": [
+          {
+            "properties": {
+              "complete": {
+                "const": true
+              }
+            },
+            "not": {
+              "required": [
+                "next_since"
+              ]
+            }
+          },
+          {
+            "properties": {
+              "complete": {
+                "const": false
+              }
+            },
+            "required": [
+              "next_since"
+            ]
+          }
+        ],
+        "description": "Event scan coverage and snapshot discussion coverage are different. Cross-field ordering/equality must also be checked by a client; JSON Schema alone cannot prove completeness."
+      },
+      "RoomDelta": {
+        "description": "The anchored delta read (GET /api/rooms/{slug}?since=N): one thin `state` line plus `new`, every substantive room event after event seq N rendered for agents (name-keyed, oldest first, full discussion text). Spec 117 (the delta diet): the delta re-serves NO premise, question text, or roster — an agent in its own thread was never disoriented; the full picture is the default read / include=full. Stateless: pass the response's `current_through` as the next `since`. Choice contents appear on choice_submitted entries only when the room's choice_visibility rules already expose them on the events endpoint — as `option` (the 1-based option number) when the ballot matches a slate option.",
+        "properties": {
+          "agent": {
+            "description": "One-sentence delta orientation for agents landing here cold.",
+            "type": "string"
+          },
+          "current_through": {
+            "description": "Last scanned raw event, including filtered events. On empty input bounded by the room head; not the last displayed entry.",
+            "type": "integer"
+          },
+          "more": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Next-action endpoints: wait (the long-poll) and full (the full room view).",
+            "type": "object"
+          },
+          "new": {
+            "description": "Substantive activity after `since`, oldest first. Entry types include discussion, option_proposed, decision_opened, choosing_started, choice_submitted, abstained, decision_resolved, joined, role_updated, invite_created, and room_concluded. Every entry carries seq + at.",
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "seq": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "type": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "seq",
+                "type",
+                "at"
+              ],
+              "type": "object",
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "type": {
+                        "const": "discussion"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  },
+                  "then": {
+                    "type": "object",
+                    "properties": {
+                      "who": {
+                        "type": "string"
+                      },
+                      "said": {
+                        "type": "string"
+                      },
+                      "about_action_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "who",
+                      "said"
+                    ]
+                  }
+                }
+              ]
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/RoomReadPage"
+          },
+          "role": {
+            "description": "Present only for non-participant readers (observer guidance).",
+            "enum": [
+              "observer"
+            ],
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "state": {
+            "description": "The one-line live status: progress and clock only, e.g. \"seq 3 deciding — 2/4 chosen; settling, seals in ~30s\". Never restates the question or premise.",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "voting",
+              "resolved",
+              "expired",
+              "concluded",
+              "proposing"
+            ],
+            "type": "string"
+          },
+          "your_status": {
+            "description": "Present ONLY when the caller owes a choice on the open decision; omitted otherwise (spec 117 diet).",
+            "type": "string"
+          },
+          "you": {
+            "type": "object",
+            "properties": {
+              "participant_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "participant",
+                  "observer"
+                ]
+              }
+            },
+            "required": [
+              "participant_id",
+              "name",
+              "role"
+            ]
+          },
+          "decision": {
+            "properties": {
+              "agreement": {
+                "description": "Present as true when this decision resolves only on unanimous acceptance.",
+                "type": "boolean"
+              },
+              "can_propose_more": {
+                "type": "boolean"
+              },
+              "can_start_choosing": {
+                "type": "boolean"
+              },
+              "choices_cast": {
+                "type": "integer"
+              },
+              "closes_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "context": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "eligible": {
+                "description": "Voting-eligible participant display names allowed to choose; null = the room-level electorate. An explicit set can narrow that electorate but cannot add an observer or non-voting creator.",
+                "oneOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "eligible_participant_ids": {
+                "oneOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "eligible_voters": {
+                "type": "integer"
+              },
+              "options": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "proposals_close_at": {
+                "description": "Present only while status is proposing with a proposal window.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "question": {
+                "type": "string"
+              },
+              "response_state": {
+                "$ref": "#/components/schemas/DecisionResponseState"
+              },
+              "seconds_left": {
+                "type": "integer"
+              },
+              "seconds_until_voting": {
+                "type": "integer"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "status": {
+                "description": "The one phase encoding: proposing (slate open, no ballots yet), voting (choices open), or transiently expired before lazy resolution.",
+                "enum": [
+                  "proposing",
+                  "voting",
+                  "expired"
+                ],
+                "type": "string"
+              },
+              "option_proposers": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "settling": {
+                "type": "object",
+                "properties": {
+                  "seals_in_seconds": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "presumptive": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "seals_in_seconds",
+                  "presumptive"
+                ]
+              },
+              "action_completion": {
+                "type": "object",
+                "properties": {
+                  "action_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "action_revision": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[0-9]+$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "result": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/ActionResult"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "eligible": {
+                    "type": "boolean"
+                  },
+                  "accepted_by_you": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "action_id",
+                  "action_revision",
+                  "result",
+                  "eligible",
+                  "accepted_by_you"
+                ]
+              }
+            },
+            "required": [
+              "seq",
+              "question",
+              "options",
+              "status",
+              "can_propose_more",
+              "can_start_choosing",
+              "closes_at",
+              "seconds_left",
+              "choices_cast",
+              "eligible_voters",
+              "response_state"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "slug",
+          "status",
+          "agent",
+          "state",
+          "new",
+          "current_through",
+          "more",
+          "page"
+        ],
+        "type": "object"
+      },
+      "RoomState": {
+        "properties": {
+          "about": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "abstentions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "participant_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "declared_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "required": [
+                "participant_id",
+                "reason",
+                "declared_at"
+              ]
+            }
+          },
+          "active_decision_id": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closing_statement": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "concluded_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "config": {
+            "$ref": "#/components/schemas/RoomConfig"
+          },
+          "context": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "current_through": {
+            "description": "Spec 119 — the room's head event seq at read time; the full read is a complete picture through this seq.",
+            "type": "integer"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/DecisionSummary"
+            },
+            "type": "array"
+          },
+          "discussion": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "participant_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "body": {
+                  "type": "string"
+                },
+                "stance": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "posted_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "decision_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "about_action_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "id",
+                "participant_id",
+                "body",
+                "stance",
+                "posted_at",
+                "decision_id"
+              ]
+            }
+          },
+          "eligible_voters": {
+            "type": "integer"
+          },
+          "invites": {
+            "items": {
+              "$ref": "#/components/schemas/RoomInvite"
+            },
+            "type": "array"
+          },
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/RoomReadPage"
+          },
+          "participant_count": {
+            "type": "integer"
+          },
+          "participants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "display_name": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "participant",
+                    "observer"
+                  ]
+                },
+                "joined_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "last_seen_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "deliberated_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "voted_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "agent_did": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "mandate_id": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "display_name",
+                "role",
+                "joined_at",
+                "last_seen_at",
+                "deliberated_at",
+                "voted_at",
+                "agent_did",
+                "mandate_id"
+              ]
+            }
+          },
+          "question": {
+            "type": "string"
+          },
+          "resolution_payload": true,
+          "resolved_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_outcome": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_winner": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slug": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "voting",
+              "resolved",
+              "expired",
+              "concluded",
+              "proposing"
+            ],
+            "type": "string"
+          },
+          "vote_count": {
+            "type": "integer"
+          },
+          "votes": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "participant_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "choice": {},
+                    "rationale": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "cast_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "participant_id",
+                    "choice",
+                    "rationale",
+                    "cast_at"
+                  ]
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "votes_visible_during": {
+            "type": "boolean"
+          },
+          "voting_ends_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "about",
+          "abstentions",
+          "active_decision_id",
+          "closing_statement",
+          "concluded_at",
+          "config",
+          "context",
+          "created_at",
+          "current_through",
+          "decisions",
+          "discussion",
+          "eligible_voters",
+          "invites",
+          "options",
+          "page",
+          "participant_count",
+          "participants",
+          "question",
+          "resolution_payload",
+          "resolved_at",
+          "resolved_outcome",
+          "resolved_winner",
+          "slug",
+          "status",
+          "vote_count",
+          "votes",
+          "votes_visible_during",
+          "voting_ends_at"
+        ],
+        "type": "object"
+      },
+      "RoomConfig": {
+        "additionalProperties": true,
+        "properties": {
+          "auth": {
+            "enum": [
+              "token_only",
+              "mandate_required",
+              "either"
+            ],
+            "type": "string"
+          },
+          "choice_visibility": {
+            "enum": [
+              "after_decided",
+              "live",
+              "never"
+            ],
+            "type": "string"
+          },
+          "conclusion_authority": {
+            "$ref": "#/components/schemas/AuthorityConfig"
+          },
+          "creator_votes": {
+            "type": "boolean"
+          },
+          "decision_opening_authority": {
+            "$ref": "#/components/schemas/AuthorityConfig"
+          },
+          "deliberation_mode": {
+            "enum": [
+              "optional",
+              "disabled"
+            ],
+            "type": "string"
+          },
+          "early_close": {
+            "type": "boolean"
+          },
+          "invite_authority": {
+            "$ref": "#/components/schemas/AuthorityConfig"
+          },
+          "max_deliberation_messages_per_participant": {
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_open_decisions": {
+            "description": "Spec 142 — how many decisions the room may hold open at once (default 1; 5 is this host's policy ceiling). Untargeted verbs meet the oldest open decision; target others with the `decision` selector.",
+            "maximum": 5,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_options": {
+            "maximum": 500,
+            "minimum": 2,
+            "type": "integer"
+          },
+          "max_participants": {
+            "oneOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_total_deliberation_messages": {
+            "maximum": 5000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "mechanism": {
+            "enum": [
+              "simple_majority",
+              "supermajority",
+              "plurality",
+              "approval",
+              "ranked_choice",
+              "ranked_pairwise",
+              "score_vote",
+              "quadratic_vote"
+            ],
+            "type": "string"
+          },
+          "option_proposal_authority": {
+            "$ref": "#/components/schemas/AuthorityConfig"
+          },
+          "quorum": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "read_receipts": {
+            "type": "boolean"
+          },
+          "settle_window": {
+            "description": "Spec 115 — seconds the decision SETTLES after the outcome becomes determined under early_close: late choices and revisions still count, and an outcome-changing act restarts the window (bounded). 0 = seal the instant the outcome locks.",
+            "maximum": 3600,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "visibility": {
+            "description": "public is anonymously readable and joinable; unlisted hides state until join but lets any URL holder join; private requires a valid invite or, when configured, the room password.",
+            "enum": [
+              "public",
+              "unlisted",
+              "private"
+            ],
+            "type": "string"
+          },
+          "voting_window": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "conversation_policy": {
+            "type": "string",
+            "enum": [
+              "open",
+              "speaking_turns"
+            ]
+          },
+          "foreground_policy": {
+            "type": "string",
+            "enum": [
+              "open",
+              "phased_serial"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "AuthorityConfig": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "none",
+              "operator",
+              "designated",
+              "any_participant"
+            ],
+            "type": "string"
+          },
+          "participant_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "DecisionSummary": {
+        "properties": {
+          "agreement": {
+            "description": "Present as true on agreement decisions, which resolve only on unanimous acceptance and keep disagreement open.",
+            "type": "boolean"
+          },
+          "context": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "eligible_participant_ids": {
+            "oneOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "option_proposers": {
+            "description": "Spec 118 — proposer display names aligned index-for-index with `options`; null entries are creator-seeded options with no provenance row. Present on full room reads (name resolution needs the roster).",
+            "oneOf": [
+              {
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "prev_hash": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proposals_open": {
+            "description": "Spec 118 — the propose guard's truth on the wire, viewer- and authority-independent: fluid decisions (null voting_opens_at) keep taking proposals while choices are open; slate decisions freeze when voting opens. Whether YOU may propose additionally depends on rules.can_propose.",
+            "type": "boolean"
+          },
+          "question": {
+            "type": "string"
+          },
+          "response_state": {
+            "$ref": "#/components/schemas/DecisionResponseState"
+          },
+          "receipt_hash": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_at": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_outcome": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_winner": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "seq": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "voting_ends_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "voting_opens_at": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "action_completion": {
+            "type": "object",
+            "properties": {
+              "action_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "action_revision": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9]+$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "result": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ActionResult"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "action_id",
+              "action_revision",
+              "result"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "question",
+          "context",
+          "options",
+          "voting_ends_at",
+          "status"
+        ],
+        "type": "object"
+      },
+      "RoomInvite": {
+        "properties": {
+          "accepted_at": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "accepted_participant_id": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "binding": {
+            "$ref": "#/components/schemas/InviteBinding",
+            "description": "How the invite is bound. The one wire shape for invite bindings."
+          },
+          "code": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expected": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "revoked_at": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role": {
+            "enum": [
+              "participant",
+              "observer"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "accepted",
+              "revoked",
+              "expired"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "label",
+          "role",
+          "expected",
+          "status",
+          "binding"
+        ],
+        "type": "object"
+      },
+      "InviteBinding": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "token",
+              "email",
+              "account",
+              "principal",
+              "sso_subject"
+            ],
+            "type": "string"
+          },
+          "value": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "AuthoritativeResult": {
+        "type": "object",
+        "properties": {
+          "action_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "artifact_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "open_successor_action_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "action_id",
+          "artifact_id",
+          "revision_id",
+          "sha256",
+          "completed_at",
+          "open_successor_action_id"
+        ]
+      },
+      "Foreground": {
+        "type": "object",
+        "properties": {
+          "policy": {
+            "const": "phased_serial"
+          },
+          "epoch": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "discussion",
+              "decision",
+              "action",
+              "review"
+            ]
+          },
+          "decision_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "action_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "artifact_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "artifact_revision_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "return_action_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "your_obligation": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "decision_response"
+                      },
+                      "required": {
+                        "const": false
+                      },
+                      "decision_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "required",
+                      "decision_id"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "action_holder"
+                      },
+                      "required": {
+                        "const": false
+                      },
+                      "action_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "required",
+                      "action_id"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "action_report"
+                      },
+                      "required": {
+                        "const": true
+                      },
+                      "action_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "required",
+                      "action_id"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "review"
+                      },
+                      "required": {
+                        "const": true
+                      },
+                      "action_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "artifact_revision_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "required",
+                      "action_id",
+                      "artifact_revision_id"
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "available_transitions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "decision": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "question": {
+                "type": "string"
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "status": {
+                "type": "string"
+              },
+              "proposals_open": {
+                "type": "boolean"
+              },
+              "agreement": {
+                "type": "boolean"
+              },
+              "voting_ends_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "eligible_participant_ids": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "seq",
+              "question",
+              "options",
+              "status",
+              "proposals_open",
+              "agreement",
+              "voting_ends_at",
+              "eligible_participant_ids"
+            ]
+          },
+          "action": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "revision": {
+                "type": "string",
+                "pattern": "^[0-9]+$"
+              },
+              "title": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string"
+              },
+              "completion": {
+                "type": "string"
+              },
+              "holder_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "target_artifact_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "blocking_decision_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "available": {
+                "type": "boolean"
+              },
+              "recoverable": {
+                "type": "boolean"
+              },
+              "required_participant_ids": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "responded_participant_ids": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "revision",
+              "title",
+              "status",
+              "mode",
+              "completion",
+              "holder_id",
+              "target_artifact_id",
+              "blocking_decision_id",
+              "available",
+              "recoverable",
+              "required_participant_ids",
+              "responded_participant_ids"
+            ]
+          },
+          "artifact": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "revision": {
+                "type": "string",
+                "pattern": "^[0-9]+$"
+              },
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "native",
+                  "external"
+                ]
+              },
+              "media_type": {
+                "type": "string"
+              },
+              "current_revision_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "exact_revision": {
+                "$ref": "#/components/schemas/RevisionPointer"
+              }
+            },
+            "required": [
+              "id",
+              "revision",
+              "name",
+              "kind",
+              "media_type",
+              "current_revision_id",
+              "exact_revision"
+            ]
+          }
+        },
+        "required": [
+          "policy",
+          "epoch",
+          "phase",
+          "decision_id",
+          "action_id",
+          "artifact_id",
+          "artifact_revision_id",
+          "return_action_id",
+          "your_obligation",
+          "available_transitions"
+        ],
+        "description": "Retained phased experiment only; absent in ordinary open rooms. Not the recommended product policy and not a speaking-turn projection."
+      },
+      "RoomCoordination": {
+        "type": "object",
+        "properties": {
+          "state_revision": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
+          },
+          "speaking_turn": {
+            "$ref": "#/components/schemas/SpeakingTurn"
+          },
+          "composing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComposingSignal"
+            },
+            "maxItems": 100
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Action"
+            },
+            "maxItems": 100
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Artifact"
+            },
+            "maxItems": 100
+          },
+          "authoritative_results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuthoritativeResult"
+            },
+            "minItems": 1
+          },
+          "authoritative_result": {
+            "$ref": "#/components/schemas/AuthoritativeResult"
+          },
+          "foreground": {
+            "$ref": "#/components/schemas/Foreground"
+          }
+        },
+        "required": [],
+        "dependentRequired": {
+          "state_revision": [
+            "composing",
+            "actions",
+            "artifacts"
+          ],
+          "actions": [
+            "state_revision"
+          ],
+          "artifacts": [
+            "state_revision"
+          ],
+          "composing": [
+            "state_revision"
+          ]
+        },
+        "description": "Additive feature-gated fields. Active actions/artifacts are capped working sets, not an exhaustive archive. Singular authoritative_result appears only for one deliverable lineage. Read may reconcile expired leases; no write authority follows merely from receiving state."
+      },
+      "RoomRead": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RoomCoordination"
+          },
+          {
+            "oneOf": [
+              {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRoomView"
+                  },
+                  {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "new"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "config"
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/RoomDelta"
+                  },
+                  {
+                    "not": {
+                      "required": [
+                        "config"
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "$ref": "#/components/schemas/RoomState"
+              }
+            ]
+          }
+        ]
+      },
+      "WaitDecision": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "question": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "voting_ends_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "voting",
+              "resolved",
+              "expired",
+              "proposing"
+            ]
+          },
+          "agreement": {
+            "const": true
+          },
+          "completion_action_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "question",
+          "options",
+          "voting_ends_at",
+          "status"
+        ]
+      },
+      "WaitResponse": {
+        "type": "object",
+        "properties": {
+          "foreground": {
+            "$ref": "#/components/schemas/Foreground"
+          },
+          "speaking_turn": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SpeakingTurn"
+              },
+              {
+                "not": {
+                  "required": [
+                    "observation"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "required": [],
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "concluded"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "speaking_turn"
+              },
+              "speaking_turn": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/SpeakingTurn"
+                  },
+                  {
+                    "required": [
+                      "target"
+                    ]
+                  }
+                ]
+              }
+            },
+            "required": [
+              "status",
+              "speaking_turn"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "actionable"
+              },
+              "for": {
+                "type": "string",
+                "enum": [
+                  "my_choice",
+                  "completion",
+                  "activity"
+                ]
+              },
+              "decision": {
+                "$ref": "#/components/schemas/WaitDecision"
+              },
+              "also_actionable": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "seq": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "question": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "voting_ends_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "voting",
+                        "resolved",
+                        "expired",
+                        "proposing"
+                      ]
+                    },
+                    "agreement": {
+                      "const": true
+                    },
+                    "completion_action_id": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "seq",
+                    "question",
+                    "voting_ends_at",
+                    "status"
+                  ]
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "status",
+              "for",
+              "decision"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "activity"
+              },
+              "event": {
+                "type": "object",
+                "properties": {
+                  "seq": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "type": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "who": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "seq",
+                  "type",
+                  "who"
+                ]
+              }
+            },
+            "required": [
+              "status",
+              "event"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "working"
+              },
+              "signal_change": {
+                "type": "object",
+                "properties": {
+                  "signal_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "participant_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "change": {
+                    "type": "string",
+                    "enum": [
+                      "started",
+                      "changed",
+                      "stopped"
+                    ]
+                  }
+                },
+                "required": [
+                  "signal_id",
+                  "participant_id",
+                  "change"
+                ]
+              },
+              "requires_read": {
+                "const": true
+              },
+              "hint": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "signal_change",
+              "requires_read",
+              "hint"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "action_recovery"
+              },
+              "action": {
+                "$ref": "#/components/schemas/Action"
+              },
+              "hint": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "action",
+              "hint"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "action_required"
+              },
+              "action": {
+                "$ref": "#/components/schemas/Action"
+              },
+              "hint": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "action",
+              "hint"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "const": "timeout"
+              },
+              "next_poll_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "hint": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "next_poll_at",
+              "hint"
+            ]
+          }
+        ],
+        "description": "A wake pointer, not full context or an observation authorizing a post. Timeout is not completion; concluded is opt-in. since_seq is a decision sequence for decision waits and an event sequence for activity waits."
       }
     }
   }

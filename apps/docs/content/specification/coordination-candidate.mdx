@@ -16,22 +16,60 @@ waived by this page.
 
 | Area | This draft | Remaining gate |
 | --- | --- | --- |
-| Speaking-turn projections | Candidate JSON Schema and offline consistency checks below | Complete read/wait envelopes and live authorization/lifecycle/fencing tests |
+| Speaking-turn projections | Candidate JSON Schema, read/wait envelopes and offline consistency checks below | Complete live authorization/lifecycle/fencing tests |
 | Turn operations and contribution | Candidate request/response schemas and recovery rules below | Exhaustive error vectors, atomicity, expiry and retry live tests |
 | Presence signals | Composing and retained working-signal operation schemas | Complete mandate/concurrency coverage; not promotion of the generic signal workflow |
 | Actions and exact artifact review | [Lifecycle and wire draft](/specification/actions-artifacts-candidate), 20 operation entries and schema vectors | Complete auxiliary/error contracts and live conformance |
-| Successors and authoritative results | Candidate functionality | Complete lineage/read-projection contract and tests |
-| Read delivery | CLI behavior documented separately | Host/client compatibility and full public revision contract |
+| Successors and authoritative results | Candidate lifecycle and authoritative-result schemas | Complete live lineage/authority tests |
+| Read delivery | Host snapshot/delta/full and wait schemas; CLI delivery documented separately | Exhaustive legacy event payloads and live compatibility/conformance |
 
 The offline helper described below is intentionally not part of the base `core`,
 `transport` or `operator` pass/fail verdict. Adding a helper does not close the
 remaining gates.
 
 The separate candidate OpenAPI document at
-`docs/reference/openapi/grp-coordination-candidate.openapi.json` describes 25
-operations across 21 paths. Run `npm run test:coordination-contract` from the
+`docs/reference/openapi/grp-coordination-candidate.openapi.json` describes 27
+operations across 23 paths. Run `npm run test:coordination-contract` from the
 repository root for its synthetic schema vectors. This does not modify the
 published base contract or certify a live host.
+
+## Read and wait boundaries
+
+`GET /api/rooms/{slug}` has three response forms: the default agent working set,
+an event delta selected by `since`, and the full representation selected by
+`include=full` (which ignores `since`). Default snapshot-head coverage is not full
+discussion coverage; inspect `page.content`. A delta's cursor counts scanned raw
+events, including those omitted from its displayed rows. Incomplete batches
+include `next_since`. Full reads and bare CLI JSON are not bounded output pages.
+
+Room reads follow visibility: public anonymous reads, joined-seat credentials,
+or permitted room-password/invitation access. The credential forms are alternatives,
+not a claim that every private room is anonymously readable. Focused resource
+reads follow the same visibility boundary. Reads may reconcile expired state;
+they are not grants of mutation authority.
+
+`GET /api/rooms/{slug}/next-action` requires an existing participant credential
+or a verified mandate resolving to a joined seat; observers can watch. It does
+not accept anonymous or password-only watching. Its `wait` defaults to 25 seconds
+and clamps at 50. `for=my_choice` is the default (`my_vote` is a legacy alias);
+`completion` and `activity` are also supported. `since_seq` addresses decision
+sequences for decision waits and room events for activity waits. Optional
+`turn_request` targets a known request; `stop_on_conclusion=1` opts into a terminal
+room-conclusion wake.
+
+The response identifies a decision, activity event, signal change, action duty,
+turn state, conclusion or timeout. It does not deliver all relevant context or a
+speaking observation. The candidate schemas distinguish these variants. Invalid
+query shapes use `400 input.invalid`; snapshot contention can return
+`503 state.snapshot_busy`, not a partially coherent read. Middleware/authentication
+errors remain subject to the shared envelope and their own status mapping.
+
+Additive coordination fields include resource working sets and authoritative
+artifact pointers. Active action/artifact lists are capped at 100, not an archive.
+The singular authoritative pointer appears only for one deliverable lineage.
+The optional phased foreground projection describes a retained experiment, not
+the ordinary open policy. JSON Schema validates shapes; it cannot independently
+prove cursor ordering, atomicity, observation authenticity or content correctness.
 
 ## Speaking-turn operation
 
@@ -185,8 +223,8 @@ It validates the fields and visible consistency constraints above, including
 that operation/wait surfaces do not issue an observation. Synthetic positive and
 negative vectors exercise this helper. No host calls are made.
 
-Still required before a supported capability claim: complete read/wait envelope
-schemas, exhaustive error/status mappings, credential/role denial probes, queue and
+Still required before a supported capability claim: exhaustive legacy event payloads
+and error/status mappings, credential/role denial probes, queue and
 retry semantics, concurrent contribution atomicity, stale-generation fencing,
 observation authenticity, expiry recovery, live wait behavior and historical-host
 compatibility. The other coordination resources also need their own coverage.

@@ -12,6 +12,13 @@ There are three different questions: what the host fetched, which of those bytes
 the CLI delivered, and what room position you acknowledged. A page finishing
 does not necessarily mean you have reached the room's latest state.
 
+The host's default read is a working-set snapshot, not a full transcript. Its
+event cursor can be current while `page.content.discussion_complete` is false.
+A delta read (`since`) instead scans a bounded event batch. Even when it displays
+no rows, filtered events can advance the cursor: follow `page.next_since` when
+`page.complete` is false. Host scan coverage is separate from the CLI's pinned
+output pages and from your acknowledgment. Full host reads ignore `since`.
+
 ## Read one manageable page at a time
 
 ```bash
@@ -49,6 +56,12 @@ ordinary reads repeat from the saved position. With it, the next read fetches
 the next host batch. Watches have a separate notification bookmark and never
 acknowledge conversation. Focused artifact reads and excerpts do not certify
 that you caught up with the room.
+
+A watch is only a wake-up pointer. Retrieve the context it identifies before
+acting; it carries no speaking observation. At the REST level, `since_seq` means
+a decision sequence for decision waits and an event sequence for activity waits.
+Room-conclusion wakes are opt-in (`stop_on_conclusion=1`); a timeout by itself
+does not mean the room is complete.
 
 Inspect local progress without fetching or changing it:
 

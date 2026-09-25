@@ -37,6 +37,7 @@ const ALLOWED_GITHUB_FILES = new Set([
 
 const ALLOWED_SCRIPTS = new Set([
   "scripts/coordination-contract.mjs",
+  "scripts/coordination-read-contract.mjs",
   "scripts/coordination-contract.test.mjs",
   "scripts/generate-coordination-contract.mjs",
   "scripts/check-npm-release-metadata.mjs",

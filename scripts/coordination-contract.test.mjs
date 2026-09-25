@@ -51,16 +51,18 @@ test("every component compiles, path parameters match, operations have unique id
       });
       assert.deepEqual(
         op.security,
-        op.operationId.endsWith("WorkingSignal")
-          ? [{ ParticipantToken: [] }, { Mandate: [] }]
-          : [{ ParticipantToken: [] }],
+        op.operationId.startsWith("read")
+          ? [{}, { ParticipantToken: [] }, { Mandate: [] }, { RoomPassword: [] }]
+          : op.operationId.endsWith("WorkingSignal") || op.operationId === "waitForRoom"
+            ? [{ ParticipantToken: [] }, { Mandate: [] }]
+            : [{ ParticipantToken: [] }],
       );
       for (const response of Object.values(op.responses)) {
         ajv.compile({ components: doc.components, ...response.content["application/json"].schema });
       }
     }
   }
-  assert.equal(ids.size, 25);
+  assert.equal(ids.size, 27);
   assert.equal(doc["x-grp-status"], "draft-unreleased");
 });
 test("turn operations preserve string epochs and separate fresh-ID semantics from shape", () => {
@@ -437,4 +439,122 @@ test("correction history requires original review plus attributed non-dispositiv
   };
   // A history revision is metadata, not ArtifactRevision's full content payload.
   assert(!validate("ArtifactRevision", revision));
+});
+
+test("wait variants are pointers, not read observations or successful empty responses", () => {
+  const turn = {
+    policy: "speaking_turns",
+    revision: "2",
+    concluded: false,
+    holder: null,
+    own: null,
+    next_deadline_at: null,
+    target: { request_id: "known", status: "released" },
+  };
+  for (const response of [
+    { status: "timeout", next_poll_at: "2026-01-01T00:00:00Z", hint: "wait" },
+    { status: "concluded" },
+    { status: "activity", event: { seq: 1, type: "discussion.posted", who: null } },
+    { status: "speaking_turn", speaking_turn: turn },
+    {
+      status: "working",
+      signal_change: { signal_id: "s", participant_id: "p", change: "started" },
+      requires_read: true,
+      hint: "Read",
+    },
+    {
+      status: "actionable",
+      for: "my_choice",
+      decision: {
+        id: "d",
+        seq: 1,
+        question: "Q?",
+        options: ["A"],
+        voting_ends_at: "2026-01-01T00:00:00Z",
+        status: "voting",
+      },
+    },
+  ])
+    assert(validate("WaitResponse", response));
+  for (const response of [
+    {},
+    { status: "timeout" },
+    { status: "activity" },
+    { status: "speaking_turn", speaking_turn: { ...turn, observation: "not-a-read" } },
+    { status: "action_required" },
+    { status: "working", requires_read: false },
+  ])
+    assert(!validate("WaitResponse", response));
+});
+test("page completeness and displayed content completeness are distinct", () => {
+  const page = {
+    displayed_from_event: null,
+    displayed_through_event: null,
+    through_event: 200,
+    room_event: 200,
+    complete: true,
+    bodies_elided: false,
+    content: {
+      discussion_displayed: 20,
+      discussion_total: 50,
+      discussion_complete: false,
+      expand: "GET full",
+    },
+  };
+  assert(validate("RoomReadPage", page));
+  assert(
+    validate("RoomReadPage", { ...page, complete: false, through_event: 100, next_since: 100 }),
+  );
+  assert(!validate("RoomReadPage", { ...page, complete: false }));
+  assert(!validate("RoomReadPage", { ...page, next_since: 200 }));
+  assert(!validate("RoomReadPage", { ...page, through_event: "200" }));
+});
+test("delta discussion bodies cannot be lost behind generic event metadata", () => {
+  const delta = {
+    slug: "room",
+    status: "open",
+    agent: "Read",
+    state: "no question",
+    new: [
+      { seq: 1, type: "discussion", at: "2026-01-01T00:00:00Z", who: "Peer", said: "Full content" },
+    ],
+    current_through: 1,
+    more: {},
+    page: {
+      displayed_from_event: 1,
+      displayed_through_event: 1,
+      through_event: 1,
+      room_event: 1,
+      complete: true,
+      bodies_elided: false,
+    },
+  };
+  assert(validate("RoomRead", delta));
+  assert(
+    !validate("RoomRead", {
+      ...delta,
+      new: [{ seq: 1, type: "discussion", at: "2026-01-01T00:00:00Z", who: "Peer" }],
+    }),
+  );
+  assert(!validate("RoomRead", { ...delta, actions: [] }));
+  assert(!validate("RoomRead", { ...delta, state_revision: "1", actions: [], artifacts: [] }));
+  assert(
+    validate("RoomRead", {
+      ...delta,
+      state_revision: "1",
+      actions: [],
+      artifacts: [],
+      composing: [],
+    }),
+  );
+});
+test("read and wait query contracts preserve credential and cursor distinctions", () => {
+  const read = doc.paths["/api/rooms/{slug}"].get;
+  const wait = doc.paths["/api/rooms/{slug}/next-action"].get;
+  assert(read.security.some((form) => Object.keys(form).length === 0));
+  assert(!wait.security.some((form) => Object.keys(form).length === 0));
+  assert(read.parameters.some((p) => p.name === "since"));
+  assert(wait.parameters.some((p) => p.name === "since_seq"));
+  assert.equal(wait.parameters.find((p) => p.name === "wait").schema.maximum, undefined);
+  assert(read.responses[503]);
 });
