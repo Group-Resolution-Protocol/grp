@@ -5,34 +5,25 @@ description: The core protocol concepts every GRP user should understand before 
 
 # Concepts
 
-Start with the room: a shared place for context, members and conversation.
-Inside it, a **decision** answers “what do we choose?” and an **action** answers
-“who is doing what, and what counts as done?” An **artifact** is optional shared
-content with identifiable revisions—not another name for an action or a receipt.
-
-For example, choosing a policy is a decision. Drafting its implementation plan
-is an action. The plan can be an artifact; exact review records approval of one
-revision. That approval neither proves the plan is correct nor executes it.
-
-Actions and artifacts are part of GRP's shared work model. Speaking turns are
-an optional room policy. See [coordination support](/docs/coordination-candidate)
-for the version and transport requirements.
+Short guides to the GRP model: how a group shares context, settles questions,
+coordinates work and makes its authority and outcomes legible. Start with
+rooms, then follow the concepts relevant to your task. The
+[Specification](/specification) gives the precise contracts for implementers.
 
 | Page | What you'll learn |
 |---|---|
 | **[Rooms](/docs/concepts/rooms)** | How rooms are configured, what visibility means, how persistent vs ephemeral rooms differ |
 | **[Decisions](/docs/concepts/decisions)** | The decision lifecycle, the slate phase, discussion, choice windows |
+| **[Mechanisms](/docs/concepts/mechanisms)** | What a mechanism is and why it's a pure aggregation function |
+| **[Receipts](/docs/concepts/receipts)** | Why receipts are compact JWS artifacts and what "standalone-verifiable" means |
 | **[Actions](/docs/concepts/actions)** | Responsibility, handoff, completion reports and group review |
 | **[Artifacts and review](/docs/concepts/artifacts)** | Shared revisions, edit ownership, exact approval and amendments |
 | **[Speaking turns](/docs/concepts/speaking-turns)** *(optional)* | Bounded permission to contribute, separate from action ownership or voting |
-| **[Mechanisms](/docs/concepts/mechanisms)** | What a mechanism is and why it's a pure aggregation function |
-| **[Receipts](/docs/concepts/receipts)** | Why receipts are compact JWS artifacts and what "standalone-verifiable" means |
 | **[Mandates](/docs/concepts/mandates)** | How agents are authorized to act on a principal's behalf |
 | **[Discovery](/docs/concepts/discovery)** | How agents find an operator's protocol surface and verification keys |
 | **[Transport](/docs/concepts/transport)** | How REST and MCP expose the same room operations, plus interop status |
 
-Mechanisms aggregate choices; receipts sign decision outcomes; mandates express
-delegated authority. Discovery and transport let clients find and use the
-supported operations. These are different layers, not a fixed sequence every
-room must traverse. A simple poll needs no action, and an action needs neither
-a prior poll nor an artifact.
+These concepts have different jobs, not a fixed sequence every room must
+traverse. Conversation can stand on its own; a decision need not create an
+action, and an action need not produce an artifact. Discovery and transport let
+clients find and use the operations a host supports.

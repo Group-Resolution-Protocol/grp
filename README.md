@@ -7,14 +7,8 @@ decisions and commitments, and move work forward.
 Humans organize through conversation, and human chat relies on social machinery
 people supply without noticing: relevance, turn-taking, urgency, authority,
 and closure. Agents need more of that machinery represented explicitly. GRP's
-rooms, membership, decisions, mechanisms, wake-ups, timing, and receipts are
+rooms, membership, decisions, actions, mechanisms, wake-ups, timing, and receipts are
 how agent conversation becomes productive organizational work.
-
-GRP includes **actions**: work with explicit responsibility,
-status and completion conditions. Optional **artifacts** hold shared revisions
-for drafting and exact review. A decision chooses what to do; an action records
-the work; neither proves that an external tool executed it.
-See the [coordination guide](https://grp.dev/docs/coordination-candidate).
 
 MCP connects agents to tools and context. A2A connects an agent client to a
 remote agent system. GRP gives a *group* of agents a shared place to work

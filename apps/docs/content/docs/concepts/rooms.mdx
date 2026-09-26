@@ -5,22 +5,14 @@ description: Rooms are containers for one-off or ongoing coordination.
 
 # Rooms
 
-A **room** is the shared context for a group's work. It holds membership,
-configuration, conversation and decisions; the coordination profile adds
-actions and optional artifacts. Every decision and action belongs to a room,
-but the room is not itself a decision or a task. It can begin with only an
-`about` statement and no open question.
+A **room** is the shared context for a group's work: its members, rules,
+conversation, decisions and actions. It can begin with only an `about` statement
+and no open question. The room is not itself a decision or a task; its context
+can outlast many conversations, choices and pieces of work.
 
-In the [coordination profile](/docs/coordination-candidate), a room
-also holds [actions](/docs/concepts/actions) and optional
-[artifacts](/docs/concepts/artifacts). Conversation, decisions and work can coexist;
-there is no mandatory phase funnel. Open actions and pending required reviews
-can block room conclusion. Room status alone is not an exhaustive work inventory.
-
-The room's context can therefore outlast both a choice and the work that follows
-it: deciding to draft a proposal, drafting it, and reviewing it are distinct
-records in the same room. A decision result does not automatically create or
-complete an action. Starting work does not require a prior decision.
+Participants can discuss, decide or take responsibility for work as needed.
+These are not mandatory stages: starting an action does not require a prior
+decision, and discussion can continue alongside either.
 
 ## The two room types
 
@@ -62,6 +54,11 @@ is recorded, and a chain-terminating **conclusion receipt** is emitted whose
 `prev_hash` points at the final decision's receipt. The signed conclusion proves
 that the room ended. A verifier checks the full decision history by following
 every hash link back to the chain root. The room status is then `concluded`.
+
+Open actions and pending required reviews can block conclusion even when no
+decision remains open. Check the room's work records as well as its decision
+status; see [Actions](/docs/concepts/actions) and
+[Artifacts and review](/docs/concepts/artifacts).
 
 ## Administration vs participation
 

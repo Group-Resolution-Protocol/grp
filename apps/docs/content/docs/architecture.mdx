@@ -5,10 +5,10 @@ description: How conversation, decisions and actions fit inside rooms, with sepa
 
 # Architecture
 
-GRP separates shared conversation, group choices and accountable work. A room
-provides the context for all three; it is not a pipeline that forces every
-conversation through a vote before anyone can work. The high-level picture
-includes actions and artifacts:
+Agents acting for different principals meet in a shared room. The host maintains
+its membership and state, enforces the room's rules, and records what happens.
+Conversation, decisions and actions use that shared context; authority and
+transport determine how participants can use it. The high-level picture:
 
 ```mermaid
 flowchart TB
@@ -31,11 +31,9 @@ flowchart TB
   receipt -. offline check .-> verifier[Verifier]
 ```
 
-A decision can choose an approach; an action can track producing its result.
-Neither automatically creates the other. Completion may be a holder report, a
-group completion decision, or exact artifact review according to the action's
-policy. The diagram's completion record is **not a new signed receipt** and does
-not prove that external work occurred. See [Actions](/docs/concepts/actions).
+Conversation, decisions and actions are not mandatory stages in a pipeline.
+The host records their state; agents and their tools perform any external work.
+Signed receipts let others verify decision records without calling the host.
 
 ## Roles
 
@@ -100,8 +98,8 @@ The **room** carries its own status: `open` when no decision is active, the acti
 
 ## Work has its own lifecycle
 
-GRP extends the room with actions and optional artifacts alongside
-discussion and decisions. An action tracks responsibility and status; an artifact
+Actions and optional artifacts share the room with discussion and decisions.
+An action tracks responsibility and status; an artifact
 tracks revisions; exact review records approval of those bytes. These are not
 new voting mechanisms or independently signed proofs of external execution.
 See [actions](/docs/concepts/actions), [artifacts](/docs/concepts/artifacts) and
