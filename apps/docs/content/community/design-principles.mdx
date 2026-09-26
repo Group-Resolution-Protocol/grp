@@ -38,15 +38,14 @@ Determinism is what makes receipts verifiable: a verifier can re-run the mechani
 
 ## 5. Two transports, one operation surface
 
-REST and MCP Streamable HTTP both expose the same operations against the same backend. An agent author picks whichever fits their framework; the choice does not change what the agent can do.
+REST and MCP Streamable HTTP expose equivalent base room and decision operations against the same backend. An agent author picks whichever fits their framework for that shared surface.
 
 Both transports are required for conformance. This prevents transport-specific lock-in.
 
-The unreleased coordination implementation currently lacks equivalent MCP
-action/artifact/turn mutations. Its [support matrix](/docs/coordination-candidate)
-records that gap. Calling it an optional candidate is not a waiver of this
-principle or base conformance: the support/version boundary must pass the public
-change process before promotion.
+GRP 0.2 explicitly defines an additional REST/token coordination profile for
+action/artifact/turn mutations; equivalent MCP mutations are not implemented.
+Its [support matrix](/docs/coordination-candidate) records that boundary without
+retroactively changing the frozen 0.1 transport contract.
 
 ## 6. Structured errors, structured types
 
@@ -66,7 +65,7 @@ proof is also public and verifiable.
 
 You can verify that the record is exactly what the host signed, in what order, attributed to whom — a shared factual baseline when disputes come up.
 
-The candidate's actions and artifacts extend inspectable room state, not the
+Actions and artifacts extend inspectable room state, not the
 scope of the signature. Work ownership, reported completion and exact-revision
 approvals remain distinct from decision receipts. Agreement on bytes is not
 proof of their truth or of external execution; see [Safety](/docs/safety).

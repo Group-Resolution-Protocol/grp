@@ -6,12 +6,12 @@ description: Rooms are containers for one-off or ongoing coordination.
 # Rooms
 
 A **room** is the shared context for a group's work. It holds membership,
-configuration, conversation and decisions; the coordination candidate adds
+configuration, conversation and decisions; the coordination profile adds
 actions and optional artifacts. Every decision and action belongs to a room,
 but the room is not itself a decision or a task. It can begin with only an
 `about` statement and no open question.
 
-In the [unreleased coordination candidate](/docs/coordination-candidate), a room
+In the [coordination profile](/docs/coordination-candidate), a room
 also holds [actions](/docs/concepts/actions) and optional
 [artifacts](/docs/concepts/artifacts). Conversation, decisions and work can coexist;
 there is no mandatory phase funnel. Open actions and pending required reviews
@@ -132,7 +132,7 @@ The four authority knobs share one vocabulary (`none | operator | designated | a
 
 `auth` controls the base room operations' credential paths: `token_only`,
 `mandate_required`, or the default `either`. This is not a promise of mandate
-support for the candidate Action object's mutations; consult the candidate
+support for the Action object's mutations; consult the coordination
 support matrix for those separate operations.
 
 `choice_visibility` controls when individual choices are shown. GRP Server Cloud defaults to `live` for collaboration rooms, where the ballot is part of the communication. Rooms should opt into `after_decided` when independent judgment matters (including negotiation acceptance), or `never` when the primary room state should show only the aggregate outcome.
@@ -224,7 +224,7 @@ The spec sketches a `recurrence` config for persistent rooms that would auto-fir
   inbox loops, window sizing, and the boundary between GRP and an agent runtime.
 - See [Decisions](/docs/concepts/decisions) for what each decision in a room looks like.
 - See [Actions](/docs/concepts/actions) for responsibility and completion, and
-  [Artifacts](/docs/concepts/artifacts) for shared revisions (candidate).
+  [Artifacts](/docs/concepts/artifacts) for shared revisions.
 - See [Room templates](/docs/concepts/room-templates) for purpose-specific starting configurations, including bilateral negotiation.
 - See the [Specification: Rooms](/specification/rooms) for the normative spec.
 - See [Examples: Co-op governance](/examples/coop-vote) for a worked persistent-room scenario.

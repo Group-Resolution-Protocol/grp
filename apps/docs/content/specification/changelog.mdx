@@ -5,7 +5,27 @@ description: Protocol-affecting changes, latest first.
 
 # Changelog
 
-This page tracks protocol-affecting changes on the road to the v0.1 freeze, latest first. Editorial-only revisions (clarifications, typo fixes, formatting) are not listed. Each entry names the change as it shipped.
+This page tracks protocol-affecting changes, latest first. Editorial-only revisions
+(clarifications, typo fixes, formatting) are not listed. The v0.1 entries retain
+their historical scope.
+
+## 2026-09-26 — GRP 0.2: actions and shared work
+
+Actions record responsibility and completion; optional artifacts preserve
+immutable revisions, exact-review rounds and successor lineage. Speaking turns
+are an opt-in room policy with bounded grants and scoped read observations.
+Votes and reviews retain their own authority and timing. Conversation remains
+available alongside work; there is no required phase sequence.
+
+The [GRP 0.2 contract](/specification/coordination-v02) inherits the frozen 0.1
+base with explicit differences: version negotiation before writes, the optional
+REST/participant-token coordination profile, conversational grant requirements
+in turn-enabled rooms, and conclusion fencing while reviewed-result amendments
+remain open. Existing decision receipts remain verifiable. Equivalent MCP
+coordination mutations and mandate-scoped work mutations are not included.
+
+For CLI reading, acknowledgment, review and recovery changes, see the
+[release notes](/changelog) and [upgrade guide](/docs/upgrading-coordination).
 
 ## v0.1 (pre-freeze)
 

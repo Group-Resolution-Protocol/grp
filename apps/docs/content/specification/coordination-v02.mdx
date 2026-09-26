@@ -1,12 +1,11 @@
 ---
 title: GRP 0.2 coordination contract
-description: Unreleased versioned contract for protocol negotiation and the optional REST/token coordination profile.
+description: Versioned contract for protocol negotiation and the optional REST/token coordination profile.
 ---
 
 # GRP 0.2 coordination contract
 
-**Unreleased normative draft.** Requirements below define the selected `0.2`
-candidate, not today's production host. The frozen `0.1` documents remain intact.
+These requirements define GRP `0.2`. The frozen `0.1` documents remain intact.
 
 ## Inherited base and explicit differences
 
@@ -57,7 +56,7 @@ the outcome needs inspection, not permission to repeat it.
 
 ## Coordination discovery
 
-The candidate declares `metadata.coordination`:
+The host declares `metadata.coordination`:
 
 ```json
 {
@@ -70,6 +69,10 @@ The candidate declares `metadata.coordination`:
   "mcp_tools": false
 }
 ```
+
+The `status: "candidate"` value is a retained wire label for client compatibility,
+not the release status of this documentation. Capability support is determined
+by the declared version, profile, transports and authentication fields.
 
 This profile includes actions, artifacts, exact review, successors, composing
 presence and operator-opt-in speaking turns. Reads follow visibility/auth rules;
@@ -88,12 +91,12 @@ takes precedence. Its presence is not independent conformance certification.
 subset. It inherits unchanged base operations from the separate `0.1` file and
 omits generic working-signal paths. The [review lifecycle](/specification/actions-artifacts-candidate)
 and [turn/read contracts](/specification/coordination-candidate) describe its
-resource shapes and fences; experimental-only behavior in those drafts is excluded.
+resource shapes and fences; explicitly experimental-only behavior is excluded.
 No new universal discussion phase, auto-approval or convergence rule is introduced.
 
 The existing conformance `core`, `transport` and `operator` profiles still
 identify only `grp/0.1`. The new `--protocol=0.2 --profile=coordination-discovery`
 performs limited read-only declaration/negotiation checks. Its report MUST NOT
 be described as base-transport, authorization, lifecycle or full `0.2` certification.
-Full supported-lifecycle validation remains a promotion gate, alongside final
-package/image checks and focused staging verification.
+Operators must validate supported lifecycles separately, alongside package/image
+checks and focused staging verification before changing their deployment.

@@ -1,6 +1,6 @@
 ---
 title: Specification — overview
-description: The normative protocol spec. Implementers should read this section before building against GRP v0.1.
+description: The normative protocol spec, including the versioned GRP 0.2 coordination profile and inherited 0.1 base.
 ---
 
 # Group Resolution Protocol Specification
@@ -9,7 +9,10 @@ This is the **normative** GRP specification. The keywords **MUST**, **MUST NOT**
 
 Conformance: an implementation that passes the relevant v0.1 profile and publishes a signed report can claim that profile. See [Conformance](/conformance) for the core, transport, and operator profiles.
 
-## Document set
+## Base document set
+
+GRP `0.2` inherits the `0.1` base below, with the explicit differences and
+coordination operations in the versioned contract that follows.
 
 | Section | Status |
 |---|---|
@@ -25,23 +28,22 @@ Conformance: an implementation that passes the relevant v0.1 profile and publish
 | [Schema reference](/specification/schema) | Generated from canonical TypeScript types |
 | [Changelog](/specification/changelog) | Tracks protocol-affecting changes |
 
-### Coordination additions (unreleased)
+### GRP 0.2 coordination
 
 Actions are a work primitive alongside decisions, not a new voting mechanism.
 An action tracks responsibility and completion; an optional artifact tracks
-shared revisions and exact review. These additions have separate draft contracts
+shared revisions and exact review. These additions have versioned contracts
 and do not retroactively change the frozen v0.1 document set above.
 
 | Document | Scope |
 |---|---|
-| [Coordination release scope](/specification/coordination-release-scope) | Proposed 0.2 boundary: preserved base operations plus optional REST/token coordination |
-| [Version negotiation](/specification/coordination-v02) | Candidate client/host compatibility rules |
+| [Coordination release scope](/specification/coordination-release-scope) | Preserved base operations plus optional REST/token coordination |
+| [Version negotiation](/specification/coordination-v02) | Client/host compatibility rules |
 | [Actions and artifacts](/specification/actions-artifacts-candidate) | Responsibility, completion, revision fencing, review and successors |
 | [Turns and presence](/specification/coordination-candidate) | Separate turn/presence contract and coverage ledger |
 
-See [availability](/docs/coordination-candidate) before implementing or using
-these operations. Public source is available; package and production rollout
-remain pending. Base conformance alone does not certify the work surface.
+See [coordination support](/docs/coordination-candidate) for version, transport
+and authentication requirements. Base conformance alone does not certify the work surface.
 
 ## Versioning at a glance
 
@@ -54,7 +56,7 @@ The following are deliberately out of scope for v0.1:
 - **Money flow.** Payment authorization, escrow, disbursement. v1.0 will layer this on top of v0.1's primitives.
 - **Federation.** Cross-operator state sync, room migration. The protocol is structurally federation-friendly (signed receipts cross operators, mandates are operator-agnostic), but no normative federation layer ships in v0.1.
 - **Custom mechanisms.** Mechanisms are an enum at v0.1. A future extension point
-  remains separate work; it is not part of the current coordination candidate.
+  remains separate work; it is not part of the current coordination profile.
 
 ## Three trust gates (informative)
 

@@ -20,7 +20,7 @@ experimental work, not current A2A 1.0 interoperability. See the
 [MCP reference](/reference/mcp) and [A2A integration status](/reference/a2a)
 for the exact boundaries.
 
-The [unreleased coordination candidate](/docs/coordination-candidate) adds
+The [coordination profile](/docs/coordination-candidate) adds
 action, artifact and speaking-turn mutations through REST with participant
 tokens. Equivalent MCP mutations and mandate authorization are not implemented.
 The base parity described below must not be read as support for those additions.
@@ -71,7 +71,7 @@ The long-poll is the **universal floor**: every GRP transport backs it (MCP expo
 
 See [Specification: Transport](/specification/transport) for normative requirements and [Reference](/reference) for implementer entry points.
 
-The endpoint name `next-action` predates the candidate **Action** work object:
-it means “what needs my attention,” not “claim an Action.” Candidate CLI watches
+The endpoint name `next-action` predates the **Action** work object:
+it means “what needs my attention,” not “claim an Action.” CLI watches
 can also expose work and review duties; a wake-up is a pointer to fresh state,
 not a grant of ownership or proof that the work is complete.

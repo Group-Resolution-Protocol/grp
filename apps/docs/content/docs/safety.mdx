@@ -28,7 +28,7 @@ reconstructing them from disconnected agent sessions. A room can show:
 - the declared mechanism, electorate, timing, and closing conditions; and
 - the signed outcome and its place in the room's receipt chain.
 
-The [coordination candidate](/docs/coordination-candidate) additionally exposes
+The [coordination profile](/docs/coordination-candidate) additionally exposes
 action responsibility, reported completion, artifact revisions and formal review
 responses. Those are inspectable work records, not independently signed proof
 that an external action happened.
@@ -66,7 +66,7 @@ actor deliberately brings evidence of them into the room.
 | **Collusion, Sybil participation, or correlated error** | Rosters, identity-bound mandates, visible ballots where configured, and signed receipts make participation and the declared rule easier to audit. | Identity does not prove independence or good faith. Several agents using the same model, account, prompt, or data may repeat the same error. The planned adversarial simulation suite is not a completed v0.1 claim. |
 | **Consensus laundering** | A deterministic mechanism makes clear how submitted choices became the recorded result. | Agreement is not truth. A unanimous or high-threshold result can still be mistaken, manipulated, unrepresentative, or outside the agents' proper authority. |
 | **Invisible side channels** | GRP provides one canonical shared state for acts submitted through the room. | It cannot prove that agents did not coordinate through email, chat, a shared repository, memory, or another tool. |
-| **Concurrent or stale drafting** | Candidate action-owned artifacts preserve immutable revisions, holder fencing, exact-revision reviews, reviewer-relative diffs, and append-only late notes or corrections. | These mechanics prevent silent overwrite and ambiguous review targets; they do not prove document quality, reviewer independence, or that off-protocol copies were not edited. |
+| **Concurrent or stale drafting** | Action-owned artifacts preserve immutable revisions, holder fencing, exact-revision reviews, reviewer-relative diffs, and append-only late notes or corrections. | These mechanics prevent silent overwrite and ambiguous review targets; they do not prove document quality, reviewer independence, or that off-protocol copies were not edited. |
 | **Operator compromise or loss** | Receipts are signed, hash-chained, and independently verifiable against published keys. The spec and conformance tooling are open to other operators. | A hosted operator still controls hosted availability, stored room state, and its signing infrastructure. If that service disappears, its hosted rooms do not continue running merely because their existing receipts remain verifiable. |
 | **Unsafe external action** | A room can preserve the exact proposal, authorization, closing rule, and outcome that preceded an action. | GRP does not execute or validate the external action, enforce human review, reverse a transaction, or replace legal, financial, security, or professional controls. |
 
@@ -74,7 +74,7 @@ actor deliberately brings evidence of them into the room.
 
 ### Review, authority and independent evidence
 
-The [coordination candidate](/docs/coordination-candidate) adds exact artifact
+The [coordination profile](/docs/coordination-candidate) adds exact artifact
 review. Its approval establishes which revision the participants accepted, not
 whether the statements in it were supported. A plausible but unverified claim
 can pass from discussion into a draft and survive unanimous review. Check
@@ -88,7 +88,7 @@ and review permission are distinct from permission to sign, spend, disclose or
 publish elsewhere. Human and domain-specific review remain external controls.
 
 Here, a mandate's operation scopes are not blanket authority over a durable
-Action object. Candidate shared-resource mutations currently require participant
+Action object. Shared-resource mutations currently require participant
 tokens and do not implement equivalent mandate or MCP mutation paths. Check the
 support matrix rather than assuming transport or authorization parity.
 

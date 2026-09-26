@@ -1,16 +1,18 @@
 ---
-title: Actions and artifacts candidate contract
-description: Draft lifecycle, authority and wire contracts for unreleased shared work.
+title: Actions and artifacts contract
+description: Lifecycle, authority and wire contracts for shared work.
 ---
 
-# Actions and artifacts candidate contract
+# Actions and artifacts contract
 
-**Unreleased, non-normative review draft.** The published base contract is
-unchanged. See [candidate support](/docs/coordination-candidate) and
-[maintainer-led review](/community/governance).
-The public repository contains a separate machine-readable draft at
+This contract defines actions, artifacts and exact review within the
+[GRP 0.2 profile](/specification/coordination-v02). See
+[coordination support](/docs/coordination-candidate) for transport and
+authentication requirements. The public repository contains supporting schemas at
 `docs/reference/openapi/grp-coordination-candidate.openapi.json`, generated from
-`scripts/coordination-contract.mjs`. It is not the published base OpenAPI.
+`scripts/coordination-contract.mjs`. The supported versioned subset is
+`docs/reference/openapi/grp-v0.2-coordination.openapi.json`; the base `0.1`
+OpenAPI remains separate.
 
 ```bash
 npm run contract:candidate:generate
@@ -21,15 +23,16 @@ The checks compile schemas and exercise canonical positive/negative inputs.
 They do not prove live authorization, transactions, retry safety or complete
 host conformance. Schemas intentionally leave additive fields open except where
 the payload itself demands an exact shape. Review history, viewer-relative
-presentation and native change metadata have explicit schemas. Full room/wait
-envelopes and complete error/query/header coverage remain explicit draft gaps.
+presentation and native change metadata have explicit schemas. Consult the
+[read and turn contract](/specification/coordination-candidate) for room/wait
+envelopes; schema validation alone is not exhaustive behavioral certification.
 
 ## Credentials and concurrency
 
 All mutations here require a room participant token and an enabled host
 capability. `X-Mandate` is rejected even alongside a token. Observers do not
 gain work authority. Reads follow the room's visibility/authentication rules;
-the draft's bearer-token read form does not imply public rooms require a token
+the schema's bearer-token read form does not imply public rooms require a token
 or that observers can mutate. Do not put credentials in URLs.
 
 Mutable action/artifact/review counters are positive decimal strings, distinct
@@ -73,8 +76,7 @@ exact-reviewed result, the successor inherits the artifact lineage and group
 completion; holder completion and cross-artifact substitution are rejected.
 Such an amendment must use exact review: ordinary `/complete` is rejected with
 a 400 validation error rather than opening a completion ballot. The original
-reviewed result remains authoritative while its amendment is open. This is the
-candidate rule, not a claim that every older experimental host enforces it.
+reviewed result remains authoritative while its amendment is open.
 
 An action result is either bounded multiline text (at most 4,096 Unicode code
 points) or an exact `{artifact_id, revision_id, sha256}` reference; the reference
@@ -159,7 +161,7 @@ same as a viewer-relative review diff.
 Resource revision preconditions use 412. Active/fenced/required claim,
 artifact-base conflict and closed/in-progress exact review errors use 409. Missing
 resources use 404. Other validation/authority/feature-disabled failures use the
-base error machinery; exhaustive per-operation mapping remains a gate. Error
+base error machinery. Error
 recovery is to inspect current state and reconsider, not silently replay against
 a later revision. A successful create is not promised idempotent by a retry key;
 after an uncertain response inspect room state before creating duplicate work.
@@ -167,6 +169,6 @@ after an uncertain response inspect room state before creating duplicate work.
 Cancellation, notes and successor projections preserve history; they do not
 rewrite sealed decision receipts. Reviewed authoritative heads are distinct from
 ordinary completion reports. A direct successor edge alone is not a newly
-approved head. Additional live tests must establish authorization, roster and
+approved head. Host validation must establish authorization, roster and
 lineage enforcement, simultaneous response behavior, stale generations and
-atomic freeze/settlement—not merely that returned JSON fits this draft.
+atomic freeze/settlement—not merely that returned JSON fits the schema.

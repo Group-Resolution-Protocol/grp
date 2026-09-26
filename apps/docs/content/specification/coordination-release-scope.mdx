@@ -1,12 +1,12 @@
 ---
 title: Coordination release scope
-description: Release target, transport boundaries and migration requirements; not a published protocol revision.
+description: GRP 0.2 features, transport boundaries and migration requirements.
 ---
 
 # Coordination release scope
 
-**Unreleased release-preparation decision, not a normative specification or a
-claim of host availability.** The published protocol remains `grp/0.1`.
+GRP `0.2` brings shared work into rooms alongside conversation and decisions.
+The [versioned contract](/specification/coordination-v02) defines its requirements.
 
 ## What this release includes
 
@@ -19,7 +19,7 @@ The CLI also gains bounded reads, explicit acknowledgment, diff-first review,
 decision context and scoped freshness/recovery. These are tooling changes, not
 new voting rules or a guarantee that agents converge or reach correct answers.
 
-| Surface | Release target |
+| Surface | Support |
 | --- | --- |
 | Existing decision operations | REST and MCP retain equivalent effects and their documented authentication paths |
 | Actions, artifacts, exact review and speaking-turn mutations | Optional REST coordination capability, using participant tokens; exposed by the CLI |
@@ -29,14 +29,14 @@ new voting rules or a guarantee that agents converge or reach correct answers.
 
 New MCP tools, mandate-scoped coordination mutations, phased foreground and
 generic working-signal workflows are outside the supported release scope.
-Retained experimental interfaces are not promoted by appearing in a draft schema.
+Retained experimental interfaces are not supported merely because they appear in a schema.
 
 ## Versioning decision
 
-Target **protocol `0.2`** for the coordinated host behavior. Do not change the
+Use **protocol `0.2`** for the coordinated host behavior. Do not change the
 frozen `0.1` specification in place or describe this entire release as additive.
-The new protocol contract will retain the existing REST/MCP decision surface and
-explicitly scope the additional coordination capability to REST participant tokens.
+The protocol contract retains the existing REST/MCP decision surface and
+explicitly scopes the additional coordination capability to REST participant tokens.
 This is a new-version contract boundary, not an exception retroactively applied
 to the old transport requirements.
 
@@ -47,37 +47,29 @@ valid discussion call; an open successor can prevent room conclusion. These
 affect existing operations, not just newly added endpoints. CLI-only output or
 acknowledgment changes, by contrast, belong in the CLI migration/version.
 
-The source includes an opt-in
-[version transition](/specification/coordination-v02) implementing the `0.2`
-declaration and negotiation, with focused compatibility and staging checks.
-Production promotion is still pending. Neither a discovery flag nor the draft
-OpenAPI alone establishes a released `0.2` deployment. Operators must keep version
-discovery, client compatibility, conformance identification and the versioned
-contract aligned; do not rename a discovery flag alone and call the work complete.
+The [version transition](/specification/coordination-v02) defines `0.2`
+discovery and client negotiation. Operators must keep discovery, client
+compatibility, conformance identification and the versioned contract aligned;
+changing a version flag alone does not implement the contract.
 
 ## Compatibility and rollout
 
 - New clients must explicitly support the published protocol versions they use.
   Preserve ordinary-operation compatibility with older hosts; absence of
   coordination support is not permission to guess routes or weaken a guard.
-- Older-client success on the experimental host is useful regression evidence,
-  not proof that an older client accepts the final version declaration. Test that
-  declaration and any refusal before release, and document the required upgrade.
+- Test older clients against the actual version declaration and refusal behavior,
+  not only against experimental hosts that retain an older declaration. Document
+  the required client upgrade.
 - Ordinary rooms do not acquire speaking turns automatically. A client without
   turn support cannot contribute in a turn-required room; the host must not
   silently bypass the policy. Votes and exact reviews retain their own timing.
 - Keep receipt verification separate from live API version negotiation. A new
   API version must not make an existing valid decision receipt unverifiable.
 
-The selected package targets are CLI `0.2.0` and SDK, engine and conformance
-`0.1.1`; no audit-package release is planned. Package numbers are independent of
-the protocol version. Source and release archives have been prepared and checked,
-but these versions are not yet published. Registry availability and exact-byte
-validation remain publication gates, not promises that the versions are reserved.
+The package versions are CLI `0.2.0` and SDK, engine and conformance `0.1.1`;
+the audit package is unchanged. Package numbers are independent of the protocol version.
 
-The remaining release steps are package publication and separately approved
-operator rollout. Candidate validation does not certify every host or client;
-operators need their own compatibility, lifecycle, denial-case and rollback
+Operators need their own compatibility, lifecycle, denial-case and rollback
 checks. Base conformance alone does not certify coordination. See the
-[candidate coverage ledger](/specification/coordination-candidate) and
+[coordination coverage ledger](/specification/coordination-candidate) and
 [upgrade checklist](/docs/upgrading-coordination).

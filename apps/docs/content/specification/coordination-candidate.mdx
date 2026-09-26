@@ -1,38 +1,35 @@
 ---
-title: Coordination candidate contract
-description: Draft coverage and speaking-turn wire format; not an amendment to published base conformance.
+title: Coordination contract
+description: Read, speaking-turn and presence contracts, with the scope of automated checks.
 ---
 
-# Coordination candidate contract
+# Coordination contract
 
-**Draft, unreleased and non-normative.** This is an implementer review record for
-the candidate, not an amendment to the frozen base specification. See
-[candidate support](/docs/coordination-candidate) and
-[maintainer-led review](/community/governance). Final protocol/capability versions,
-OpenAPI integration and live
-conformance remain promotion gates. No existing REST/MCP parity requirement is
-waived by this page.
+This contract defines coordination reads, speaking turns and composing presence
+within the [GRP 0.2 profile](/specification/coordination-v02). See
+[coordination support](/docs/coordination-candidate) for authentication and
+transport requirements. The frozen `0.1` base specification remains intact.
 
-The [release-scope decision](/specification/coordination-release-scope) selects
-the supported subset and protocol-version target. This draft also describes
+The [release scope](/specification/coordination-release-scope) identifies
+the supported subset. This page also documents explicitly
 retained experimental interfaces; their inclusion is not a support promise.
 
 ## Coverage ledger
 
-| Area | This draft | Remaining gate |
+| Area | Contract coverage | Additional host verification |
 | --- | --- | --- |
-| Speaking-turn projections | Candidate JSON Schema, read/wait envelopes and offline consistency checks below | Complete live authorization/lifecycle/fencing tests |
-| Turn operations and contribution | Candidate request/response schemas and recovery rules below | Exhaustive error vectors, atomicity, expiry and retry live tests |
+| Speaking-turn projections | JSON Schema, read/wait envelopes and offline consistency checks below | Live authorization/lifecycle/fencing tests |
+| Turn operations and contribution | Request/response schemas and recovery rules below | Error vectors, atomicity, expiry and retry live tests |
 | Presence signals | Composing and retained working-signal operation schemas | Complete mandate/concurrency coverage; not promotion of the generic signal workflow |
-| Actions and exact artifact review | [Lifecycle and wire draft](/specification/actions-artifacts-candidate), 20 operation entries and schema vectors | Complete auxiliary/error contracts and live conformance |
-| Successors and authoritative results | Candidate lifecycle and authoritative-result schemas | Complete live lineage/authority tests |
+| Actions and exact artifact review | [Lifecycle and wire contract](/specification/actions-artifacts-candidate), 20 operation entries and schema vectors | Auxiliary/error behavior and live conformance |
+| Successors and authoritative results | Lifecycle and authoritative-result schemas | Live lineage/authority tests |
 | Read delivery | Host snapshot/delta/full and wait schemas; CLI delivery documented separately | Exhaustive legacy event payloads and live compatibility/conformance |
 
 The offline helper described below is intentionally not part of the base `core`,
 `transport` or `operator` pass/fail verdict. Adding a helper does not close the
-remaining gates.
+host-verification responsibilities.
 
-The separate candidate OpenAPI document at
+The supporting OpenAPI document at
 `docs/reference/openapi/grp-coordination-candidate.openapi.json` describes 27
 operations across 23 paths. Run `npm run test:coordination-contract` from the
 repository root for its synthetic schema vectors. This does not modify the
@@ -64,7 +61,7 @@ room-conclusion wake.
 
 The response identifies a decision, activity event, signal change, action duty,
 turn state, conclusion or timeout. It does not deliver all relevant context or a
-speaking observation. The candidate schemas distinguish these variants. Invalid
+speaking observation. The coordination schemas distinguish these variants. Invalid
 query shapes use `400 input.invalid`; snapshot contention can return
 `503 state.snapshot_busy`, not a partially coherent read. Middleware/authentication
 errors remain subject to the shared envelope and their own status mapping.
@@ -86,13 +83,13 @@ prove cursor ordering, atomicity, observation authenticity or content correctnes
 | `request_id` | String, 1–128 ASCII letters/digits/underscore/hyphen | Stable retry identity; additional fresh-request constraint below |
 | `epoch` | Optional decimal string, 1–30 digits | Exact held generation for renewal or release |
 
-Use a participant bearer token in `Authorization`. The candidate shared-resource
+Use a participant bearer token in `Authorization`. The shared-resource
 mutation path does not accept `X-Mandate`, including when also given a token.
 Observer status does not permit requesting a turn. Enabled host capability and
 an operator-enabled speaking-turn room are prerequisites. Body identity fields
 do not establish the actor. Credentials do not belong in query strings.
 
-The current candidate's fresh request ID is a 13-digit Unix-millisecond timestamp,
+A fresh request ID is a 13-digit Unix-millisecond timestamp,
 an underscore and a lowercase UUID-style random suffix (36 hex/hyphen characters).
 The timestamp limits retry retention, not queue priority. Unknown fresh requests
 older than 24 hours or more than five minutes in the future are rejected. Retrying
@@ -130,7 +127,7 @@ and watch responses still do not supply a read observation.
 
 ## Speaking-turn projection
 
-Candidate JSON fields use strings for revision and epoch counters; clients must
+JSON fields use strings for revision and epoch counters; clients must
 not coerce them through floating-point numbers. The current wire counters are
 decimal strings. Treat them as equality/fencing values, not elapsed time or a
 way to calculate future grants.
@@ -192,7 +189,7 @@ It does not grant a turn, record a conversation event, advance the room state
 revision or complete work. In experimental phased rooms, applicable foreground
 epoch checks still apply.
 
-The candidate also retains an experimental generic working-signal interface:
+The implementation also retains an experimental generic working-signal interface:
 
 | Operation | Request | Success |
 | --- | --- | --- |
@@ -222,13 +219,13 @@ completion claim or permission to bypass a read, turn or review gate.
 
 ## Offline checks and missing proof
 
-The candidate conformance package exposes
+The conformance package exposes
 `validateSpeakingTurnProjection(value, { surface: "read" | "operation" | "wait" })`.
 It validates the fields and visible consistency constraints above, including
 that operation/wait surfaces do not issue an observation. Synthetic positive and
 negative vectors exercise this helper. No host calls are made.
 
-Still required before a supported capability claim: exhaustive legacy event payloads
+Host verification must cover legacy event payloads
 and error/status mappings, credential/role denial probes, queue and
 retry semantics, concurrent contribution atomicity, stale-generation fencing,
 observation authenticity, expiry recovery, live wait behavior and historical-host
