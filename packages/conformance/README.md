@@ -45,6 +45,13 @@ Apache-2.0.
 
 ## Unreleased coordination candidate
 
+The unreleased `--protocol=0.2 --profile=coordination-discovery --target=<base-url>`
+profile performs only two read-only checks: the versioned capability declaration
+and refusal of an incompatible version. It accepts no mandate and needs no
+`--allow-write`. Its report explicitly does **not** certify base transports,
+authorization or coordination lifecycles. Existing full profiles still identify
+only `grp/0.1`; changing the version flag cannot relabel their verdicts.
+
 `validateSpeakingTurnProjection(value, { surface: "read" | "operation" | "wait" })`
 is a draft, offline wire validator. It checks required projection fields, string
 revision/epoch representation, lease consistency, own/holder/target relationships

@@ -48,7 +48,9 @@ affect existing operations, not just newly added endpoints. CLI-only output or
 acknowledgment changes, by contrast, belong in the CLI migration/version.
 
 The candidate still advertises `protocol_version: "0.1"` and experimental
-coordination metadata. Neither that metadata nor the draft OpenAPI is a released
+coordination metadata by default. A local, opt-in
+[version transition](/specification/coordination-v02) now implements the `0.2`
+declaration and negotiation; it has not been deployed. Neither the metadata nor the draft OpenAPI is a released
 `0.2` contract. Before promotion, version discovery, client compatibility checks,
 conformance identification and the versioned contract must agree. Preserve the
 tested experimental path until that transition has been implemented and tested;

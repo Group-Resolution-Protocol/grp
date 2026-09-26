@@ -1,4 +1,20 @@
 import * as ed25519 from "@noble/ed25519";
+import {
+  GRP_ACCEPT_PROTOCOL,
+  GRP_ACCEPT_PROTOCOL_HEADER,
+  GRP_PROTOCOL_HEADER,
+  GrpProtocolVersionError,
+  assertSupportedProtocol,
+} from "./protocol.js";
+export {
+  GRP_ACCEPT_PROTOCOL,
+  GRP_ACCEPT_PROTOCOL_HEADER,
+  GRP_PROTOCOL_HEADER,
+  GrpProtocolVersionError,
+  assertSupportedProtocol,
+  coordinationCapability,
+  type CoordinationCapability,
+} from "./protocol.js";
 
 export {
   type AgreementReceiptVerification,
@@ -698,8 +714,10 @@ export class GrpClient {
     }
   }
 
-  discover(): Promise<DiscoveryDocument> {
-    return this.request("/.well-known/grp.json");
+  async discover(): Promise<DiscoveryDocument> {
+    const document = await this.request<DiscoveryDocument>("/.well-known/grp.json");
+    assertSupportedProtocol(document.protocol_version);
+    return document;
   }
 
   health(): Promise<HealthResponse> {
@@ -1038,6 +1056,7 @@ export class GrpClient {
 
     const headers = new Headers(init.headers);
     headers.set("accept", "application/json");
+    headers.set(GRP_ACCEPT_PROTOCOL_HEADER, GRP_ACCEPT_PROTOCOL);
     const auth = init.auth ?? this.defaultAuth;
     if (auth?.kind === "token") {
       headers.set("authorization", `Bearer ${auth.token}`);
@@ -1089,9 +1108,11 @@ export class GrpClient {
       if (!response.ok) {
         throw protocolError(response.status, payload);
       }
+      const protocol = response.headers.get(GRP_PROTOCOL_HEADER);
+      if (protocol !== null) assertSupportedProtocol(protocol);
       return payload as T;
     } catch (err) {
-      if (err instanceof GrpError) throw err;
+      if (err instanceof GrpError || err instanceof GrpProtocolVersionError) throw err;
       throw new GrpTransportError(`request failed for ${safeRequestTarget(url)}`, err);
     } finally {
       if (timeout) clearTimeout(timeout);

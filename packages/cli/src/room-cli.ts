@@ -1,6 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
+  type CoordinationCapability,
+  GRP_ACCEPT_PROTOCOL,
+  GRP_ACCEPT_PROTOCOL_HEADER,
+  GRP_PROTOCOL_HEADER,
+  assertSupportedProtocol,
+  coordinationCapability,
   publicKeyFromJwks,
   receiptKid,
   verifyAgreementReceiptSemantics,
@@ -3039,7 +3045,7 @@ function persistCoordinationCapabilityFromRead(
 
 function persistCoordinationCapability(
   ref: RoomRef,
-  capability: "experimental" | "absent",
+  capability: CoordinationCapability,
   env: Record<string, string | undefined>,
 ): void {
   // Discovery should refine a room the user already remembers; it must not
@@ -3072,11 +3078,7 @@ async function guardedExpectedRoomRevision(
       io,
       {},
     );
-    const metadata = isRecord(discovery.metadata) ? discovery.metadata : {};
-    const candidate = isRecord(metadata.experimental_coordination_state)
-      ? metadata.experimental_coordination_state
-      : null;
-    capability = candidate?.status === "experimental" ? "experimental" : "absent";
+    capability = coordinationCapability(discovery);
     persistCoordinationCapability(ref, capability, io.env);
   }
   if (capability === "absent") return undefined;
@@ -3991,7 +3993,8 @@ async function roomAsk(
     if (
       error instanceof Error &&
       /a decision is already open/.test(error.message) &&
-      remembered?.coordinationStateCapability === "experimental"
+      remembered?.coordinationStateCapability !== undefined &&
+      remembered.coordinationStateCapability !== "absent"
     ) {
       const openDecision = error.message.match(/\bseq\s+([1-9][0-9]*)\b/i)?.[1];
       throw new Error(
@@ -9424,6 +9427,7 @@ async function requestJson<T>(
   const url = apiUrl(baseUrl, path, options.query);
   const headers = new Headers(options.headers);
   headers.set("accept", options.accept ?? "application/json");
+  headers.set(GRP_ACCEPT_PROTOCOL_HEADER, GRP_ACCEPT_PROTOCOL);
   if (options.password) headers.set("x-room-password", options.password);
   if (options.auth?.kind === "mandate") headers.set("x-mandate", options.auth.mandate);
   if (options.auth?.kind === "token") headers.set("authorization", `Bearer ${options.auth.token}`);
@@ -9478,7 +9482,16 @@ async function requestJson<T>(
       throw error;
     }
     const text = await readBoundedResponseText(response);
+    const protocol = response.headers.get(GRP_PROTOCOL_HEADER);
+    if (protocol !== null) assertSupportedProtocol(protocol);
     const parsed = (text ? JSON.parse(text) : null) as T;
+    if (
+      path === "/.well-known/grp.json" &&
+      isRecord(parsed) &&
+      parsed.protocol_version !== undefined
+    ) {
+      assertSupportedProtocol(parsed.protocol_version);
+    }
     captureForegroundResponse(
       io,
       parsed,

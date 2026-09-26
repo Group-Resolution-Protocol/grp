@@ -24,6 +24,12 @@ Neither is published. The experimental host still declares `0.1`; tests against
 it do not establish whether an older client accepts the final version declaration.
 That transition needs explicit compatibility testing, not a silent metadata flip.
 
+The local `0.2` implementation requires a compatible client's
+`X-GRP-Accept-Protocol` header before a write or MCP POST. Older clients without
+it receive `protocol.version_unsupported` before dispatch; reads remain available.
+Do not retry with a forged compatibility header: upgrade to a client that
+implements the contract. See [version negotiation](/specification/coordination-v02).
+
 ## Reading and scripts
 
 - Ordinary reads no longer mean automatic consumption. Incorporate the returned

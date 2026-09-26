@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import addFormats from "ajv-formats";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -15,6 +16,37 @@ const validate = (name, value) => {
   return check(value);
 };
 const hash = "a".repeat(64);
+test("versioned subset excludes working signals and negotiates every operation", () => {
+  const versioned = JSON.parse(
+    readFileSync(
+      new URL("../docs/reference/openapi/grp-v0.2-coordination.openapi.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  assert.equal(versioned.info.version, "0.2");
+  assert.equal(versioned["x-grp-base-contract"], "grp-v0.1.openapi.json");
+  assert.equal(versioned["x-grp-status"], "draft-unreleased");
+  const paths = Object.keys(doc.paths).filter((path) => !path.includes("working-signals"));
+  assert.deepEqual(Object.keys(versioned.paths), paths);
+  let operations = 0;
+  for (const item of Object.values(versioned.paths)) {
+    for (const [method, operation] of Object.entries(item)) {
+      operations++;
+      const header = operation.parameters.find((p) => p.name === "X-GRP-Accept-Protocol");
+      assert.equal(header.in, "header");
+      assert.equal(header.required, method !== "get");
+      assert(operation.responses["409"]);
+      for (const response of Object.values(operation.responses)) {
+        assert.equal(response.headers["X-GRP-Protocol-Version"].schema.const, "0.2");
+        ajv.compile({
+          components: versioned.components,
+          ...response.content["application/json"].schema,
+        });
+      }
+    }
+  }
+  assert.equal(operations, 24);
+});
 const pointer = { id: "revision", ordinal: 1, sha256: hash };
 const presentation = {
   mode: "full",

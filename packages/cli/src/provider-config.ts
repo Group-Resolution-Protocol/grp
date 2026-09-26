@@ -59,7 +59,7 @@ export interface RoomContext {
   /** Live discovery result for the experimental coordination-state surface.
    * This is kept separate from the observation token so capability is never
    * inferred merely because an old token happens to be present. */
-  coordinationStateCapability?: "experimental" | "absent";
+  coordinationStateCapability?: "experimental" | "coordination-0.2" | "absent";
   /** Spec 247 candidate — authenticated observation that this room uses the
    * phased foreground policy. Absence means unknown/open, never phased by
    * inference. */
@@ -682,7 +682,7 @@ export function setRoomCoordinationStateCapability(
   config: ProviderConfig,
   slug: string,
   baseUrl: string | undefined,
-  capability: "experimental" | "absent",
+  capability: "experimental" | "coordination-0.2" | "absent",
 ): ProviderConfig {
   const next = normalizeProviderConfig(config);
   const targetBase = baseUrl ? normalizeBaseUrl(baseUrl) : undefined;
@@ -1123,6 +1123,7 @@ function normalizeRoomContext(raw: Partial<RoomContext>): RoomContext {
       ? { lastNotifiedSeq: raw.lastNotifiedSeq }
       : {}),
     ...(raw.coordinationStateCapability === "experimental" ||
+    raw.coordinationStateCapability === "coordination-0.2" ||
     raw.coordinationStateCapability === "absent"
       ? { coordinationStateCapability: raw.coordinationStateCapability }
       : {}),
