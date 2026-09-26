@@ -1,6 +1,6 @@
 {
   "name": "@grp-protocol/conformance",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Offline vectors and live host conformance probes for GRP implementations.",
   "license": "Apache-2.0",
   "type": "module",
@@ -31,7 +31,7 @@
   },
   "dependencies": {
     "@grp-protocol/audit": "^0.1.0",
-    "@grp-protocol/engine": "^0.1.0",
+    "@grp-protocol/engine": "^0.1.1",
     "@modelcontextprotocol/client": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@noble/ed25519": "^3.1.0"

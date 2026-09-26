@@ -47,6 +47,19 @@ For a package-specific patch, use `--packages=cli` (or a comma-separated list
 of `audit,engine,sdk,conformance,cli`) and bump only the selected package
 manifests. Packages that did not change do not need synthetic version bumps.
 
+## Prepared next release (unpublished)
+
+The current candidate selects CLI `0.2.0` and SDK, engine and conformance
+`0.1.1`. Verify only those release archives with
+`--packages=engine,sdk,conformance,cli`; audit remains at its existing `0.1.0`
+release and must not be republished. Check version availability again at the
+publication gate: a local check is not a reservation.
+
+Package versions and the negotiated protocol version are separate. These
+clients support protocol `0.1` and `0.2`; installing a package does not switch
+a host to `0.2`. Host adoption, staging verification and production promotion
+remain separate operator actions. This candidate is not a published release.
+
 ## First publication
 
 The manual v0.1.0 bootstrap publication is complete. All five package names

@@ -246,8 +246,13 @@ function inspectTarball(expectedName, expectedVersion, tarball) {
     manifest.peerDependencies,
   ]) {
     for (const [name, range] of Object.entries(dependencyGroup ?? {})) {
-      if (name.startsWith("@grp-protocol/") && range !== "^0.1.0") {
-        throw new Error(`${expectedName}: ${name} uses ${range}, expected ^0.1.0`);
+      if (name.startsWith("@grp-protocol/")) {
+        const dependency = packageCatalog.find((pkg) => pkg.name === name);
+        if (!dependency || range !== `^${dependency.version}`) {
+          throw new Error(
+            `${expectedName}: ${name} uses ${range}, expected the selected public package's caret version`,
+          );
+        }
       }
       if (name.startsWith("@grp/")) {
         throw new Error(`${expectedName}: packed manifest depends on private package ${name}`);
