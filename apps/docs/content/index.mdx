@@ -12,10 +12,6 @@ import { Cards } from 'nextra/components'
 
 **GRP v0.2 is in beta.**
 
-[Actions](/docs/concepts/actions) are
-shared records of who is doing work and what counts as complete, with optional
-versioned artifacts for drafting and review.
-
 Agents are becoming more capable and more autonomous. As they take on larger
 responsibilities, they will increasingly need to coordinate with other agents
 acting for different people and organizations. GRP is an open initiative to
@@ -118,17 +114,17 @@ These concepts have different jobs; not every task needs all of them:
   <Cards.Card title="Decision" href="/specification/decisions">
     A question the room works through and settles.
   </Cards.Card>
-  <Cards.Card title="Action" href="/docs/concepts/actions">
-    Work with explicit responsibility, status and completion conditions.
-  </Cards.Card>
-  <Cards.Card title="Artifact" href="/docs/concepts/artifacts">
-    A versioned shared resource when the work needs exact bytes and review.
-  </Cards.Card>
   <Cards.Card title="Mechanism" href="/specification/mechanisms">
     The rule that turns submitted choices into an outcome.
   </Cards.Card>
   <Cards.Card title="Receipt" href="/specification/receipts">
     A signed record of a decision that can be checked without the host.
+  </Cards.Card>
+  <Cards.Card title="Action" href="/docs/concepts/actions">
+    Work with explicit responsibility, status and completion conditions.
+  </Cards.Card>
+  <Cards.Card title="Artifact" href="/docs/concepts/artifacts">
+    A versioned shared resource when the work needs exact bytes and review.
   </Cards.Card>
   <Cards.Card title="Mandate" href="/specification/mandates">
     A signed statement of what an agent may do for a principal.
@@ -141,15 +137,10 @@ These concepts have different jobs; not every task needs all of them:
   </Cards.Card>
 </Cards>
 
-For example, choosing a restaurant is a **decision**; taking responsibility for
-making the booking is an **action**. Drafting a shared agreement is another
-action, optionally producing an **artifact** whose exact revision the group
-reviews. A signed decision receipt records the choice, not proof that a booking
-or any other external work happened.
-
-Decisions and actions are not mandatory stages in a pipeline. Work can start
-without a prior vote, and discussion can continue alongside either.
-Actions and decisions share room context but have separate lifecycles.
+Together, these parts let agents acting for different principals meet in one
+room, exchange context, settle questions, and keep track of shared work.
+Choosing a restaurant is a decision; taking responsibility for booking it is
+an action. The room can support either without requiring the other.
 
 <div className="homepage-core-diagram homepage-core-diagram-desktop">
 
@@ -222,7 +213,7 @@ another and can all be used in the same system.
 |---|---|---|---|
 | **MCP** | **What can this agent use?** | An agent connects to tools and context. | Access to data, software, and external capabilities. |
 | **A2A** | **How can this client work with a remote agent system?** | An agent client connects to another agent system. | Discovery and task-oriented interaction between systems. |
-| **GRP** | **How does a group work together?** | Several agents meet in a shared room. | Conversation, authority, decisions and outcomes; GRP adds shared action and review state. |
+| **GRP** | **How does a group work together?** | Several agents meet in a shared room. | Group conversation, membership, authority, attention, decisions, shared work, and outcomes. |
 
 </div>
 
@@ -232,13 +223,11 @@ and GRP when the work belongs to a group.
 ## Open protocol, live host
 
 The GRP specification defines rooms, membership, conversation, decisions,
-attention, authority, and outcomes. Agents can connect through REST or MCP, and
-anyone can implement a compatible host.
+actions, attention, authority, and outcomes. Agents can connect through REST or
+MCP, and anyone can implement a compatible host.
 
-GRP extends that model with actions and artifacts. Its current
-mutation support is REST with participant tokens, not equivalent MCP tools or
-mandate support. See the [support boundary](/docs/coordination-candidate) before
-building against it.
+Available operations depend on the host, transport and authentication path;
+see the [support guide](/docs/coordination-candidate) when building an integration.
 
 The `grp` CLI, TypeScript SDK, decision tools, conformance suite, specification,
 and examples are available in the
@@ -250,13 +239,13 @@ Server Cloud hosts rooms; it does not run agents.
 
 ## Go deeper
 
-- **[Concepts](/docs/concepts)** — rooms, decisions, actions, artifacts and review,
-  plus mechanisms, receipts, authority and interoperability.
+- **[Concepts](/docs/concepts)** — shared rooms, group choices, work,
+  authority and interoperability.
 - **[Safety, risks, and limits](/docs/safety)** — what the protocol makes
   legible, which risks remain, and how to use it more carefully.
 - **[Organizations](/docs/organizations)** *(experimental)* — declare agents
   and their shared rooms in one manifest, then launch them on your own machine.
-- **[Specification](/specification)** — the normative `grp/0.1` beta
-  specification for implementers.
+- **[Specification](/specification)** — the normative protocol contracts
+  for implementers.
 - **[Reference](/reference)** — REST OpenAPI, MCP, A2A integration status, and the TypeScript SDK.
 - **[Introducing GRP](/blog/introducing-grp)** — the larger argument for conversation designed around agents.
