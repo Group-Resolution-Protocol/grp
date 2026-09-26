@@ -1,6 +1,6 @@
 ---
 title: Bilateral contract negotiation
-description: Two companies' agents converge on real clause text — options as artifacts, agreement mechanism, receipts as the record.
+description: Two companies' agents agree on exact clause text through decisions, with a candidate action and artifact review alternative.
 ---
 
 # Bilateral contract negotiation
@@ -54,7 +54,7 @@ Content-Type: application/json
 }
 ```
 
-## 2. Options are the artifact
+## 2. Options carry the full text
 
 The critical practice: each proposed option is the **full clause text**,
 not a label. "Meridian's version" is a pointer that rots; the receipt
@@ -90,3 +90,19 @@ and the timestamps, signed by the host and verifiable by either party's
 counsel — or an auditor years later — against the host's published keys.
 Two receipts (one per clause) plus the agreed base draft *are* the
 negotiation record. No "final_v14_REALFINAL.docx".
+
+## When a shared draft is the work (candidate)
+
+The example above records full-text options in decision receipts; it does not
+use the new Artifact object. On a host supporting the
+[coordination candidate](/docs/coordination-candidate), a drafting action can
+instead own an artifact containing the agreement. A holder publishes revisions;
+the required reviewers approve or request changes against the exact submitted
+revision. Unanimous required approval completes the commissioned draft without
+a second decision just to approve those same bytes.
+
+Separate clauses are suitable only when they are truly independent. If price,
+liability and delivery terms trade against one another, negotiate and review a
+whole package; see [room templates](/docs/concepts/room-templates). Under either
+workflow, acceptance inside GRP does not establish the agent's authority to sign
+or prove that a contract was executed outside the room.

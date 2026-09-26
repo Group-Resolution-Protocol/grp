@@ -11,6 +11,12 @@ Mandates are **optional**. The participant token is the baseline credential on b
 
 The format is **compact JWS** (RFC 7515) — the same boring shape every OAuth/OIDC stack already speaks. Header + payload + signature, base64url-encoded, dot-separated. `alg=EdDSA` (Ed25519) at v0.1.
 
+**Terminology and support:** `grp.actions` below names permitted operations
+such as `choose` and `discuss`; it is not a list of the new **Action** work
+objects. Candidate action/artifact/turn mutations currently require participant
+tokens over REST, not mandates. A base-room mandate does not authorize those
+unsupported paths. See the [candidate support matrix](/docs/coordination-candidate).
+
 ## Shape
 
 The compact JWS on the wire:

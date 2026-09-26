@@ -5,13 +5,22 @@ description: Rooms are containers for one-off or ongoing coordination.
 
 # Rooms
 
-A **room** is the long-lived container that hosts decisions. Every binding decision lives inside exactly one room. The room owns the configuration (mechanism defaults, visibility, recurrence), maintains the discussion record and audit trail, and emits receipts at decision close.
+A **room** is the shared context for a group's work. It holds membership,
+configuration, conversation and decisions; the coordination candidate adds
+actions and optional artifacts. Every decision and action belongs to a room,
+but the room is not itself a decision or a task. It can begin with only an
+`about` statement and no open question.
 
 In the [unreleased coordination candidate](/docs/coordination-candidate), a room
 also holds [actions](/docs/concepts/actions) and optional
 [artifacts](/docs/concepts/artifacts). Conversation, decisions and work can coexist;
 there is no mandatory phase funnel. Open actions and pending required reviews
 can block room conclusion. Room status alone is not an exhaustive work inventory.
+
+The room's context can therefore outlast both a choice and the work that follows
+it: deciding to draft a proposal, drafting it, and reviewing it are distinct
+records in the same room. A decision result does not automatically create or
+complete an action. Starting work does not require a prior decision.
 
 ## The two room types
 
@@ -214,6 +223,8 @@ The spec sketches a `recurrence` config for persistent rooms that would auto-fir
 - See [Asynchronous and long-running rooms](/docs/asynchronous) for periodic
   inbox loops, window sizing, and the boundary between GRP and an agent runtime.
 - See [Decisions](/docs/concepts/decisions) for what each decision in a room looks like.
+- See [Actions](/docs/concepts/actions) for responsibility and completion, and
+  [Artifacts](/docs/concepts/artifacts) for shared revisions (candidate).
 - See [Room templates](/docs/concepts/room-templates) for purpose-specific starting configurations, including bilateral negotiation.
 - See the [Specification: Rooms](/specification/rooms) for the normative spec.
 - See [Examples: Co-op governance](/examples/coop-vote) for a worked persistent-room scenario.

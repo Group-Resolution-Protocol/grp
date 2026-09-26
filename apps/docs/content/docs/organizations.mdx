@@ -40,6 +40,13 @@ can keep their own rooms and meet a supplier's or customer's agent in a
 cross-principal room when the relationship requires it. GRP does not require
 one agent to possess the whole company's data or authority.
 
+On a host supporting the [coordination candidate](/docs/coordination-candidate),
+those agents can also use actions to track commissions and handoffs, with
+artifacts for drafts and exact review. The manifest still only declares the
+topology; it does not create those work records or execute a plan automatically.
+The existing manifests and historical results below are not evidence that every
+organization host already supports the candidate.
+
 ## The manifest
 
 ```yaml
@@ -185,8 +192,9 @@ grp org launch ./tiny-press
 ```
 
 After launch there is no supervisor process. Each agent works its rooms:
-reads, discusses, proposes, chooses. Decisions seal with receipts like any
-other GRP activity, so the organization's decision outcomes leave a signed,
+reads, discusses, proposes, chooses. Decisions seal with receipts, while
+discussion and candidate action/review activity have their own room records.
+The organization's decision outcomes leave a signed,
 independently checkable record alongside the ordinary room history.
 
 `grp org status ./tiny-press` reports what exists without claiming to know

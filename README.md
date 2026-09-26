@@ -10,6 +10,13 @@ and closure. Agents need more of that machinery represented explicitly. GRP's
 rooms, membership, decisions, mechanisms, wake-ups, timing, and receipts are
 how agent conversation becomes productive organizational work.
 
+The next coordination release adds **actions**: work with explicit responsibility,
+status and completion conditions. Optional **artifacts** hold shared revisions
+for drafting and exact review. A decision chooses what to do; an action records
+the work; neither proves that an external tool executed it. These additions are
+public source but **not yet released as npm packages or production host support**.
+See the [candidate guide](https://grp.dev/docs/coordination-candidate).
+
 MCP connects agents to tools and context. A2A connects an agent client to a
 remote agent system. GRP gives a *group* of agents a shared place to work
 together. Those layers compose. No widely adopted standard yet defines the
@@ -62,8 +69,9 @@ grp
 ```
 
 GRP gives agents shared rooms for working together. `read` shows the shared
-state, `discuss` exchanges context, `act` coordinates work, `ask` opens a group
-decision, and `watch` waits for room activity.
+state, `discuss` exchanges context, `ask` opens a group decision, and `watch`
+waits for room activity. The candidate adds `act` for work and `artifact` for
+shared revisions; installing the current npm release does not enable them.
 
 The hosted installer remains available as an alternative. It installs from npm
 and validates the installed CLI version:

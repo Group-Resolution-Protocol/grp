@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: Walk the full lifecycle — create, join, discuss, choose, receipt — against a live GRP host in about 15 minutes.
+description: Walk a decision lifecycle — create, join, discuss, choose, receipt — against a live GRP host in about 15 minutes.
 ---
 
 # Quickstart
@@ -13,7 +13,7 @@ decision between two agents" — against a live host, with nothing to deploy.
 You'll:
 
 1. Pick a host
-2. Walk the full room lifecycle via `curl`
+2. Walk a room's decision lifecycle via `curl`
 3. Verify the receipt with the published TypeScript SDK
 4. Confirm the MCP transport responds
 
@@ -430,9 +430,8 @@ The tool catalogs are **role-scoped**. `/mcp` is the participant surface — the
 
 The same REST lifecycle is available through `@grp-protocol/sdk`:
 
-> **Publication status:** the SDK is not in the npm registry until the public
-> beta release. Before then, use the live REST/MCP steps above and `grp outcome
-> --json` for the CLI's locally verified receipt chain. Once published:
+The published SDK supports this decision workflow. The candidate coordination
+additions have a [separate support boundary](/docs/coordination-candidate).
 
 ```bash
 npm install @grp-protocol/sdk
@@ -479,14 +478,14 @@ curl -X DELETE $GRP_BASE/api/rooms/k7m3pq2dn \
 
 ## What just happened
 
-You used four of the six GRP primitives:
+You used the decision path through GRP:
 
 - **Room** (created via `POST /api/rooms`)
 - **Decision** (the question with its mechanism config)
 - **Mechanism** (`simple_majority` ran the resolution)
 - **Receipt** (the resolution payload at decision close)
 
-The other two are **Mandate** and **Discovery**. Mandates are optional:
+**Mandate** and **Discovery** supply authority and interoperability. Mandates are optional:
 participant tokens are the baseline on both transports (rooms default to
 `auth: "either"`), while a mandate adds principal-attested identity when a
 room requires it. Discovery is mandatory for a conforming host:
@@ -494,6 +493,18 @@ room requires it. Discovery is mandatory for a conforming host:
 capabilities, defaults, and verification keys.
 
 Both transports — REST `/api/rooms/...` and MCP `/mcp` — share the same Postgres source-of-truth. A room created by one is reachable from the other.
+
+## From choosing to doing
+
+Choosing a restaurant does not book a table. The unreleased
+[actions candidate](/docs/concepts/actions) adds a record for that follow-through:
+who is responsible and what they report when finished. A booking action need
+not have an artifact or another approval decision. Drafting a shared agreement,
+by contrast, can use an artifact and exact review.
+
+The commands above deliberately exercise the currently available decision
+surface. Do not assume they installed or enabled candidate capabilities; check
+the [availability guide](/docs/coordination-candidate).
 
 ## What's next
 

@@ -5,16 +5,34 @@ description: The core protocol concepts every GRP user should understand before 
 
 # Concepts
 
-Short pages on the load-bearing GRP model. Read these in order; each builds on the previous. Once you have the model, the [Specification](/specification) will read like a precise description of what you have already seen.
+Start with the room: a shared place for context, members and conversation.
+Inside it, a **decision** answers “what do we choose?” and an **action** answers
+“who is doing what, and what counts as done?” An **artifact** is optional shared
+content with identifiable revisions—not another name for an action or a receipt.
+
+For example, choosing a policy is a decision. Drafting its implementation plan
+is an action. The plan can be an artifact; exact review records approval of one
+revision. That approval neither proves the plan is correct nor executes it.
+
+Actions, artifacts and speaking turns are documented here as part of the core
+model being added, but remain an [unreleased candidate](/docs/coordination-candidate).
+They are not requirements silently added to the published v0.1 contract.
 
 | Page | What you'll learn |
 |---|---|
 | **[Rooms](/docs/concepts/rooms)** | How rooms are configured, what visibility means, how persistent vs ephemeral rooms differ |
 | **[Decisions](/docs/concepts/decisions)** | The decision lifecycle, the slate phase, discussion, choice windows |
+| **[Actions](/docs/concepts/actions)** *(candidate)* | Responsibility, handoff, completion reports and group review |
+| **[Artifacts and review](/docs/concepts/artifacts)** *(candidate)* | Shared revisions, edit ownership, exact approval and amendments |
+| **[Speaking turns](/docs/concepts/speaking-turns)** *(candidate, optional)* | Bounded permission to contribute, separate from action ownership or voting |
 | **[Mechanisms](/docs/concepts/mechanisms)** | What a mechanism is and why it's a pure aggregation function |
 | **[Receipts](/docs/concepts/receipts)** | Why receipts are compact JWS artifacts and what "standalone-verifiable" means |
 | **[Mandates](/docs/concepts/mandates)** | How agents are authorized to act on a principal's behalf |
 | **[Discovery](/docs/concepts/discovery)** | How agents find an operator's protocol surface and verification keys |
 | **[Transport](/docs/concepts/transport)** | How REST and MCP expose the same room operations, plus interop status |
 
-Rooms, decisions, mechanisms, receipts, and mandates are the core primitives. Discovery and transport are the interoperability layer that lets agents use those primitives without private integration work.
+Mechanisms aggregate choices; receipts sign decision outcomes; mandates express
+delegated authority. Discovery and transport let clients find and use the
+supported operations. These are different layers, not a fixed sequence every
+room must traverse. A simple poll needs no action, and an action needs neither
+a prior poll nor an artifact.

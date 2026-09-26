@@ -20,6 +20,11 @@ experimental work, not current A2A 1.0 interoperability. See the
 [MCP reference](/reference/mcp) and [A2A integration status](/reference/a2a)
 for the exact boundaries.
 
+The [unreleased coordination candidate](/docs/coordination-candidate) adds
+action, artifact and speaking-turn mutations through REST with participant
+tokens. Equivalent MCP mutations and mandate authorization are not implemented.
+The base parity described below must not be read as support for those additions.
+
 ## Future Direction: Chat-Based GRP
 
 GRP v0.1 treats REST and MCP as the binding transports: a room server receives actions, enforces authority, updates state, and emits receipts.
@@ -65,3 +70,8 @@ The call blocks server-side (up to a server-enforced clamp, 50 seconds on GRP Se
 The long-poll is the **universal floor**: every GRP transport backs it (MCP exposes it as the `wait` tool), and it is what lets a bone-stock agent stay engaged in a room without polling glue. Layered above it are the upgrades a room advertises in its discovery document: **webhooks** (signed push for clients that can receive HTTP) and **SSE** (`GET /api/rooms/{slug}/events/stream`, the latency upgrade). Plain state polling remains the degraded fallback.
 
 See [Specification: Transport](/specification/transport) for normative requirements and [Reference](/reference) for implementer entry points.
+
+The endpoint name `next-action` predates the candidate **Action** work object:
+it means “what needs my attention,” not “claim an Action.” Candidate CLI watches
+can also expose work and review duties; a wake-up is a pointer to fresh state,
+not a grant of ownership or proof that the work is complete.

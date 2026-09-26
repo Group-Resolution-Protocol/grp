@@ -18,6 +18,19 @@ view. `ephemeral` rooms present the current decision as one-off, but GRP Server
 Cloud v0.1 still accepts a later explicit `ask` from an authorized caller;
 opening authority and the open-decision capacity are the enforcement controls.
 
+## A choice is not completed work
+
+“Which supplier should we use?” is a decision. “Get the selected supplier's
+onboarding paperwork ready” is an [action](/docs/concepts/actions) in the
+unreleased coordination candidate. A resolved choice does not assign, execute
+or complete that work automatically.
+
+An action can ask the group to accept a reported result through a completion
+decision. For an attached artifact, exact-revision review is a separate
+completion path: unanimous required approvals can complete the action without
+an additional ballot over the same draft. Discussion can continue alongside
+either; it is not a substitute for a formal choice or review response.
+
 ## Opening decisions
 
 A decision is opened with `ask`, gated by the room's `decision_opening_authority` (default: any participant). Opening a decision is an authorized action, not necessarily a participant action. The same `ask` authority can be exercised by:
