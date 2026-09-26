@@ -83,7 +83,8 @@ or the option pool.
 
 Instead:
 
-1. Put the starting draft and shared facts in an artifact both agents can read.
+1. Put the starting draft and shared facts in a document both agents can read.
+   This v0.1 flow does not require the candidate Artifact object.
 2. Open one collect-first decision: “Which complete package, if any, should
    both counterparties accept?”
 3. Let either side propose a complete package as one document-sized option.
@@ -95,6 +96,20 @@ Instead:
 
 This preserves package trades without pretending a simple vote is a dedicated
 contract-negotiation state machine.
+
+### When the work is a shared draft
+
+On a host supporting the [coordination candidate](/docs/coordination-candidate),
+an alternative is an action to produce a complete agreement, with an attached
+artifact and exact-revision review. Responsibility, revision history and
+required approvals then live in the work record rather than in successive
+document-sized decision options. Successful exact review can complete that
+action without a duplicate acceptance ballot. Separate commercial or external
+signing authority still matters; neither path supplies it automatically.
+
+This is a different workflow, not a silent upgrade to the v0.1 commands below.
+Room ballot visibility and quorum do not configure an action's review roster
+or completion policy.
 
 ### CLI setup
 

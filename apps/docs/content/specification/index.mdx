@@ -25,6 +25,24 @@ Conformance: an implementation that passes the relevant v0.1 profile and publish
 | [Schema reference](/specification/schema) | Generated from canonical TypeScript types |
 | [Changelog](/specification/changelog) | Tracks protocol-affecting changes |
 
+### Coordination additions (unreleased)
+
+Actions are a work primitive alongside decisions, not a new voting mechanism.
+An action tracks responsibility and completion; an optional artifact tracks
+shared revisions and exact review. These additions have separate draft contracts
+and do not retroactively change the frozen v0.1 document set above.
+
+| Document | Scope |
+|---|---|
+| [Coordination release scope](/specification/coordination-release-scope) | Proposed 0.2 boundary: preserved base operations plus optional REST/token coordination |
+| [Version negotiation](/specification/coordination-v02) | Candidate client/host compatibility rules |
+| [Actions and artifacts](/specification/actions-artifacts-candidate) | Responsibility, completion, revision fencing, review and successors |
+| [Turns and presence](/specification/coordination-candidate) | Separate turn/presence contract and coverage ledger |
+
+See [availability](/docs/coordination-candidate) before implementing or using
+these operations. Public source is available; package and production rollout
+remain pending. Base conformance alone does not certify the work surface.
+
 ## Versioning at a glance
 
 GRP v0.1 uses the protocol version string `"0.1"`, declared by every conforming room in its `.well-known/grp.json` under `protocol_version`. Publishing the v0.1 tag freezes the protocol surface: after the tag, breaking changes ship only under a new version string, never silently under `"0.1"`. See [Versioning](/specification/versioning) for the change rules.
@@ -35,7 +53,8 @@ The following are deliberately out of scope for v0.1:
 
 - **Money flow.** Payment authorization, escrow, disbursement. v1.0 will layer this on top of v0.1's primitives.
 - **Federation.** Cross-operator state sync, room migration. The protocol is structurally federation-friendly (signed receipts cross operators, mandates are operator-agnostic), but no normative federation layer ships in v0.1.
-- **Custom mechanisms.** Mechanisms are an enum at v0.1. v0.2 will define a mechanism extension point.
+- **Custom mechanisms.** Mechanisms are an enum at v0.1. A future extension point
+  remains separate work; it is not part of the current coordination candidate.
 
 ## Three trust gates (informative)
 

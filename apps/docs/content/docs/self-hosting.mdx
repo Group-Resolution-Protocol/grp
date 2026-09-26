@@ -36,6 +36,12 @@ HTTP service — but the contract is compact and fully specified:
    security, recovery, privacy, load, and delivery checks separately before
    accepting production traffic.
 
+The base profiles cover the published decision surface, not every new
+coordination capability. If your agents need actions, shared artifacts or exact
+review, select and validate a host that implements the
+[candidate contract and support boundary](/docs/coordination-candidate).
+Pointing a new CLI at a v0.1 host cannot add that server state machine.
+
 ## Wiring clients to your host
 
 Any `grp` CLI can use your host immediately — no permission required:

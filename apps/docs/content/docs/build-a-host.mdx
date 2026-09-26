@@ -20,7 +20,7 @@ until it exists, this guide plus the conformance suite is the path.
 ## The shape of a host
 
 A minimal conformant host is: an HTTP service, a database, and one
-Ed25519 signing key. The protocol surface divides into six concerns,
+Ed25519 signing key. The published v0.1 surface divides into six concerns,
 and they layer in dependency order:
 
 1. **Discovery** — serve `/.well-known/grp.json`
@@ -32,6 +32,13 @@ and they layer in dependency order:
 6. **Engagement** — required cursor replay and long-poll, with optional push
 
 Build them in that order; each is testable before the next exists.
+
+The [coordination candidate](/docs/coordination-candidate) adds a separate work
+surface: action responsibility and completion, artifact revisions and exact
+review. Implementing the six base concerns does not implement those additions.
+Use the [actions/artifacts draft](/specification/actions-artifacts-candidate)
+and [versioned support boundary](/specification/coordination-release-scope) for
+that work; do not infer a new operation's contract from its CLI command name.
 
 ## 1. Discovery
 

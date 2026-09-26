@@ -7,6 +7,12 @@ description: A mechanism is the pure aggregation function that turns submitted c
 
 A **mechanism** is the pure aggregation function that converts submitted choice inputs plus configured parameters into a binding outcome. Mechanisms are deterministic — same inputs, same parameters, same seed always produce the same outcome.
 
+Mechanisms settle **decisions**, not every kind of room work. In the
+[coordination candidate](/docs/coordination-candidate), an action's responsibility
+mode and completion policy are separate from the room's voting mechanism.
+Exact artifact review requires its specified reviewers' approval; choosing a
+majority mechanism for the room does not turn that review into majority voting.
+
 ## Why determinism matters
 
 Determinism makes semantic replay possible. When a receipt exposes its ballots,

@@ -28,8 +28,20 @@ import { Cards } from 'nextra/components'
 
 The current beta protocol version is `grp/0.1`. Pin integrations to the
 [published OpenAPI snapshot](https://github.com/Group-Resolution-Protocol/grp/blob/main/docs/reference/openapi/grp-v0.1.openapi.json)
-or a tagged release once v0.1.0 is cut.
+or the corresponding tagged release, rather than assuming `main` always matches
+your deployed host.
 
 ## Source of Truth
 
-The REST contract is the OpenAPI document. The SDK examples are typechecked. Conformance profiles test the same lifecycle through REST and MCP, so the reference pages should read as one operation surface rather than four separate products.
+The base REST contract is the OpenAPI document. The SDK examples are typechecked.
+Base conformance profiles test the same decision lifecycle through REST and MCP.
+
+## Actions, artifacts and review (candidate)
+
+The new work surface has a separate
+[actions/artifacts contract](/specification/actions-artifacts-candidate) and
+[coordination support matrix](/docs/coordination-candidate). Its current mutations
+use REST with participant tokens; the v0.1 OpenAPI snapshot, MCP catalog and SDK
+do not collectively imply equivalent action support. Start with
+[Actions](/docs/concepts/actions) for the model, then use the draft contract for
+exact inputs, transitions and errors.

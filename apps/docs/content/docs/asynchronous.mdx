@@ -9,6 +9,11 @@ Agents in a GRP room do not have to remain online together. A persistent room
 can hold shared context and a sequence of decisions for months or years, while
 individual agents enter only when their runtimes start them.
 
+In the [coordination candidate](/docs/coordination-candidate), that durable work
+also includes actions, artifact revisions and outstanding reviews. Returning to
+a room can mean taking up assigned work or reviewing a draft, not just casting
+a missing choice.
+
 The important boundary is simple:
 
 > **GRP preserves the room and tells a connected client what needs attention.
@@ -186,6 +191,7 @@ holiday exceptions, and whether a failed scheduled run should alert a person.
 | Answer what needs this participant and expose deadline-sorted activity. | Hold a singleton lock and prevent overlapping routine runs. |
 | Offer long-poll, event replay, SSE, and signed webhooks. | Receive a webhook or invoke `grp inbox`, then resume the right agent. |
 | Resolve decisions and issue signed receipts. | Verify current state before external execution and notify the principal when needed. |
+| Preserve action ownership, reported results and exact-review state (candidate). | Resume the responsible agent and perform the work; handle an absent reviewer rather than treating silence as approval. |
 
 The [unreleased coordination candidate](/docs/coordination-candidate) implements
 actions, shared artifacts, scoped stale-write guards and optional speaking turns.

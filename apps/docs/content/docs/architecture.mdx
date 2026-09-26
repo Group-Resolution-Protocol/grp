@@ -1,34 +1,41 @@
 ---
 title: Architecture
-description: How the GRP pieces fit — principals, agents, rooms, mechanisms, receipts, and the two transports.
+description: How conversation, decisions and actions fit inside rooms, with separate authority, review and transport boundaries.
 ---
 
 # Architecture
 
-GRP factors into six primitives, two transports, and the checks that keep every host honest. The high-level picture:
+GRP separates shared conversation, group choices and accountable work. A room
+provides the context for all three; it is not a pipeline that forces every
+conversation through a vote before anyone can work. The high-level picture
+includes **unreleased candidate** actions and artifacts:
 
 ```mermaid
-flowchart LR
-  subgraph "Principal A"
-    pA[Human A]
-    aA[Agent A]
-    pA -- preferences --> aA
-  end
-  subgraph "Principal B"
-    pB[Human B]
-    aB[Agent B]
-    pB -- preferences --> aB
-  end
+flowchart TB
+  principals[Principals] --> agents[Their agents]
   subgraph "Room"
-    decision[Decision]
-    mech[Mechanism]
-    receipt[Receipt]
-    decision --> mech --> receipt
+    shared[Context + conversation]
+    decision[Decision + mechanism]
+    receipt[Signed receipt]
+    action["Action (candidate)"]
+    artifact["Optional artifact revisions"]
+    completion[Completion record]
+    shared --> decision
+    decision --> receipt
+    shared --> action
+    action --> completion
+    action --> artifact
+    artifact -- exact review --> completion
   end
-  aA -- "join + discuss + choose\n(MCP or URL)" --> decision
-  aB -- "join + discuss + choose\n(MCP or URL)" --> decision
-  receipt -. "anyone can verify\noffline" .-> verifier((Verifier))
+  agents -- supported operations --> shared
+  receipt -. offline check .-> verifier[Verifier]
 ```
+
+A decision can choose an approach; an action can track producing its result.
+Neither automatically creates the other. Completion may be a holder report, a
+group completion decision, or exact artifact review according to the action's
+policy. The diagram's completion record is **not a new signed receipt** and does
+not prove that external work occurred. See [Actions](/docs/concepts/actions).
 
 ## Roles
 
@@ -36,7 +43,9 @@ GRP defines four conceptual roles:
 
 - **Principal** — a human (or organization) whose preferences the agent represents. Each principal has an Ed25519 mandate-signing key; on GRP Server Cloud that key is operator-held (server-side, encrypted at rest) and used to sign mandates after a WorkOS-authenticated session check. Other implementations may use device-held or hardware-attested keys.
 - **Authorized actor** — software or a direct principal session acting with a principal's authority. Most actors are agents, but the same authorization model covers integrations, automations, market monitors, game hosts, ticket routers, and webhooks.
-- **Room** — a server that hosts a decision (or many decisions). Implements the GRP transport bindings, runs mechanisms, emits receipts.
+- **Host and room** — the host implements GRP and stores rooms. Each room holds
+  its own membership, context and work; the host enforces transitions and emits
+  decision receipts. A room is not an agent process or an execution service.
 - **Verifier** — anyone who reads a receipt and checks its signature against the room's published key. Verifiers don't need to call the room.
 
 Room administration is separate from decision participation. A room owner/admin can open decisions or manage settings without being eligible to decide. A participant can discuss and decide without being able to administer the room. The receipt/audit trail records both the actor and the authority source when they differ.
@@ -59,7 +68,7 @@ conformance; promotion needs an explicit reviewed contract/support decision.
 
 ```mermaid
 flowchart LR
-  subgraph "Operations (identical surface)"
+  subgraph "Base operations (REST and MCP)"
     op1[create_room]
     op2[join_room]
     op3[choose]
@@ -90,7 +99,7 @@ A decision opened with a `proposal_window` starts in `proposing` (slate open, no
 
 The **room** carries its own status: `open` when no decision is active, the active decision's state while one runs, and terminal `concluded` after the close act seals the receipt chain. Rooms can also be created about-only — durable context, no first decision — with decisions opened later via `ask` (gated by `decision_opening_authority`). The full lifecycle is normative — see the [Decision spec](/specification/decisions).
 
-## Trust gates
+## Work has its own lifecycle
 
 The candidate extends the room with actions and optional artifacts alongside
 discussion and decisions. An action tracks responsibility and status; an artifact
@@ -99,6 +108,14 @@ new voting mechanisms or independently signed proofs of external execution.
 See [actions](/docs/concepts/actions), [artifacts](/docs/concepts/artifacts) and
 [safety](/docs/safety). The browser monitor may show less than the CLI/API; do not
 infer a complete work inventory from a decision-focused room page.
+
+An action's holder, an artifact's editable revision and a participant's speaking
+turn are separate state. A speaking turn permits a conversational contribution;
+it does not reserve every room mutation. Votes and formal reviews keep their own
+rules and deadlines. A missing review can keep work pending even after every
+decision has resolved; an expired lease does not manufacture completion.
+
+## Trust gates
 
 Three structural commitments anchor GRP's trust model:
 

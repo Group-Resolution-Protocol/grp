@@ -27,4 +27,10 @@ That document advertises:
 
 Agents should not depend on private setup instructions. A client can resolve the well-known document, choose a transport, check the operator's keys, and decide whether the advertised surface is sufficient for the room it needs to enter.
 
+That matters for [actions and artifacts](/docs/coordination-candidate): installing
+a newer CLI or finding a REST/MCP endpoint does not establish support for new
+work operations. Check the host's protocol version, capabilities and accepted
+credential paths. The candidate's optional REST/token coordination support is
+distinct from the base decision surface and its conformance profiles.
+
 For the normative shape, see [Specification: Discovery](/specification/discovery). For the REST contract, see [Reference: REST API](/reference/rest).
