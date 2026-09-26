@@ -1,7 +1,8 @@
 # Release-scope review: optional coordination capabilities for GRP
 
-Unpublished draft for local maintainer review. This is not an
-accepted specification, release announcement, or declaration of availability.
+Local release-scope decision, not a published specification, release announcement
+or declaration of availability. The maintained scope and compatibility decision
+is in `apps/docs/content/specification/coordination-release-scope.mdx`.
 
 ## Problem and proposed scope
 
@@ -30,21 +31,20 @@ mutations through participant-token REST and the CLI, not equivalent MCP tools
 or mandate-scoped mutations. Selected SDK types/methods are not full parity.
 The base transport requirement must not be silently weakened to fit that gap.
 
-**Recommendation for review:** define a separately versioned, explicitly
-optional REST coordination extension, with discovery that identifies supported
-operations and authentication, and a separate conformance verdict. Base-profile
-conformance alone must never imply extension support. Clients must fail clearly
-when a host or transport lacks a required capability. Older clients remain
-usable for ordinary rooms, but cannot contribute in enforced-turn rooms.
+**Decision:** target protocol `0.2`, retaining the existing REST/MCP decision
+surface and explicitly defining optional REST/token coordination. Requiring
+turns changes discussion eligibility; open successors can prevent conclusion.
+Those existing-operation behavior changes fall under Versioning §2.2, not just
+§3.1's additive-field exception. The frozen `0.1` contract stays unchanged.
 
-This requires an explicit maintainer decision about the scope of transport
-parity and versioning. Versioning §2.2 requires a new protocol version for
-behavior changes, while §3.1 permits additive optional fields/capabilities.
-The proposal must resolve that distinction, including changed guard/recovery
-behavior, before any normative promotion. Do not assume a capability flag alone
-exempts a behavior change. If the accepted interpretation requires a new base
-protocol version or full transport parity, revise implementation and validation
-accordingly before releasing the affected capability.
+Discovery must identify the supported operations/authentication and protocol
+version honestly; coordination needs its own conformance coverage. Base-profile
+success is not extension certification. The current experimental `0.1`
+advertisement is not the final version contract. Implement and test the version
+transition before promotion, including older-client refusal/upgrade behavior.
+Do not claim that ordinary-room success against today's experimental declaration
+proves older clients accept the final declaration. Existing receipts must continue
+to verify. CLI-only output/acknowledgment changes belong in its package migration.
 
 Retained phased foreground and generic working signals are experimental, not
 part of the recommended release workflow. No new voting mechanism, mandatory
@@ -67,13 +67,14 @@ turn policy, automatic approval, or forced stopping heuristic is proposed.
 Review the scope, implementation and conformance locally, obtain maintainer
 approval, then record the accepted specification change. No public proposal or
 waiting period is required. Local acceptance does not authorize publication or
-deployment, and this draft does not settle the technical scope decision above.
+deployment. The scope decision above does not imply its version transition or
+remaining validation work is already implemented.
 
-## Proposed tooling release selection
+## Selected tooling release targets
 
-Subject to the accepted scope and a final registry/byte check:
+Subject to a final registry/byte check:
 
-| Package | Proposed next version | Reason |
+| Package | Target version | Reason |
 | --- | --- | --- |
 | CLI | 0.2.0 | New workflows and intentionally changed read/acknowledgment and recovery behavior |
 | SDK | 0.1.1 | Additive selected types/method and cancellation verification support |
@@ -81,7 +82,7 @@ Subject to the accepted scope and a final registry/byte check:
 | Conformance | 0.1.1 | Additional offline projection validation; not full extension certification |
 | Audit | No release planned | No intended runtime change requiring a release |
 
-These are proposed npm versions, not a protocol-version ruling or frozen
+These are npm targets, not published or reserved versions or frozen
 artifacts. Do not overwrite existing versions. Mechanism identifiers, engine
 identity and package versions must not be bumped together merely for symmetry.
 

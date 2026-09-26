@@ -35,11 +35,13 @@ speaking turns. An unsupported transport must not be used by guessing tool names
 or substituting credentials. A mandate-only room cannot be treated as a
 participant-token room merely because a CLI example uses that authentication.
 
-The existing normative transport and versioning requirements are not silently
-relaxed by this candidate. Promotion requires a reviewed public contract,
-capability/authentication declarations, conformance coverage and the normal
-protocol change process. The published base contract remains distinct from this
-candidate; passing base conformance does not certify the new operations.
+The [release-scope decision](/specification/coordination-release-scope) targets
+protocol `0.2` with optional REST/token coordination and preserved REST/MCP
+decision operations. It does not rewrite the frozen `0.1` requirements. This is
+a release target, not the current candidate's advertised version or availability.
+Promotion still requires the versioned contract, matching discovery/client
+handling and conformance coverage; passing base conformance does not certify
+the new operations.
 The [draft contract coverage ledger](/specification/coordination-candidate)
 records the first wire-format checks and the remaining implementer gates.
 
