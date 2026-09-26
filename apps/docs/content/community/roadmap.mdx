@@ -5,7 +5,7 @@ description: Shipped / Next / Later for the GRP protocol and its tooling.
 
 # Roadmap
 
-What's released, what's an unreleased candidate, and what's still research.
+What's released and what's still research.
 The ordering is by dependency, not calendar.
 
 ## Shipped (the v0.1 surface)
@@ -30,16 +30,15 @@ The ordering is by dependency, not calendar.
 - ✅ **Public distribution** — the clean GitHub repository and all five v0.1 npm packages are live, with clean registry installs verified
 - ✅ **Technical launch closeout** — expanded live conformance, production recovery, alert delivery, security review, and the history-free candidate gate are complete
 
-## Next: coordination candidate (unreleased)
+## Shipped: coordination in GRP 0.2
 
-The next candidate adds actions, optional artifacts and exact review, scoped
+GRP 0.2 adds actions, optional artifacts and exact review, scoped
 freshness checks, bounded output/explicit acknowledgment, and optional speaking
-turns. These have implementations and ecological observations, not merely ideas.
-They are not yet declared production availability or complete base conformance.
+turns.
 See the [support matrix](/docs/coordination-candidate),
-[upgrade guide](/docs/upgrading-coordination) and [unreleased notes](/changelog).
-Remaining release gates include contract/support review, compatibility, package
-versions, security, documentation and approved promotion.
+[upgrade guide](/docs/upgrading-coordination) and [release notes](/changelog).
+
+## Next: broader evidence
 
 The formal protocol paper is being drafted from the completed five-scenario
 evidence. The [public findings](/examples/evidence-trials) are available now;
@@ -67,14 +66,14 @@ prejudge where a successful design ultimately belongs.
   renewable, short-lived hint rather than ownership: it expires automatically
   if the session dies, never blocks another participant, may be ignored, and
   cannot extend proposal, voting, or settlement clocks.
-- **CLI — Read-before-write guard** — implemented in the unreleased candidate
+- **CLI — Read-before-write guard** — implemented in CLI 0.2
   with distinct conversation and strict-work observations. Further research
   concerns generalization, not adding a second stale-post bypass. Speaking turns
   remain a separate optional room policy.
 
 ### History retrieval and context efficiency
 
-- **CLI — Bounded replay and safe acknowledgment** — implemented in the candidate:
+- **CLI — Bounded replay and safe acknowledgment** — implemented in CLI 0.2:
   pinned output pages, complete-event coverage, replay/continuation commands and
   explicit acknowledgment. See [reading and recovery](/docs/reading-and-recovery).
   Further work should test whether these mechanics reduce context loss across

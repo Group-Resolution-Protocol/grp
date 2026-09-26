@@ -430,8 +430,8 @@ The tool catalogs are **role-scoped**. `/mcp` is the participant surface — the
 
 The same REST lifecycle is available through `@grp-protocol/sdk`:
 
-The published SDK supports this decision workflow. The candidate coordination
-additions have a [separate support boundary](/docs/coordination-candidate).
+The SDK supports this decision workflow. See [coordination support](/docs/coordination-candidate)
+for action, artifact and turn capabilities.
 
 ```bash
 npm install @grp-protocol/sdk
@@ -496,15 +496,15 @@ Both transports — REST `/api/rooms/...` and MCP `/mcp` — share the same Post
 
 ## From choosing to doing
 
-Choosing a restaurant does not book a table. The unreleased
-[actions candidate](/docs/concepts/actions) adds a record for that follow-through:
+Choosing a restaurant does not book a table. An
+[action](/docs/concepts/actions) records that follow-through:
 who is responsible and what they report when finished. A booking action need
 not have an artifact or another approval decision. Drafting a shared agreement,
 by contrast, can use an artifact and exact review.
 
-The commands above deliberately exercise the currently available decision
-surface. Do not assume they installed or enabled candidate capabilities; check
-the [availability guide](/docs/coordination-candidate).
+The commands above exercise the decision surface. For shared work, use the
+[action guide](/docs/concepts/actions) and check the host's
+[coordination support](/docs/coordination-candidate).
 
 ## What's next
 

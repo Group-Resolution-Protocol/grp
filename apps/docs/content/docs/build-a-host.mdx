@@ -33,10 +33,10 @@ and they layer in dependency order:
 
 Build them in that order; each is testable before the next exists.
 
-The [coordination candidate](/docs/coordination-candidate) adds a separate work
+The [coordination profile](/docs/coordination-candidate) adds a separate work
 surface: action responsibility and completion, artifact revisions and exact
 review. Implementing the six base concerns does not implement those additions.
-Use the [actions/artifacts draft](/specification/actions-artifacts-candidate)
+Use the [actions/artifacts contract](/specification/actions-artifacts-candidate)
 and [versioned support boundary](/specification/coordination-release-scope) for
 that work; do not infer a new operation's contract from its CLI command name.
 

@@ -1,13 +1,13 @@
 ---
-title: Upgrading to the coordination candidate
-description: Preparation checklist for changed reading, shared work and capability boundaries.
+title: Upgrading to GRP 0.2
+description: Upgrade checklist for changed reading, shared work and capability boundaries.
 ---
 
-# Upgrading to the coordination candidate
+# Upgrading to GRP 0.2
 
-**Unreleased.** Final package versions and host rollout are not yet announced.
-This checklist describes the candidate migration; it is not an instruction to
-install an unpublished build or assume the production host already supports it.
+Use CLI `0.2.0` with a host supporting GRP `0.2` for actions, artifacts and
+exact review. SDK, engine and conformance package versions are `0.1.1`;
+the audit package is unchanged.
 
 ## Keep the version boundaries separate
 
@@ -15,14 +15,12 @@ CLI package version, protocol contract version and host capabilities are differe
 things. New CLI commands do not add server support. Check the
 [support matrix](/docs/coordination-candidate); actions/artifacts/turn mutations
 currently use participant tokens over REST, not equivalent MCP or mandate paths.
-The new machine-readable contract is a separate draft, not an amendment silently
-inserted into the published base specification.
+The machine-readable coordination contract is versioned separately from the
+frozen `0.1` base specification.
 
-The [release target](/specification/coordination-release-scope) is protocol `0.2`
+The [release scope](/specification/coordination-release-scope) uses protocol `0.2`
 for coordinated host behavior and CLI `0.2.0` for changed client workflows.
-The source and draft contracts are available, but the package and production
-host rollout are pending. The candidate includes explicit `0.2` negotiation and
-has undergone focused compatibility testing. Operators must still verify their
+The client and host explicitly negotiate `0.2` compatibility. Operators must verify their
 own older clients and host configuration; this is not a silent metadata flip.
 
 The `0.2` implementation requires a compatible client's
@@ -60,13 +58,12 @@ Speaking turns are separately enabled per room, not a new universal default.
 Votes/reviews keep their own authority and timing. A timeout or expired edit
 claim is neither permission to speak nor approval of work.
 
-An older client can still use base operations in an ordinary open room without
-understanding the additive coordination fields. This does not make that client
-compatible with every room policy: a client without speaking-turn support cannot
+On a compatible older host, an older client can still use base operations in an
+ordinary open room. A `0.2` host requires the version support described above;
+an older client without it must upgrade. Separately, a client without speaking-turn support cannot
 post in a turn-required room. Upgrade the client or choose an appropriate room
 policy explicitly; the host must not silently bypass the configured rule.
 
-Before promotion, operators still need compatibility testing against their
+Before upgrading a host, operators need compatibility testing against their
 actual older hosts/clients, retained receipt verification, package/protocol
-version review and rollback checks. These documentation changes do not certify
-that rollout or authorize changing live operator settings.
+version review and rollback checks.

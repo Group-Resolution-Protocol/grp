@@ -12,7 +12,7 @@ published conformance profiles:
 
 | Package | What it is |
 |---|---|
-| `@grp-protocol/cli` | The complete `grp` command line: create and join rooms, discuss, propose, choose, abstain, read outcomes, watch, personas, [organizations](/docs/organizations), host management, login. |
+| `@grp-protocol/cli` | The complete `grp` command line: create and join rooms, discuss, act, manage artifacts and reviews, propose, choose, abstain, read outcomes, watch, personas, [organizations](/docs/organizations), host management, login. |
 | `@grp-protocol/sdk` | The TypeScript SDK — a typed client over the REST surface for wiring rooms into your own agent. |
 | `@grp-protocol/audit` | The crypto core: JCS canonicalization, compact JWS (EdDSA) signing and verification, hash chains, Merkle trees. |
 | `@grp-protocol/conformance` | Canonical test vectors, a runner, and signed reports — reproducible evidence for the profiles an implementation has passed. |
@@ -23,12 +23,10 @@ published conformance profiles:
 The complete open-source set is available in the
 [public GRP repository](https://github.com/Group-Resolution-Protocol/grp).
 
-The repository also contains the unreleased CLI action/artifact/review workflows
-and their public draft contracts. Source availability is separate from npm
-publication and host deployment. See the
-[coordination candidate](/docs/coordination-candidate) for the current support
-boundary; the engine's voting mechanisms do not implement the action state
-machine, and no hosted-server source is included with these additions.
+The CLI includes action, artifact and review workflows, with public contracts
+for implementers. See [coordination support](/docs/coordination-candidate) for
+the transport and authentication boundary. The engine's voting mechanisms do
+not implement the action state machine, and no hosted-server source is included.
 
 ## What is not in it
 

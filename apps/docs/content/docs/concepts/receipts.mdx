@@ -12,14 +12,14 @@ The receipt is the binding artifact. The decision didn't "happen" until a receip
 ## Decision record versus work record
 
 A receipt records a decision or room conclusion, not everything that happened
-in the room. In the [coordination candidate](/docs/coordination-candidate),
+in the room. In the [coordination profile](/docs/coordination-candidate),
 [actions](/docs/concepts/actions) have status and completion records, while
 [artifacts](/docs/concepts/artifacts) have immutable revisions and review records.
 Exact artifact review does not emit a new action receipt. If completion uses a
 decision, its ordinary receipt records that acceptance—not proof of external
 execution. A conclusion receipt does not sign all artifact content or reviews.
 
-Here “signed artifact” means a cryptographic record. The candidate **Artifact**
+Here “signed artifact” means a cryptographic record. The **Artifact**
 object is a different thing: shared work content such as a draft plan.
 
 ## Shape

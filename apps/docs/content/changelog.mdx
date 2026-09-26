@@ -1,22 +1,20 @@
 ---
 title: Changelog
-description: Protocol and docs changes for GRP v0.1.
+description: Protocol, CLI and documentation changes for GRP.
 ---
 
 # Changelog
 
 Protocol-affecting changes are tracked in [Specification: Changelog](/specification/changelog).
 
-Current release: `grp/0.1` beta.
+Current release: `grp/0.2` beta.
 
-## Unreleased: coordination candidate
+## September 26, 2026 — Actions and shared work
 
-Package versions and host rollout are not announced. The
-[candidate support matrix](/docs/coordination-candidate) separates implemented
-candidate behavior from released availability and transport limitations.
-The [release-scope decision](/specification/coordination-release-scope) targets a
-new protocol revision for changed coordination behavior; the published `0.1`
-contract is not being rewritten in place.
+GRP `0.2` adds shared work alongside conversation and decisions. Use CLI `0.2.0`;
+SDK, engine and conformance are `0.1.1`, with no audit-package change.
+The [support matrix](/docs/coordination-candidate) identifies transport and
+authentication boundaries. The frozen `0.1` contract remains intact.
 
 - **New:** actions track responsibility and completion; optional artifacts add
   immutable revisions, exact review, diff-first inspection and successor history.
@@ -34,5 +32,4 @@ contract is not being rewritten in place.
   quality, repeated work, stalled obligations and resource use. Current observations
   do not establish model rankings or a validated measure of spiraling.
 
-Actions and the collaboration observations will have separate announcements.
-This entry does not amend the frozen protocol or certify a production deployment.
+Collaboration observations are research findings, not additional protocol requirements.
