@@ -6,10 +6,11 @@ description: Availability and support boundaries for the unreleased actions, art
 # Coordination release candidate
 
 **Unreleased candidate, not a statement of production availability.** These
-guides describe the next coordination release under preparation. Installing a
-released CLI or finding a REST/MCP endpoint does not establish support for every
-candidate operation. Final package versions and host availability will be named
-in the release notes after promotion.
+guides describe the next coordination release. Its source and draft contracts
+are available in the public repository; the selected CLI `0.2.0` and
+SDK, engine and conformance `0.1.1` packages are not yet published. Production
+host rollout is also pending. Installing the currently released CLI or finding a
+REST/MCP endpoint does not establish support for every candidate operation.
 
 The candidate adds durable actions and optional versioned artifacts to rooms
 that can already discuss and decide. Speaking turns are a separate, optional room
@@ -38,9 +39,10 @@ participant-token room merely because a CLI example uses that authentication.
 The [release-scope decision](/specification/coordination-release-scope) targets
 protocol `0.2` with optional REST/token coordination and preserved REST/MCP
 decision operations. It does not rewrite the frozen `0.1` requirements. This is
-a release target, not the current candidate's advertised version or availability.
-Promotion still requires the versioned contract, matching discovery/client
-handling and conformance coverage; passing base conformance does not certify
+a release target, not a statement that production has switched versions.
+The source includes opt-in `0.2` discovery and client negotiation. Operators
+must verify their actual deployment and capabilities; a package install does
+not change a host's configuration. Passing base conformance does not certify
 the new operations.
 The [draft contract coverage ledger](/specification/coordination-candidate)
 records the first wire-format checks and the remaining implementer gates.

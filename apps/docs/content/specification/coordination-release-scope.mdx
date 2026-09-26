@@ -1,6 +1,6 @@
 ---
 title: Coordination release scope
-description: Local release target, transport boundaries and migration requirements; not a published protocol revision.
+description: Release target, transport boundaries and migration requirements; not a published protocol revision.
 ---
 
 # Coordination release scope
@@ -47,14 +47,13 @@ valid discussion call; an open successor can prevent room conclusion. These
 affect existing operations, not just newly added endpoints. CLI-only output or
 acknowledgment changes, by contrast, belong in the CLI migration/version.
 
-The candidate still advertises `protocol_version: "0.1"` and experimental
-coordination metadata by default. A local, opt-in
-[version transition](/specification/coordination-v02) now implements the `0.2`
-declaration and negotiation; it has not been deployed. Neither the metadata nor the draft OpenAPI is a released
-`0.2` contract. Before promotion, version discovery, client compatibility checks,
-conformance identification and the versioned contract must agree. Preserve the
-tested experimental path until that transition has been implemented and tested;
-do not rename a discovery flag alone and call the work complete.
+The source includes an opt-in
+[version transition](/specification/coordination-v02) implementing the `0.2`
+declaration and negotiation, with focused compatibility and staging checks.
+Production promotion is still pending. Neither a discovery flag nor the draft
+OpenAPI alone establishes a released `0.2` deployment. Operators must keep version
+discovery, client compatibility, conformance identification and the versioned
+contract aligned; do not rename a discovery flag alone and call the work complete.
 
 ## Compatibility and rollout
 
@@ -72,12 +71,13 @@ do not rename a discovery flag alone and call the work complete.
 
 The selected package targets are CLI `0.2.0` and SDK, engine and conformance
 `0.1.1`; no audit-package release is planned. Package numbers are independent of
-the protocol version. Targets are not published, reserved or frozen archives;
-final registry checks and exact-byte validation still precede publication.
+the protocol version. Source and release archives have been prepared and checked,
+but these versions are not yet published. Registry availability and exact-byte
+validation remain publication gates, not promises that the versions are reserved.
 
-Remaining work is concrete: complete the versioned contract and honest discovery,
-verify the supported lifecycle and denial cases, validate final packages and the
-server image, then run focused staging checks and obtain release approval.
-Base conformance alone does not certify coordination. See the
+The remaining release steps are package publication and separately approved
+operator rollout. Candidate validation does not certify every host or client;
+operators need their own compatibility, lifecycle, denial-case and rollback
+checks. Base conformance alone does not certify coordination. See the
 [candidate coverage ledger](/specification/coordination-candidate) and
 [upgrade checklist](/docs/upgrading-coordination).
