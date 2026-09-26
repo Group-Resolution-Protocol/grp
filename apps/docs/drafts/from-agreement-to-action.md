@@ -2,7 +2,7 @@
 
 Editorial draft. Not a release announcement or a statement of current hosted
 availability. Publication requires final package versions, capability support,
-governance review and a verified example. This file is outside site content.
+maintainer review and a verified example. This file is outside site content.
 
 A group can agree on what to do and still have no shared account of who is doing
 it. “We'll prepare the release plan” is a decision. It is not an assignment,

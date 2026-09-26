@@ -1,6 +1,6 @@
-# Proposal: optional coordination capabilities for GRP
+# Release-scope review: optional coordination capabilities for GRP
 
-Unpublished proposal draft for maintainer/public discussion. This is not an
+Unpublished draft for local maintainer review. This is not an
 accepted specification, release announcement, or declaration of availability.
 
 ## Problem and proposed scope
@@ -30,14 +30,14 @@ mutations through participant-token REST and the CLI, not equivalent MCP tools
 or mandate-scoped mutations. Selected SDK types/methods are not full parity.
 The base transport requirement must not be silently weakened to fit that gap.
 
-**Recommendation for discussion:** define a separately versioned, explicitly
+**Recommendation for review:** define a separately versioned, explicitly
 optional REST coordination extension, with discovery that identifies supported
 operations and authentication, and a separate conformance verdict. Base-profile
 conformance alone must never imply extension support. Clients must fail clearly
 when a host or transport lacks a required capability. Older clients remain
 usable for ordinary rooms, but cannot contribute in enforced-turn rooms.
 
-This requires an explicit governance decision about the scope of transport
+This requires an explicit maintainer decision about the scope of transport
 parity and versioning. Versioning §2.2 requires a new protocol version for
 behavior changes, while §3.1 permits additive optional fields/capabilities.
 The proposal must resolve that distinction, including changed guard/recovery
@@ -61,13 +61,13 @@ turn policy, automatic approval, or forced stopping heuristic is proposed.
   complete runtime transcripts, action execution or the agent's outside authority.
 - Upgrade documentation must distinguish protocol/capability versions, npm
   versions and host availability. These are different version domains.
-- Governed acceptance, provider safeguards and explicit publication/deployment
+- Maintainer acceptance, provider safeguards and explicit publication/deployment
   approvals remain necessary; no trial result substitutes for them.
 
-Follow the existing governance process: raise an issue/discussion, allow at least
-14 days for this substantive proposal (longer if breaking), review implementation
-and conformance, obtain maintainer approval, then record the accepted specification
-change. The review period has not started merely because this draft exists.
+Review the scope, implementation and conformance locally, obtain maintainer
+approval, then record the accepted specification change. No public proposal or
+waiting period is required. Local acceptance does not authorize publication or
+deployment, and this draft does not settle the technical scope decision above.
 
 ## Proposed tooling release selection
 
