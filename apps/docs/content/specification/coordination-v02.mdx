@@ -1,0 +1,99 @@
+---
+title: GRP 0.2 coordination contract
+description: Unreleased versioned contract for protocol negotiation and the optional REST/token coordination profile.
+---
+
+# GRP 0.2 coordination contract
+
+**Unreleased normative draft.** Requirements below define the selected `0.2`
+candidate, not today's production host. The frozen `0.1` documents remain intact.
+
+## Inherited base and explicit differences
+
+`0.2` inherits the `0.1` room, decision, mechanism, mandate and receipt contracts
+except for the explicit differences below. Existing decision operations MUST
+retain equivalent REST/MCP effects and documented authentication. Existing valid
+decision receipts MUST remain verifiable; API negotiation does not rewrite
+receipt payloads, mechanism identifiers or signing identities.
+
+- Discovery declares `protocol_version: "0.2"`, replacing the `0.1` version
+  literal. The negotiation rules below apply before dispatch.
+- Additional coordination operations have the declared REST/token profile below,
+  not a requirement for equivalent MCP tools or mandate-scoped mutations.
+- An explicitly turn-required room may require a valid speaking grant and current
+  observation for discuss, ask and option proposals. It MUST NOT apply that grant
+  to votes or exact reviews, silently bypass it, or enable it in ordinary rooms.
+- An open successor amending a completed group-reviewed action prevents room
+  conclusion until completed or canceled. It does not invalidate earlier receipts.
+- Optional expected-revision headers add scoped preconditions. Conversation and
+  room-global observations are distinct; artifact/review/claim fences remain
+  resource-local. See the [lifecycle contract](/specification/actions-artifacts-candidate).
+
+This is not permission to change other inherited requirements. Experimental
+phased foreground and generic working signals are not supported by this profile.
+
+## Version negotiation
+
+Discovery and REST room/MCP responses identify the host's version in
+`X-GRP-Protocol-Version`. Clients send the comma-separated versions they implement
+in `X-GRP-Accept-Protocol`, for example `0.1, 0.2`. This is not a credential.
+
+A `0.2` host MUST reject a mutating REST request or MCP POST lacking that header,
+or any request whose explicit list excludes its version, with HTTP409 and
+`error.code: "protocol.version_unsupported"` **before dispatch**. It MUST NOT
+interpret missing support as implicit consent or silently downgrade. GET/HEAD
+without the header remain readable for diagnosis; OPTIONS remains available.
+MCP clients configure the header on their HTTP transport, not as a tool argument.
+If the legacy draft A2A adapter is enabled, its POSTs use the same negotiation;
+it is not a bypass or a claim of A2A 1.0 support.
+Existing `0.1` hosts may ignore the new header; clients retain that legacy path.
+
+Clients MUST reject unknown discovery versions and MUST NOT retry a refused
+mutation as an older version or with weaker guards. Discovery checks and a
+negotiated request serve different purposes: discovery describes capabilities;
+the request header prevents a changed host version from dispatching an
+incompatible write. An unrecognized response after an attempted mutation means
+the outcome needs inspection, not permission to repeat it.
+
+## Coordination discovery
+
+The candidate declares `metadata.coordination`:
+
+```json
+{
+  "version": "0.2",
+  "status": "candidate",
+  "profile": "rest-token",
+  "transports": ["rest"],
+  "mutation_auth": ["participant_token"],
+  "mandate_mutations": false,
+  "mcp_tools": false
+}
+```
+
+This profile includes actions, artifacts, exact review, successors, composing
+presence and operator-opt-in speaking turns. Reads follow visibility/auth rules;
+mutations additionally need an authorized room participant and the applicable
+resource/role fences. A mandate does not become a participant token. Discovery
+does not grant a speaking turn or permission to edit.
+
+Unknown/malformed coordination declarations MUST NOT be treated as absent support
+and used to disable freshness checks. During migration the host may retain the
+old experimental declaration for staging clients; the versioned declaration
+takes precedence. Its presence is not independent conformance certification.
+
+## Contracts, checks and limits
+
+`docs/reference/openapi/grp-v0.2-coordination.openapi.json` is the versioned REST
+subset. It inherits unchanged base operations from the separate `0.1` file and
+omits generic working-signal paths. The [review lifecycle](/specification/actions-artifacts-candidate)
+and [turn/read contracts](/specification/coordination-candidate) describe its
+resource shapes and fences; experimental-only behavior in those drafts is excluded.
+No new universal discussion phase, auto-approval or convergence rule is introduced.
+
+The existing conformance `core`, `transport` and `operator` profiles still
+identify only `grp/0.1`. The new `--protocol=0.2 --profile=coordination-discovery`
+performs limited read-only declaration/negotiation checks. Its report MUST NOT
+be described as base-transport, authorization, lifecycle or full `0.2` certification.
+Full supported-lifecycle validation remains a promotion gate, alongside final
+package/image checks and focused staging verification.

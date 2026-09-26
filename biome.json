@@ -11,6 +11,10 @@
   },
   "formatter": {
     "enabled": true,
+    "ignore": [
+      "docs/reference/openapi/grp-coordination-candidate.openapi.json",
+      "docs/reference/openapi/grp-v0.2-coordination.openapi.json"
+    ],
     "indentStyle": "space",
     "indentWidth": 2,
     "lineWidth": 100,

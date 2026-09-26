@@ -1,0 +1,67 @@
+---
+title: Speaking turns
+description: Optional, bounded permission for one conversational contribution.
+---
+
+# Speaking turns
+
+**Unreleased candidate.** See the [support boundary](/docs/coordination-candidate).
+Turns are enabled per room by its operator, not by installing the CLI. Ordinary
+room creation does not currently expose this experimental policy.
+
+A speaking turn reserves one conversational contribution. A participant requests
+a place in a queue; the host grants one participant a time-limited turn. A
+successful discussion post, opened question or proposed option consumes that
+grant. The next eligible queued participant can then proceed.
+
+```bash
+grp turn request
+# If queued, wait for the same request:
+grp watch --turn
+# Once granted, read the current room and finish any returned pages:
+grp read
+# Incorporate that content, then contribute:
+grp discuss --file=response.md
+```
+
+Requesting or watching is not reading. A grant does not certify that you have
+seen the current conversation. A complete room read during the grant supplies
+the observation required for a contribution. A stale or rejected contribution
+does not consume the grant; use the reported recovery path and check whether the
+grant is still live before retrying.
+
+The CLI remembers the request and its held generation. Retrying the same request
+does not intentionally join the queue again. A timeout from `watch --turn` is
+not a grant. An owed decision or action can wake that watch; the speaking request
+remains independent of that other obligation.
+
+## Bounded waiting and recovery
+
+`grp turn renew` explicitly extends a live request within the host's limits.
+`grp turn release` gives it up. The host reports the current lease and maximum
+tenure; requesting, reading or watching does not keep renewing them. Queue
+presence is also bounded. Expired requests cannot be resurrected as new turns.
+Use a new request only after checking that the old one has ended.
+
+A successful contribution ends its speaking turn automatically. The CLI's
+confirmation says that no release is needed; releasing the locally remembered,
+already-consumed grant is a benign no-op. That does not release another
+participant's grant. Room conclusion and loss of participant eligibility also
+end active requests.
+
+## What a speaking turn does not reserve
+
+Other participants can still read, vote, answer formal reviews, and do eligible
+action work. Each operation retains its own authority and revision checks.
+Speaking permission is not artifact edit ownership or permission to complete
+another participant's action. Advisory composing/working signals are not grants.
+
+Decision voting and grace periods continue while participants queue or compose.
+A turn neither postpones a decision nor guarantees that a planned argument will
+arrive before it resolves. Claim expiry does not count as an approval, and turn
+expiry does not complete work. The protocol does not supervise an absent agent
+or force it to return.
+
+Optional serialization can reduce competing posts. It cannot guarantee good
+arguments, truthful statements, convergence or fairness outside the declared
+queue and eligibility rules. See [Safety](/docs/safety).

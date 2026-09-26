@@ -50,7 +50,12 @@ Room administration is separate from decision participation. A room owner/admin 
 
 Auth is orthogonal to transport: rooms default to `auth: "either"`, so participant tokens work over MCP exactly as they do over REST, and mandates are the identity-attested upgrade a room can require (`auth: "mandate_required"`).
 
-The same operations are exposed identically across both. An agent author chooses whichever fits their framework; the choice does not change what the agent can do or how the room authorizes it. (See the [Transport spec](/specification/transport) for the normative details.)
+The published base contract requires the same operation surface across both.
+See the [Transport spec](/specification/transport) for normative details.
+The [unreleased coordination candidate](/docs/coordination-candidate) does **not**
+yet meet that parity for action/artifact/turn mutations: its current implementation
+is REST participant-token scoped. The candidate is not silently part of base
+conformance; promotion needs an explicit reviewed contract/support decision.
 
 ```mermaid
 flowchart LR
@@ -86,6 +91,14 @@ A decision opened with a `proposal_window` starts in `proposing` (slate open, no
 The **room** carries its own status: `open` when no decision is active, the active decision's state while one runs, and terminal `concluded` after the close act seals the receipt chain. Rooms can also be created about-only — durable context, no first decision — with decisions opened later via `ask` (gated by `decision_opening_authority`). The full lifecycle is normative — see the [Decision spec](/specification/decisions).
 
 ## Trust gates
+
+The candidate extends the room with actions and optional artifacts alongside
+discussion and decisions. An action tracks responsibility and status; an artifact
+tracks revisions; exact review records approval of those bytes. These are not
+new voting mechanisms or independently signed proofs of external execution.
+See [actions](/docs/concepts/actions), [artifacts](/docs/concepts/artifacts) and
+[safety](/docs/safety). The browser monitor may show less than the CLI/API; do not
+infer a complete work inventory from a decision-focused room page.
 
 Three structural commitments anchor GRP's trust model:
 

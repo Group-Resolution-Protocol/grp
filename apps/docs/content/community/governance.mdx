@@ -5,27 +5,34 @@ description: How GRP is run and how protocol-affecting changes are made.
 
 # Governance
 
-GRP at v0.1 follows a **steward + open-proposal** model. The steward (Malacan, Inc.) drafts and maintains the spec; protocol-affecting changes go through public review.
+GRP is **maintainer-led**. Contributions are welcome; a formal community-review
+process is not a prerequisite for maintainer work.
 
 ## Roles
 
-- **Steward (Malacan, Inc.)** — drafts the spec, maintains the open protocol tooling, and operates GRP Server Cloud, a hosted GRP operator. The steward holds no protocol privilege: any operator implements the same public spec and passes the same open conformance suite, and every host's receipts are standalone-verifiable. Neutral governance (a foundation or standards home) is an explicit, pre-committed revisit once multiple serious independent implementations exist.
-- **Implementers** — anyone running a conforming room. Implementers are equal: any conforming server is a valid GRP room.
+- **Steward (Malacan, Inc.)** — drafts the spec, maintains the open protocol tooling, and operates GRP Server Cloud, a hosted GRP operator. The steward holds no protocol privilege: any operator implements the same public spec and passes the same open conformance suite, and every host's receipts are standalone-verifiable.
+- **Implementers** — anyone running a conforming room server. Any conforming server is a valid GRP host.
 - **Contributors** — anyone proposing changes through
   [GitHub Discussions](https://github.com/Group-Resolution-Protocol/grp/discussions),
   Issues, or pull requests.
 
-## Change process at v0.1
+## Changes and releases
 
-Until the SEP (specification enhancement proposal) process lands at v0.2:
+1. **Review the scope** — describe the change, compatibility implications,
+   and validation. Maintainer work can be prepared and reviewed locally;
+   contributors are encouraged to discuss substantial changes before a large PR.
+2. **Implement and validate** — behavior changes need tests, and
+   protocol-affecting changes need a working implementation that passes the
+   applicable conformance checks. New capabilities need explicit contracts
+   and support boundaries.
+3. **Approve the release** — record accepted protocol changes, versions,
+   and compatibility in the [specification changelog](/specification/changelog).
+   Source publication, package publication, and hosted deployment are separate
+   approval decisions.
 
-1. **Raise the proposal** — start a
-   [GitHub Discussion](https://github.com/Group-Resolution-Protocol/grp/discussions).
-2. **Discussion phase** — minimum 14 days for substantive proposals; longer for breaking changes.
-3. **Implementation + conformance** — the proposal must come with a working implementation and pass the conformance suite (the adversarial sim suite when it lands).
-4. **Publish** — accepted proposals ship in the next dated spec version.
-
-The [specification changelog](/specification/changelog) is the running public record of accepted changes. Once external contributors begin proposing changes, we'll formalize the SEP process.
+Merges require maintainer approval. There is no mandatory public discussion or
+waiting period. Seek broader review when a change affects independent
+contributors or implementers. Local review does not mean publication.
 
 ## What "protocol-affecting" means
 
@@ -39,12 +46,7 @@ A change is protocol-affecting if it:
 
 Editorial corrections (clarifying prose, fixing typos, restructuring sections without changing requirements) are NOT protocol-affecting and ship in editorial revisions.
 
-## v0.2 governance additions
+## Later
 
-At v0.2, governance gains:
-
-- **SEP index** — formal change-proposal documents.
-- **Working Groups** — for areas that warrant ongoing focus (mechanism design, conformance testing, registry).
-- **Implementer council** — multi-operator advisory on protocol direction once a second large operator emerges.
-
-These don't make sense at v0.1; we'll add them as the ecosystem grows.
+Add formal community governance only when actual participation warrants it,
+not on a predetermined version schedule.

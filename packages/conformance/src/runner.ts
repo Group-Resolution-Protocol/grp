@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { canonicalize } from "@grp-protocol/audit";
+import { runCoordinationDiscovery } from "./coordination/discovery.js";
 import {
   type ConformanceCase,
   type ConformanceCaseResult,
@@ -14,10 +15,22 @@ const profileOrder: Record<ConformanceProfile, number> = {
   core: 0,
   transport: 1,
   operator: 2,
+  "coordination-discovery": 3,
 };
 
 export async function runConformance(opts: RunConformanceOptions = {}): Promise<ConformanceReport> {
   const profile = opts.profile ?? "core";
+  const version = opts.protocolVersion ?? "0.1";
+  if (profile === "coordination-discovery") {
+    if (version !== "0.2") throw new Error("coordination-discovery requires --protocol=0.2");
+    if (!opts.target) throw new Error("coordination-discovery requires --target=<base-url>");
+    if (opts.mandate) throw new Error("coordination-discovery does not accept credentials");
+    return runCoordinationDiscovery(validateConformanceTarget(opts.target));
+  }
+  if (version !== "0.1")
+    throw new Error(
+      "Full profiles certify only 0.1; use --protocol=0.2 --profile=coordination-discovery for limited read-only checks",
+    );
   const target = validateRunOptions(profile, opts);
   const mandate = validateMandate(profile, opts.mandate);
   const selected = selectCases(profile, allCases);

@@ -1,6 +1,6 @@
 export const GRP_CONFORMANCE_VERSION = "grp/0.1" as const;
 
-export type ConformanceProfile = "core" | "transport" | "operator";
+export type ConformanceProfile = "core" | "transport" | "operator" | "coordination-discovery";
 export type TestStatus = "pass" | "fail" | "skip";
 export type ConformanceSubject = "suite" | "target";
 
@@ -33,7 +33,7 @@ export interface ConformanceCaseResult {
 
 export interface ConformanceReport {
   schema_version: 1;
-  protocol_version: typeof GRP_CONFORMANCE_VERSION;
+  protocol_version: typeof GRP_CONFORMANCE_VERSION | "grp/0.2";
   profile: ConformanceProfile;
   target: string | null;
   generated_at: string;
@@ -51,6 +51,7 @@ export interface ConformanceReport {
 }
 
 export interface RunConformanceOptions {
+  protocolVersion?: "0.1" | "0.2";
   profile?: ConformanceProfile;
   target?: string;
   allowWrites?: boolean;

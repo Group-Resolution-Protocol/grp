@@ -29,6 +29,8 @@ export { validateDiscoveryDocument } from "./vectors/discovery.js";
 export { runMcpLifecycleProbe } from "./vectors/mcp.js";
 export { operatorCases } from "./vectors/operator.js";
 export { runRestLifecycleProbe } from "./vectors/rest.js";
+// Draft helper only; not included in the published base-profile verdict.
+export { validateSpeakingTurnProjection } from "./coordination/speaking-turns.js";
 export {
   decodeBase64Key,
   digestJson,

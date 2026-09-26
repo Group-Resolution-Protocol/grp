@@ -1,0 +1,93 @@
+# What happens when agents work together?
+
+Editorial draft, not published. Observations below are descriptive development
+trials, not a benchmark. Final publication needs a reviewed evidence summary and
+release availability links. This file is outside site content.
+
+Agents can produce discussion much faster than a person can read it. That does
+not mean they always collaborate efficiently. A useful distinction in building
+GRP has been between failures of the coordination machinery and behavior that
+the machinery merely makes visible.
+
+## First, make valid participation possible
+
+Consider a slower agent composing a contribution while several peers keep
+posting. It tries to send, learns that the room changed, reads the new material,
+rewrites, and tries again. If the room changes every time, a freshness check can
+be correct on each request while the overall experience is a failure.
+
+That is a coordination problem, not an occasion for a longer etiquette prompt.
+The work has included distinguishing conversation from unrelated bookkeeping,
+delivering manageable pages, exposing recovery commands and testing optional
+speaking turns. An enforced turn gives one contributor a bounded opportunity
+to speak. It does not require serializing every vote, review or external task.
+
+Not every rejected write is a defect. A post that genuinely missed a newly
+resolved decision should reconsider that decision. The useful distinction is
+between an isolated recovery and a repeated loop that prevents participation.
+
+## Delivering context is not the same as understanding it
+
+Some failures were omissions or confusing projections: the agent needed an
+explanation or a current state transition that the tool did not expose clearly.
+Those are things a protocol or CLI can improve.
+
+Other losses happened after delivery. Agents filtered shell output, suppressed
+errors or inspected only part of a saved document. Explicit continuation and
+bounded output helped, and were used successfully, but did not eliminate these
+habits. Counting every `head` or `grep` as failure would be misleading: searching
+a complete saved file differs from discarding unread pages. The question is
+what consequential information was actually lost.
+
+Acknowledgment can establish that an eligible delivery was acknowledged. It
+cannot prove that the model understood it.
+
+## Less text is an observation, not a grade
+
+In one four-agent Council pair using the same software and scenario, Opus 5
+produced a 4,753-word decree and issued it in 27m32s after the final task send.
+Opus 5.5 produced 608 words in 7m19s. Both used three exact-review rounds.
+In a separate two-agent negotiation pair on another fixed candidate, exact
+approval took 15m06s for Opus 5 and 8m06s for Opus 5.5; their final documents
+contained 2,710 and 359 words respectively.
+
+These are one observation per model per scenario, with fixed ordering, different
+launch spreads and uncontrolled service variation. The Council and negotiation
+pairs used different CLI candidates. Neither timing nor word count isolates a
+model effect, and longer text alone is not evidence of a spiral. Some of the
+longer negotiation document's additions were useful substantive work. Neither
+negotiation run cycled through repeated review rounds.
+
+No prolonged repeated-posting loop was visible in those captures. That is not
+a claim of zero errors: the original UI exports are partial and unverified for
+provider completeness, and discarded shell output cannot be recovered from
+them. Canonical room events and exact artifact hashes establish different facts
+from a complete record of everything an agent saw.
+
+## Agreement can preserve an error very faithfully
+
+In the negotiation, an unsupported factual assurance passed from one agent to
+another and into a jointly approved final document. The counterpart received
+the claim; this was not demonstrated missing context. The shorter counterpart
+run had its own unresolved ambiguity about the denominator of a percentage.
+
+Exact review bound the approvals to the right bytes. It did not verify business
+facts or resolve ambiguous instructions. Multiple approvals are not independent
+expertise merely because they come from multiple sessions. Agent messages and
+artifacts must remain untrusted input, especially where a recipient has access
+to tools outside the room. GRP is not a containment system or a grant of those
+external permissions.
+
+## A better future measurement
+
+A collaboration benchmark could distinguish time to a valid contribution,
+repeated rejected writes, useful versus redundant revisions, abandoned duties,
+mandate compliance and final correctness. It would need repeated samples,
+counterbalanced order, diverse tasks and independent grading. “Shortest wins”
+would reward premature agreement; “most reviewers wins” could reward shared
+mistakes. This is a future research direction, not a benchmark we are releasing.
+
+Our current rule is narrower: repair missing state and invalid transitions,
+make recovery inspectable, and do not encode each test's preferred answer into
+the tool. Agents may still be verbose, disagree, or make mistakes. A useful
+protocol should help them work through that without concealing it.

@@ -22,6 +22,7 @@ import {
   resolvePersonaSelection,
   setCurrentRoom,
   setRoomLastSeenSeq,
+  setRoomObservedStateRevision,
   updateProviderConfig,
 } from "./provider-config.js";
 
@@ -183,6 +184,74 @@ describe("provider config persona resolution", () => {
 });
 
 describe("provider config transactions", () => {
+  it("stores the opaque observed room revision independently from the event cursor", () => {
+    const fixture = configFixture();
+    const env = { GRP_CONFIG: fixture.configPath };
+
+    updateProviderConfig(
+      () =>
+        setCurrentRoom(
+          { providers: {} },
+          {
+            slug: "newsroom",
+            baseUrl: TEST_BASE_URL,
+            lastSeenSeq: 7,
+            observedStateRevision: "opaque-z9",
+          },
+        ),
+      env,
+    );
+    updateProviderConfig(
+      (current) => setRoomLastSeenSeq(current, "newsroom", TEST_BASE_URL, 31),
+      env,
+    );
+    updateProviderConfig(
+      (current) => setRoomObservedStateRevision(current, "newsroom", TEST_BASE_URL, "opaque-a1"),
+      env,
+    );
+
+    const stored = readProviderConfig(env);
+    expect(stored.currentRoom).toEqual(
+      expect.objectContaining({
+        lastSeenSeq: 31,
+        observedStateRevision: "opaque-a1",
+      }),
+    );
+  });
+
+  it("preserves long opaque room revisions byte-for-byte and rejects unsafe representations", () => {
+    const fixture = configFixture();
+    const env = { GRP_CONFIG: fixture.configPath };
+    const opaque = `revision-${"z".repeat(400)}`;
+
+    updateProviderConfig(
+      () =>
+        setCurrentRoom(
+          { providers: {} },
+          {
+            slug: "newsroom",
+            baseUrl: TEST_BASE_URL,
+            observedStateRevision: opaque,
+            observations: {
+              schema: 1,
+              generation: "fixture-read",
+              global: opaque,
+              conversation: opaque,
+            },
+          },
+        ),
+      env,
+    );
+    expect(readProviderConfig(env).currentRoom?.observedStateRevision).toBe(opaque);
+    expect(() =>
+      updateProviderConfig(
+        (current) =>
+          setRoomObservedStateRevision(current, "newsroom", TEST_BASE_URL, " padded-token "),
+        env,
+      ),
+    ).toThrow(/HTTP-safe opaque string/);
+  });
+
   it("never moves a remembered or current-room high-water mark backwards", () => {
     const fixture = configFixture();
     const env = { GRP_CONFIG: fixture.configPath };

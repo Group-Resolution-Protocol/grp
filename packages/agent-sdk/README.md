@@ -11,7 +11,7 @@ npm install @grp-protocol/sdk
 ```ts
 import { GrpClient, verifyRoomReceiptChain } from "@grp-protocol/sdk";
 
-const client = new GrpClient({ baseUrl: "https://grp.app" });
+const client = new GrpClient({ baseUrl: "https://api.grp.app" });
 const discovery = await client.discover();
 
 const room = await client.createRoom({
@@ -28,7 +28,7 @@ const room = await client.createRoom({
 
 const joined = await client.joinRoom({ slug: room.slug, display_name: "agent" });
 const agent = new GrpClient({
-  baseUrl: "https://grp.app",
+  baseUrl: "https://api.grp.app",
   token: joined.participant_token ?? undefined,
 });
 
@@ -59,7 +59,7 @@ an access token + mandate and pass both together:
 
 ```ts
 const authed = new GrpClient({
-  baseUrl: "https://grp.app",
+  baseUrl: "https://api.grp.app",
   accessToken: tokenResponse.access_token,
   mandate: tokenResponse.mandate,
 });
@@ -69,3 +69,18 @@ await authed.joinRoom({ slug: "abc123", invite: "it_..." });
 
 The public repository includes typechecked lifecycle, event, mandate, and
 outcome examples. They stay out of the small runtime tarball.
+
+## Unreleased coordination candidate
+
+The candidate adds selected response/review types and
+`appendActionReviewNote`, not complete action/artifact/speaking-turn client
+parity. That method requires a participant-token REST host and appends a
+non-dispositive note; it does not replace an approval. The SDK does not implement
+the CLI's pinned delivery, acknowledgment or turn orchestration. See the
+[candidate support matrix](https://grp.dev/docs/coordination-candidate).
+
+`verifyAgreementReceiptSemantics` checks decoded agreement data **after** signature
+verification. Its cancellation support validates signed attribution and preserved
+vote diagnostics, not independent proof of the actor's actual authority. Neither
+signature verification nor semantic replay proves external execution or factual
+correctness. Chain, signature and semantic checks answer different questions.

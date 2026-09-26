@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   prepare:
-    if: ${{ inputs.confirmation == 'STAGE' }}
+    if: ${{ inputs.confirmation == 'STAGE' && github.repository == 'Group-Resolution-Protocol/grp' && github.ref == 'refs/heads/main' && github.ref_protected }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -52,9 +52,11 @@ jobs:
           --package-lock=false --prefix .release-tools npm@11.15.0
 
       - name: Pack, install, and retain the exact release artifacts
+        env:
+          RELEASE_PACKAGES: ${{ inputs.packages }}
         run: >-
           node scripts/verify-npm-packages.mjs
-          --packages="${{ inputs.packages }}"
+          --packages="$RELEASE_PACKAGES"
           --artifact-dir=.release-packages
 
       - name: Upload the verified release bundle
@@ -71,7 +73,7 @@ jobs:
 
   stage:
     needs: prepare
-    if: ${{ inputs.confirmation == 'STAGE' }}
+    if: ${{ inputs.confirmation == 'STAGE' && github.repository == 'Group-Resolution-Protocol/grp' && github.ref == 'refs/heads/main' && github.ref_protected }}
     runs-on: ubuntu-latest
     environment: npm-release
     permissions:

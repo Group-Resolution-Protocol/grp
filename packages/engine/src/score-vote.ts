@@ -229,7 +229,7 @@ function resolveTie(
   tieBreak: ScoreVoteTieBreak,
   seed: string,
 ): string | null {
-  if (ties.length === 1) return ties[0]!;
+  if (ties.length === 1) return ties[0] ?? null;
   if (tieBreak === "no_pass") return null;
   if (tieBreak === "first_listed") return options.find((o) => ties.includes(o)) ?? null;
   const idxBytes = createHash("sha256")

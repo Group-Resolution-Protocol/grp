@@ -106,7 +106,7 @@ function normalizeAllocation(
     }
   }
   if (total <= 0) return { allocation: out, valid: false };
-  for (const o of options) out[o] = out[o]! / total;
+  for (const o of options) out[o] = (out[o] ?? 0) / total;
   return { allocation: out, valid: true };
 }
 
@@ -240,7 +240,7 @@ function runSimpleAverage(
   }
   if (totalWeight === 0) return totals;
   const out: Record<string, number> = {};
-  for (const o of options) out[o] = totals[o]! / totalWeight;
+  for (const o of options) out[o] = (totals[o] ?? 0) / totalWeight;
   return out;
 }
 
@@ -263,7 +263,7 @@ function runQuadraticFunding(
   const total = Object.values(raw).reduce((a, b) => a + b, 0);
   if (total === 0) return raw;
   const out: Record<string, number> = {};
-  for (const o of options) out[o] = raw[o]! / total;
+  for (const o of options) out[o] = (raw[o] ?? 0) / total;
   return out;
 }
 
@@ -334,7 +334,7 @@ function runEqualShares(
     if (bestOpt === null) break;
 
     // Fund the chosen option; charge supporters proportionally.
-    const optContrib = optContributions[bestOpt]!;
+    const optContrib = optContributions[bestOpt] ?? 0;
     funded[bestOpt] = (funded[bestOpt] ?? 0) + optContrib;
     for (const v of voterBudgets) {
       const share = v.allocation[bestOpt] ?? 0;
@@ -350,6 +350,6 @@ function runEqualShares(
   const total = Object.values(funded).reduce((a, b) => a + b, 0);
   if (total === 0) return funded;
   const out: Record<string, number> = {};
-  for (const o of options) out[o] = funded[o]! / total;
+  for (const o of options) out[o] = (funded[o] ?? 0) / total;
   return out;
 }

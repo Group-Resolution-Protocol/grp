@@ -11,6 +11,7 @@ import {
 import type { ConformanceProfile, ConformanceReport, SignedConformanceReport } from "./types.js";
 
 interface RunOptions {
+  protocolVersion?: "0.1" | "0.2";
   command: "run";
   profile: ConformanceProfile;
   target?: string;
@@ -52,6 +53,7 @@ export async function runCli(args: string[]): Promise<void> {
 
   const mandate = opts.mandateFile ? await readMandateFile(opts.mandateFile) : undefined;
   const report = await runConformance({
+    ...(opts.protocolVersion ? { protocolVersion: opts.protocolVersion } : {}),
     profile: opts.profile,
     ...(opts.target ? { target: opts.target } : {}),
     allowWrites: opts.allowWrites,
@@ -96,6 +98,10 @@ function parseArgs(args: string[]): CliOptions {
     }
     const [key, value] = splitArg(arg);
     switch (key) {
+      case "--protocol":
+        if (value !== "0.1" && value !== "0.2") throw new Error(`invalid --protocol '${value}'`);
+        opts.protocolVersion = value;
+        break;
       case "--profile":
         if (!isProfile(value)) throw new Error(`invalid --profile '${value}'`);
         opts.profile = value;
@@ -264,7 +270,12 @@ function splitArg(arg: string): [string, string] {
 }
 
 function isProfile(value: string): value is ConformanceProfile {
-  return value === "core" || value === "transport" || value === "operator";
+  return (
+    value === "core" ||
+    value === "transport" ||
+    value === "operator" ||
+    value === "coordination-discovery"
+  );
 }
 
 function printHelp(): void {
@@ -279,9 +290,10 @@ Usage:
   grp-conformance verify --signed-report=signed-report.json --jwks=operator-jwks.json
 
 Options:
-  --profile=core|transport|operator
-  --target=<base-url>          Required for transport/operator live probes
-  --allow-write                Required acknowledgement: live probes create and delete test rooms
+  --profile=core|transport|operator|coordination-discovery
+  --protocol=0.1|0.2          Defaults to 0.1; 0.2 supports limited read-only coordination-discovery only
+  --target=<base-url>          Required for transport/operator and coordination-discovery probes
+  --allow-write                Required for transport/operator: these probes create and delete test rooms
   --mandate-file=<path>        0600 file containing a short-lived trusted mandate for hosted operator probes
   --report=<path>              Write report to file instead of stdout
   --format=json|markdown       Defaults to json

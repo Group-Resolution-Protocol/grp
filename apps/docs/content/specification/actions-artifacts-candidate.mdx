@@ -1,0 +1,172 @@
+---
+title: Actions and artifacts candidate contract
+description: Draft lifecycle, authority and wire contracts for unreleased shared work.
+---
+
+# Actions and artifacts candidate contract
+
+**Unreleased, non-normative review draft.** The published base contract is
+unchanged. See [candidate support](/docs/coordination-candidate) and
+[maintainer-led review](/community/governance).
+The public repository contains a separate machine-readable draft at
+`docs/reference/openapi/grp-coordination-candidate.openapi.json`, generated from
+`scripts/coordination-contract.mjs`. It is not the published base OpenAPI.
+
+```bash
+npm run contract:candidate:generate
+npm run test:coordination-contract
+```
+
+The checks compile schemas and exercise canonical positive/negative inputs.
+They do not prove live authorization, transactions, retry safety or complete
+host conformance. Schemas intentionally leave additive fields open except where
+the payload itself demands an exact shape. Review history, viewer-relative
+presentation and native change metadata have explicit schemas. Full room/wait
+envelopes and complete error/query/header coverage remain explicit draft gaps.
+
+## Credentials and concurrency
+
+All mutations here require a room participant token and an enabled host
+capability. `X-Mandate` is rejected even alongside a token. Observers do not
+gain work authority. Reads follow the room's visibility/authentication rules;
+the draft's bearer-token read form does not imply public rooms require a token
+or that observers can mutate. Do not put credentials in URLs.
+
+Mutable action/artifact/review counters are positive decimal strings, distinct
+from immutable revision IDs and content ordinals. Canonical counter inputs have
+at most 64 digits. A claim epoch fences one ownership generation, not content.
+Edit/holder claim TTLs are integer seconds from 30 to 900, default 300.
+
+The CLI's complete-room observation guard is additional to the resource fences
+listed below. Host operations do not all require the same room header. Where
+supported, `X-GRP-Expected-Room-Revision` rejects unseen room-global changes;
+group completion and resume require it. `X-GRP-Expected-Foreground-Epoch` applies
+to separately configured phased rooms, not a requirement to enable that arm.
+Do not replace an exact artifact base or review-round fence with a room counter.
+
+## Action operations
+
+Paths below are relative to `/api/rooms/{slug}`. Mutation success includes
+`action` and `state_revision`, sometimes additional artifact/decision fields.
+Read the returned action state: HTTP success does not imply task completion.
+
+| Method and path | Input / authority |
+| --- | --- |
+| `POST /actions` | Title, optional description/mode/completion/holder/target/roster; starts by default. Current joined actor; resolved holder must be joined. Mode/roster constraints are in `CreateAction`. |
+| `GET /actions/{actionId}` | Current action; `reviews=1` adds round history. Read visibility applies. |
+| `POST /actions/{actionId}/claim` | `expected_revision`, optional TTL; eligible open or unheld work, not takeover of a retained holder. |
+| `PUT /actions/{actionId}/claim` | `claim_epoch`, optional TTL; renew exact current ownership. |
+| `POST /actions/{actionId}/handoff` | `expected_revision`, one of `to_participant_id` or `to_group=true`; current holder in handoff mode. Optional single-line note. |
+| `POST /actions/{actionId}/takeover` | `expected_revision`, reason, optional TTL/override; recover active-holder work. Live lease requires explicit override. |
+| `POST /actions/{actionId}/complete` | Single-holder expected revision; optional result/epoch. Holder policy completes; group policy opens a fixed-result agreement; `all` reports only this participant's duty. |
+| `POST /actions/{actionId}/fail` | Same resource fencing; current holder or required `all` reporter. An `all` failure fails the action. |
+| `POST /actions/{actionId}/cancel` | Expected revision; creator/current holder or exact-review requester as applicable. `all` permits only its creator. Not completion over objection. |
+| `POST /actions/{actionId}/resume` | Expected revision and reason, required room header; proposer of still-open completion decision, not any reviewer. Cancels that decision and resumes editing. |
+| `POST /actions/{actionId}/request-review` | Expected action and artifact state revisions plus exact `artifact_revision_id`; current holder, single/handoff, group completion, attached current artifact. |
+| `PUT /actions/{actionId}/review` | Expected action revision, exact artifact revision and approve/changes_requested; required reviewer other than requester. Change request needs a body. |
+| `POST /actions/{actionId}/review-notes` | Exact artifact revision, late/correction kind and body; round member. Correction names only the author's own formal review. No disposition change. |
+
+Creation defaults to single/holder. `all` starts immediately, has a fixed unique
+required set, and has neither a holder nor one attached artifact. A successor
+must name a terminal action in this room. When that predecessor is a completed
+exact-reviewed result, the successor inherits the artifact lineage and group
+completion; holder completion and cross-artifact substitution are rejected.
+Such an amendment must use exact review: ordinary `/complete` is rejected with
+a 400 validation error rather than opening a completion ballot. The original
+reviewed result remains authoritative while its amendment is open. This is the
+candidate rule, not a claim that every older experimental host enforces it.
+
+An action result is either bounded multiline text (at most 4,096 Unicode code
+points) or an exact `{artifact_id, revision_id, sha256}` reference; the reference
+allows no extra keys. The host verifies the referenced revision/hash exists in
+the room. Native artifact approval does not verify external business facts.
+
+For group-completion decisions, the proposed result is fixed while pending.
+Agreement completes; unsuccessful settlement returns work rather than inventing
+approval. Exact artifact rounds are a separate path: submission approves on
+behalf of the requester, freezes the target and snapshots reviewers. Responses
+commute between the round-opening action revision and current revision, while
+pinning the exact bytes. Older rounds without an opening boundary retain a strict
+action revision fence. Existing dispositions have their own review revision fence.
+All required responses settle the round; requested changes return the editor,
+unanimous approval completes, and missing responses remain pending.
+
+## Artifact operations
+
+| Method and path | Input / result |
+| --- | --- |
+| `POST /artifacts` | Name, native/external kind and payload. Optional `action_id` requires expected action revision and current holder; `all` cannot attach one target. Returns artifact, current_revision and nullable action. |
+| `GET /artifacts/{artifactId}` | Select exact `revision` ID or positive content `version`, never both; default current. `view=metadata` omits revision/reviews. |
+| `POST /artifacts/{artifactId}/claim` | Expected artifact state revision and optional TTL. |
+| `PUT /artifacts/{artifactId}/claim` | Exact live claim epoch and optional TTL. |
+| `DELETE /artifacts/{artifactId}/claim` | JSON body with exact claim epoch. |
+| `POST /artifacts/{artifactId}/revisions` | Expected artifact state revision, exact base_revision_id, one update form, applicable edit authority. Returns artifact and new revision. |
+| `PUT /artifacts/{artifactId}/revisions/{revisionId}/review` | Standalone comment/approve/changes_requested, optional body and own review fence. Explicit historical=true for old bytes. Does not replace an action-round response. |
+
+Native content supports `text/markdown` and `text/plain`, at most 262,144 UTF-8
+bytes; schema character lengths are not a substitute for the byte limit. The
+server hashes the exact content. Publication chooses one of `content`,
+`sync_content`, block/text `operations`, or an external reference plus hash.
+The base must still be current. Patches allow at most 50 operations; block
+replacement/deletion pins its content hash and text replacement pins an exact
+match count. No-op/invalid synchronization is rejected, not a new revision.
+
+An action-owned native write can supply `action_id`; the host verifies the
+current holder and matching target and acquires/extends its edit claim as needed.
+Standalone enforced writes require a live exact `claim_epoch`. Neither form
+can bypass a pending review/completion freeze. Wire `baton_mode` is the retained
+edit-control field (`none`, `advisory`, `enforced`), not conversational turns.
+
+External references currently require provider `git`, credential-free HTTPS
+without query/fragment, a 40- or 64-hex commit, optional relative path without
+`..`, lowercase SHA-256 and `verification=asserted`. No provider adapter verifies
+the content. Schema shape validation alone does not certify URL safety or bytes.
+
+## Review history and diff presentation
+
+The normal focused action read can include `superseded_by` and `review_round`.
+The latter reports `can_approve` while the round is pending: `false` means a
+required reviewer has requested changes, not that remaining responses have
+already been waived. `reviews=1` selects an `ActionReviewHistory` response with
+ordered `rounds` and an optional `review_presentation` instead.
+
+Presentation refers to the latest **requested review round**, which may be older
+than an unsubmitted artifact draft. Its `current` and nullable `base` pin revision
+IDs, ordinals and hashes. The base is the latest earlier round this viewer
+reviewed, not automatically the immediately preceding artifact revision. With
+usable native block maps, `mode=diff` supplies inserted/modified/deleted block
+identities and revision-local numbers. Otherwise `mode=full` explains the fallback
+(`first_revision`, `no_trusted_base` or `external_artifact`). Retrieve full content
+by the pinned ID; the changed-block list is not a text patch or proof that
+unchanged text is correct. Anonymous or previously uninvolved readers may have
+no trusted base even when the editor has one.
+
+`roster` records who has responded and `your_obligation` is `review` only for an
+outstanding required reviewer. An optional checkpoint exposes elapsed time,
+round counts, byte growth (which may be negative), prior dispositions and
+outstanding reviewers at the implemented round thresholds. It creates no new
+approval, expiry or compulsory stopping rule.
+
+History preserves original dispositions alongside `later_corrected` and linked
+non-dispositive `corrections`; late notes also remain separately retrievable.
+It does not silently turn an earlier approval into a rejection. Native revision
+`change` separately describes initial/whole/legacy snapshots, recorded block
+patch operations or block-sync counts. Those write-method records are not the
+same as a viewer-relative review diff.
+
+## Failure and compatibility boundaries
+
+Resource revision preconditions use 412. Active/fenced/required claim,
+artifact-base conflict and closed/in-progress exact review errors use 409. Missing
+resources use 404. Other validation/authority/feature-disabled failures use the
+base error machinery; exhaustive per-operation mapping remains a gate. Error
+recovery is to inspect current state and reconsider, not silently replay against
+a later revision. A successful create is not promised idempotent by a retry key;
+after an uncertain response inspect room state before creating duplicate work.
+
+Cancellation, notes and successor projections preserve history; they do not
+rewrite sealed decision receipts. Reviewed authoritative heads are distinct from
+ordinary completion reports. A direct successor edge alone is not a newly
+approved head. Additional live tests must establish authorization, roster and
+lineage enforcement, simultaneous response behavior, stale generations and
+atomic freeze/settlement—not merely that returned JSON fits this draft.

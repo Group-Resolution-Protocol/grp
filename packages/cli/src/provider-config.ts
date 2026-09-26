@@ -24,6 +24,13 @@ export interface ProviderProfile {
 }
 
 export interface RoomContext {
+  /** Versioned scope certificates; legacy observations are not reusable. */
+  observations?: {
+    schema: 1;
+    generation: string;
+    conversation?: string;
+    global?: string;
+  };
   provider?: string;
   baseUrl?: string;
   slug: string;
@@ -36,14 +43,51 @@ export interface RoomContext {
   /** Spec 113 — the caller's own participant id from the join response, so
    * watch can tell its own events from everyone else's. */
   participantId?: string;
-  /** Spec 113 — the per-room high-water mark: the highest event seq this
-   * session has already read. Absent = no mark (first contact reads the full
-   * snapshot). Advanced by delta reads, explicit --since reads, and the
-   * FOREGROUND wake-mode watch — NEVER by `grp watch --jsonl` (a background
-   * flight recorder must not eat the foreground's delta; that would be the
-   * client-side version of the shared-cursor bug spec 113 refused to build
-   * server-side). */
+  /** Highest explicitly acknowledged content boundary. Reads and every watch
+   * mode are non-consuming. Absence means no acknowledged baseline yet. */
   lastSeenSeq?: number;
+  /** Exact interval emitted by the last eligible room read. No new fetch is
+   * performed when this interval is explicitly acknowledged. */
+  readDelivery?: { from: number; through: number; kind: "catch_up" | "snapshot" };
+  /** Idempotent local delivery effects, bounded to the retained delivery lifetime. */
+  readCompletions?: { id: string; page: number; expires: number }[];
+  /** Notification progress only; never consumes room content. */
+  lastNotifiedSeq?: number;
+  /** Derived compatibility alias of observations.global. Legacy raw values
+   * are discarded; guarded commands only use the versioned certificates. */
+  observedStateRevision?: string;
+  /** Live discovery result for the experimental coordination-state surface.
+   * This is kept separate from the observation token so capability is never
+   * inferred merely because an old token happens to be present. */
+  coordinationStateCapability?: "experimental" | "coordination-0.2" | "absent";
+  /** Spec 247 candidate — authenticated observation that this room uses the
+   * phased foreground policy. Absence means unknown/open, never phased by
+   * inference. */
+  foregroundPolicy?: "phased_serial";
+  /** Spec 247 candidate — the exact foreground epoch returned by the last
+   * authenticated phased response. This is a decimal equality token, not a
+   * client-side counter. */
+  observedForegroundEpoch?: string;
+  speakingTurn?: {
+    identity: string;
+    requestId?: string;
+    epoch?: string;
+    observation?: string;
+    /** Historical local confirmation only; never reusable speaking authority. */
+    consumed?: { requestId: string; epoch: string; by: "discussion" | "question" | "proposal" };
+  };
+  /** Legacy deserialization type only. Normalization always discards it. */
+  staleWriteRecovery?: StaleWriteRecovery;
+}
+
+export interface StaleWriteRecovery {
+  operation: string;
+  requestBodySha256: string;
+  rejectedExpectedRevision: string;
+  rejectedCurrentRevision: string;
+  expiresAt: string;
+  readStateRevision?: string;
+  forceAvailable?: boolean;
 }
 
 export interface CliProfile {
@@ -401,6 +445,52 @@ export function listRememberedRooms(config: ProviderConfig): RoomContext[] {
  * minimal rooms-map entry so the mark survives (credentials are not stored
  * from this path).
  */
+export function setRoomDeliveryState(
+  config: ProviderConfig,
+  slug: string,
+  baseUrl: string | undefined,
+  change: Pick<RoomContext, "readDelivery" | "lastNotifiedSeq" | "readCompletions">,
+): ProviderConfig {
+  const next = normalizeProviderConfig(config);
+  const targetBase = baseUrl ? normalizeBaseUrl(baseUrl) : undefined;
+  const update = (room: RoomContext): RoomContext =>
+    normalizeRoomContext({
+      ...room,
+      ...change,
+      ...(room.readDelivery &&
+      change.readDelivery &&
+      room.readDelivery.through >= change.readDelivery.through
+        ? { readDelivery: room.readDelivery }
+        : {}),
+      ...(change.lastNotifiedSeq !== undefined
+        ? {
+            lastNotifiedSeq: Math.max(room.lastNotifiedSeq ?? 0, change.lastNotifiedSeq),
+          }
+        : {}),
+    });
+  const rooms = { ...(next.rooms ?? {}) };
+  let touched = false;
+  for (const [key, room] of Object.entries(rooms)) {
+    if (!roomMatches(next, room, slug, targetBase)) continue;
+    rooms[key] = update(room);
+    touched = true;
+  }
+  let currentRoom = next.currentRoom;
+  if (currentRoom && roomMatches(next, currentRoom, slug, targetBase)) {
+    currentRoom = update(currentRoom);
+    touched = true;
+  }
+  if (!touched) {
+    const room = update({ slug, ...(baseUrl ? { baseUrl } : {}) });
+    rooms[roomContextKey(room)] = room;
+  }
+  return {
+    ...next,
+    ...(currentRoom ? { currentRoom } : {}),
+    ...(Object.keys(rooms).length ? { rooms } : {}),
+  };
+}
+
 export function setRoomLastSeenSeq(
   config: ProviderConfig,
   slug: string,
@@ -432,6 +522,200 @@ export function setRoomLastSeenSeq(
       slug,
       ...(baseUrl ? { baseUrl } : {}),
       lastSeenSeq,
+    });
+    rooms[roomContextKey(room)] = room;
+  }
+  return {
+    ...next,
+    ...(currentRoom ? { currentRoom } : {}),
+    ...(Object.keys(rooms).length > 0 ? { rooms } : {}),
+  };
+}
+
+/**
+ * Spec 224 candidate — replace a room's opaque canonical observation token
+ * without changing the event cursor or current-room selection. Revisions are
+ * equality tokens, never numbers: replacing "z9" with "a1" is valid.
+ */
+export function setRoomObservedStateRevision(
+  config: ProviderConfig,
+  slug: string,
+  baseUrl: string | undefined,
+  observedStateRevision: string,
+  scope: "conversation" | "global" = "global",
+): ProviderConfig {
+  const revision = normalizeObservedStateRevision(observedStateRevision);
+  const next = normalizeProviderConfig(config);
+  const targetBase = baseUrl ? normalizeBaseUrl(baseUrl) : undefined;
+  const rooms = { ...(next.rooms ?? {}) };
+  const generation = randomUUID();
+  const apply = (room: RoomContext) =>
+    normalizeRoomContext({
+      ...room,
+      observations: {
+        schema: 1,
+        ...room.observations,
+        ...(scope === "global" ? { global: revision } : {}),
+        conversation: revision,
+        // One local generation invalidates both pending read certificates. A
+        // speech interleaving must invalidate a read even if global is unchanged.
+        generation,
+      },
+    });
+  let touched = false;
+  for (const [key, room] of Object.entries(rooms)) {
+    if (!roomMatches(next, room, slug, targetBase)) continue;
+    rooms[key] = apply(room);
+    touched = true;
+  }
+  let currentRoom = next.currentRoom;
+  if (currentRoom && roomMatches(next, currentRoom, slug, targetBase)) {
+    currentRoom = apply(currentRoom);
+    touched = true;
+  }
+  if (!touched) {
+    const room = apply({
+      slug,
+      ...(baseUrl ? { baseUrl } : {}),
+    });
+    rooms[roomContextKey(room)] = room;
+  }
+  return {
+    ...next,
+    ...(currentRoom ? { currentRoom } : {}),
+    ...(Object.keys(rooms).length > 0 ? { rooms } : {}),
+  };
+}
+
+/** Spec 247 candidate — replace the authenticated foreground observation
+ * without changing the room cursor, canonical state revision, or selection. */
+export function setRoomForegroundObservation(
+  config: ProviderConfig,
+  slug: string,
+  baseUrl: string | undefined,
+  policy: "phased_serial",
+  epoch: string,
+): ProviderConfig {
+  const observedForegroundEpoch = normalizeForegroundEpoch(epoch);
+  const next = normalizeProviderConfig(config);
+  const targetBase = baseUrl ? normalizeBaseUrl(baseUrl) : undefined;
+  const apply = (room: RoomContext): RoomContext =>
+    normalizeRoomContext({
+      ...room,
+      foregroundPolicy: policy,
+      observedForegroundEpoch,
+    });
+  const rooms = { ...(next.rooms ?? {}) };
+  let touched = false;
+  for (const [key, room] of Object.entries(rooms)) {
+    if (!roomMatches(next, room, slug, targetBase)) continue;
+    rooms[key] = apply(room);
+    touched = true;
+  }
+  let currentRoom = next.currentRoom;
+  if (currentRoom && roomMatches(next, currentRoom, slug, targetBase)) {
+    currentRoom = apply(currentRoom);
+    touched = true;
+  }
+  if (!touched) {
+    const room = apply({ slug, ...(baseUrl ? { baseUrl } : {}) });
+    rooms[roomContextKey(room)] = room;
+  }
+  return {
+    ...next,
+    ...(currentRoom ? { currentRoom } : {}),
+    ...(Object.keys(rooms).length > 0 ? { rooms } : {}),
+  };
+}
+
+export function setRoomSpeakingTurn(
+  config: ProviderConfig,
+  slug: string,
+  baseUrl: string,
+  speakingTurn: RoomContext["speakingTurn"],
+): ProviderConfig {
+  const next = normalizeProviderConfig(config);
+  const apply = (room: RoomContext): RoomContext => {
+    if (!roomMatches(next, room, slug, normalizeBaseUrl(baseUrl))) return room;
+    const { speakingTurn: previous, ...rest } = room;
+    // Idle projections need not erase a known consumption. Any active request
+    // or identity change supersedes it; never infer consumption from absence.
+    const consumed =
+      speakingTurn && !speakingTurn.requestId
+        ? (speakingTurn.consumed ??
+          (previous?.identity === speakingTurn.identity ? previous.consumed : undefined))
+        : undefined;
+    return normalizeRoomContext({
+      ...rest,
+      ...(speakingTurn
+        ? { speakingTurn: { ...speakingTurn, ...(consumed ? { consumed } : {}) } }
+        : {}),
+    });
+  };
+  return {
+    ...next,
+    ...(next.currentRoom ? { currentRoom: apply(next.currentRoom) } : {}),
+    ...(next.rooms
+      ? {
+          rooms: Object.fromEntries(
+            Object.entries(next.rooms).map(([key, room]) => [key, apply(room)]),
+          ),
+        }
+      : {}),
+  };
+}
+
+/** @deprecated Old bypass entitlements are never recreated or reused. */
+export function setRoomStaleWriteRecovery(
+  config: ProviderConfig,
+  _slug: string,
+  _baseUrl: string | undefined,
+  _recovery: StaleWriteRecovery | undefined,
+): ProviderConfig {
+  return normalizeProviderConfig(config);
+}
+
+/** Record a live discovery result. An absent capability invalidates any
+ * previously observed candidate revision so a downgraded host is never sent
+ * a stale experimental precondition by accident. */
+export function setRoomCoordinationStateCapability(
+  config: ProviderConfig,
+  slug: string,
+  baseUrl: string | undefined,
+  capability: "experimental" | "coordination-0.2" | "absent",
+): ProviderConfig {
+  const next = normalizeProviderConfig(config);
+  const targetBase = baseUrl ? normalizeBaseUrl(baseUrl) : undefined;
+  const apply = (room: RoomContext): RoomContext => {
+    if (capability === "absent") {
+      const {
+        observedStateRevision: _removed,
+        observations: _scoped,
+        ...withoutObservation
+      } = room;
+      return normalizeRoomContext({
+        ...withoutObservation,
+        coordinationStateCapability: capability,
+      });
+    }
+    return normalizeRoomContext({ ...room, coordinationStateCapability: capability });
+  };
+  const rooms = { ...(next.rooms ?? {}) };
+  let touched = false;
+  for (const [key, room] of Object.entries(rooms)) {
+    if (!roomMatches(next, room, slug, targetBase)) continue;
+    rooms[key] = apply(room);
+    touched = true;
+  }
+  let currentRoom = next.currentRoom;
+  if (currentRoom && roomMatches(next, currentRoom, slug, targetBase)) {
+    currentRoom = apply(currentRoom);
+    touched = true;
+  }
+  if (!touched) {
+    const room = apply({
+      slug,
+      ...(baseUrl ? { baseUrl } : {}),
     });
     rooms[roomContextKey(room)] = room;
   }
@@ -772,6 +1056,13 @@ function normalizeRoomContext(raw: Partial<RoomContext>): RoomContext {
     typeof raw.baseUrl === "string" && raw.baseUrl.trim().length > 0
       ? normalizeBaseUrl(raw.baseUrl)
       : undefined;
+  const observations =
+    raw.observations?.schema === 1 &&
+    typeof raw.observations.generation === "string" &&
+    raw.observations.generation.length > 0 &&
+    raw.observations.generation.length <= 100
+      ? raw.observations
+      : undefined;
   return {
     ...(provider ? { provider } : {}),
     ...(baseUrl ? { baseUrl } : {}),
@@ -789,7 +1080,105 @@ function normalizeRoomContext(raw: Partial<RoomContext>): RoomContext {
     raw.lastSeenSeq >= 0
       ? { lastSeenSeq: raw.lastSeenSeq }
       : {}),
+    ...(observations
+      ? {
+          observations: {
+            schema: 1 as const,
+            generation: observations.generation,
+            ...(typeof observations.conversation === "string" && observations.conversation.trim()
+              ? { conversation: normalizeObservedStateRevision(observations.conversation) }
+              : {}),
+            ...(typeof observations.global === "string" && observations.global.trim()
+              ? { global: normalizeObservedStateRevision(observations.global) }
+              : {}),
+          },
+          ...(typeof observations.global === "string" && observations.global.trim()
+            ? { observedStateRevision: normalizeObservedStateRevision(observations.global) }
+            : {}),
+        }
+      : {}),
+    ...(raw.readDelivery &&
+    Number.isSafeInteger(raw.readDelivery.from) &&
+    raw.readDelivery.from >= 0 &&
+    Number.isSafeInteger(raw.readDelivery.through) &&
+    raw.readDelivery.through >= raw.readDelivery.from &&
+    (raw.readDelivery.kind === "catch_up" || raw.readDelivery.kind === "snapshot")
+      ? { readDelivery: raw.readDelivery }
+      : {}),
+    ...(Array.isArray(raw.readCompletions)
+      ? {
+          readCompletions: raw.readCompletions
+            .filter(
+              (item) =>
+                typeof item.id === "string" &&
+                /^[a-f0-9-]{36}$/.test(item.id) &&
+                Number.isSafeInteger(item.page) &&
+                item.page >= 0 &&
+                Number.isFinite(item.expires),
+            )
+            .slice(-64),
+        }
+      : {}),
+    ...(Number.isSafeInteger(raw.lastNotifiedSeq) && (raw.lastNotifiedSeq ?? -1) >= 0
+      ? { lastNotifiedSeq: raw.lastNotifiedSeq }
+      : {}),
+    ...(raw.coordinationStateCapability === "experimental" ||
+    raw.coordinationStateCapability === "coordination-0.2" ||
+    raw.coordinationStateCapability === "absent"
+      ? { coordinationStateCapability: raw.coordinationStateCapability }
+      : {}),
+    ...(raw.foregroundPolicy === "phased_serial" ? { foregroundPolicy: "phased_serial" } : {}),
+    ...(raw.speakingTurn && typeof raw.speakingTurn.identity === "string"
+      ? {
+          speakingTurn: {
+            identity: raw.speakingTurn.identity,
+            ...(!raw.speakingTurn.requestId &&
+            typeof raw.speakingTurn.consumed?.requestId === "string" &&
+            raw.speakingTurn.consumed.requestId.length > 0 &&
+            typeof raw.speakingTurn.consumed.epoch === "string" &&
+            /^[0-9]+$/.test(raw.speakingTurn.consumed.epoch) &&
+            ["discussion", "question", "proposal"].includes(raw.speakingTurn.consumed.by)
+              ? { consumed: raw.speakingTurn.consumed }
+              : {}),
+            ...(typeof raw.speakingTurn.requestId === "string"
+              ? { requestId: raw.speakingTurn.requestId }
+              : {}),
+            ...(typeof raw.speakingTurn.epoch === "string"
+              ? { epoch: raw.speakingTurn.epoch }
+              : {}),
+            ...(typeof raw.speakingTurn.observation === "string" &&
+            /^[a-zA-Z0-9_.-]{1,256}$/.test(raw.speakingTurn.observation)
+              ? { observation: raw.speakingTurn.observation }
+              : {}),
+          },
+        }
+      : {}),
+    ...(typeof raw.observedForegroundEpoch === "string" &&
+    /^[0-9]+$/.test(raw.observedForegroundEpoch)
+      ? { observedForegroundEpoch: normalizeForegroundEpoch(raw.observedForegroundEpoch) }
+      : {}),
   };
+}
+
+function normalizeObservedStateRevision(raw: string): string {
+  const hasControl = [...raw].some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+  // Preserve opaque equality tokens byte-for-byte. HTTP field values cannot
+  // safely carry controls or significant surrounding whitespace, so reject
+  // those representations instead of silently trimming/changing the token.
+  if (!raw || raw.trim() !== raw || hasControl) {
+    throw new Error("observed room state revision must be a non-empty HTTP-safe opaque string");
+  }
+  return raw;
+}
+
+function normalizeForegroundEpoch(raw: string): string {
+  if (!/^(?:0|[1-9][0-9]*)$/.test(raw)) {
+    throw new Error("observed foreground epoch must be a canonical non-negative integer");
+  }
+  return raw;
 }
 
 function roomContextKey(room: RoomContext): string {
@@ -826,6 +1215,13 @@ function mergeRoomContexts(
   const provider = incoming.provider ?? remembered.provider;
   const role = incoming.role ?? remembered.role;
   const participantId = incoming.participantId ?? remembered.participantId;
+  const observedStateRevision = incoming.observedStateRevision ?? remembered.observedStateRevision;
+  const coordinationStateCapability =
+    incoming.coordinationStateCapability ?? remembered.coordinationStateCapability;
+  const foregroundPolicy = incoming.foregroundPolicy ?? remembered.foregroundPolicy;
+  const observedForegroundEpoch =
+    incoming.observedForegroundEpoch ?? remembered.observedForegroundEpoch;
+  const staleWriteRecovery = incoming.staleWriteRecovery ?? remembered.staleWriteRecovery;
   // Spec 113 — a read mark only ever moves forward across duplicate contexts.
   const lastSeenSeq =
     incoming.lastSeenSeq !== undefined && remembered.lastSeenSeq !== undefined
@@ -838,6 +1234,29 @@ function mergeRoomContexts(
   if (role) merged.role = role;
   if (participantId) merged.participantId = participantId;
   if (lastSeenSeq !== undefined) merged.lastSeenSeq = lastSeenSeq;
+  if (incoming.lastNotifiedSeq !== undefined || remembered.lastNotifiedSeq !== undefined) {
+    merged.lastNotifiedSeq = Math.max(
+      incoming.lastNotifiedSeq ?? 0,
+      remembered.lastNotifiedSeq ?? 0,
+    );
+  }
+  if (observedStateRevision !== undefined) merged.observedStateRevision = observedStateRevision;
+  if (foregroundPolicy !== undefined) merged.foregroundPolicy = foregroundPolicy;
+  if (observedForegroundEpoch !== undefined) {
+    merged.observedForegroundEpoch = observedForegroundEpoch;
+  }
+  if (staleWriteRecovery !== undefined) merged.staleWriteRecovery = staleWriteRecovery;
+  if (coordinationStateCapability !== undefined) {
+    merged.coordinationStateCapability = coordinationStateCapability;
+    if (coordinationStateCapability === "absent") {
+      const {
+        observedStateRevision: _removed,
+        observations: _scoped,
+        ...withoutObservation
+      } = merged;
+      return normalizeRoomContext(withoutObservation);
+    }
+  }
   return normalizeRoomContext(merged);
 }
 

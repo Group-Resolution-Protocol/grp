@@ -252,6 +252,9 @@
                   "question": {
                     "type": "string"
                   },
+                  "response_state": {
+                    "$ref": "#/components/schemas/DecisionResponseState"
+                  },
                   "seconds_left": {
                     "type": "integer"
                   },
@@ -373,6 +376,9 @@
             },
             "description": "Next-action endpoints, described in one line each (history, config, wait, outcome; plus abstain/ask/start_choosing when available to the reader).",
             "type": "object"
+          },
+          "page": {
+            "$ref": "#/components/schemas/RoomReadPage"
           },
           "role": {
             "description": "The reader's role in the room, present when the read is credentialed (participant token or mandate). Observer readers get read/watch guidance only: act affordances (more.ask / more.start_choosing / more.close, can_propose_more, can_start_choosing, rules.can_propose) are withheld.",
@@ -1015,6 +1021,9 @@
           },
           "question": {
             "type": "string"
+          },
+          "response_state": {
+            "$ref": "#/components/schemas/DecisionResponseState"
           },
           "receipt_hash": {
             "oneOf": [
@@ -1871,6 +1880,9 @@
             },
             "type": "array"
           },
+          "page": {
+            "$ref": "#/components/schemas/RoomReadPage"
+          },
           "role": {
             "description": "Present only for non-participant readers (observer guidance).",
             "enum": ["observer"],
@@ -2311,6 +2323,9 @@
             },
             "type": "array"
           },
+          "page": {
+            "$ref": "#/components/schemas/RoomReadPage"
+          },
           "participant_count": {
             "type": "integer"
           },
@@ -2469,6 +2484,254 @@
           }
         },
         "required": ["slug", "config", "changed"],
+        "type": "object"
+      },
+      "DecisionResponseState": {
+        "description": "Choice-independent participation progress. This never reveals an individual choice beyond the room's choice_visibility policy.",
+        "properties": {
+          "eligible_count": { "type": "integer" },
+          "eligible": { "items": { "type": "string" }, "type": "array" },
+          "eligible_participant_ids": { "items": { "type": "string" }, "type": "array" },
+          "responded_count": { "type": "integer" },
+          "responded": { "items": { "type": "string" }, "type": "array" },
+          "responded_participant_ids": { "items": { "type": "string" }, "type": "array" },
+          "outstanding_count": { "type": "integer" },
+          "outstanding": { "items": { "type": "string" }, "type": "array" },
+          "outstanding_participant_ids": { "items": { "type": "string" }, "type": "array" },
+          "quorum": {
+            "properties": { "required": { "type": "integer" }, "met": { "type": "boolean" } },
+            "required": ["required", "met"],
+            "type": "object"
+          },
+          "threshold": { "additionalProperties": true, "type": "object" },
+          "choosing_opens_at": { "format": "date-time", "type": "string" },
+          "settle_until": {
+            "oneOf": [{ "format": "date-time", "type": "string" }, { "type": "null" }]
+          },
+          "closes_at": { "format": "date-time", "type": "string" },
+          "caller": {
+            "properties": {
+              "eligible": { "type": "boolean" },
+              "responded": { "type": "boolean" },
+              "may_submit": { "type": "boolean" },
+              "may_revise": { "type": "boolean" }
+            },
+            "required": ["eligible", "responded", "may_submit", "may_revise"],
+            "type": "object"
+          }
+        },
+        "required": [
+          "eligible_count",
+          "eligible",
+          "responded_count",
+          "responded",
+          "outstanding_count",
+          "outstanding",
+          "quorum",
+          "threshold",
+          "choosing_opens_at",
+          "settle_until",
+          "closes_at",
+          "caller"
+        ],
+        "type": "object"
+      },
+      "RoomReadPage": {
+        "properties": {
+          "displayed_from_event": { "oneOf": [{ "type": "integer" }, { "type": "null" }] },
+          "displayed_through_event": { "oneOf": [{ "type": "integer" }, { "type": "null" }] },
+          "through_event": { "type": "integer" },
+          "room_event": { "type": "integer" },
+          "complete": { "type": "boolean" },
+          "next_since": { "type": "integer" },
+          "bodies_elided": { "type": "boolean" },
+          "content": { "additionalProperties": true, "type": "object" }
+        },
+        "required": [
+          "displayed_from_event",
+          "displayed_through_event",
+          "through_event",
+          "room_event",
+          "complete"
+        ],
+        "type": "object"
+      },
+      "ActionReviewPresentation": {
+        "description": "Reviewer-relative exact-revision presentation. Diff mode is used only with a trusted reviewer base; otherwise fallback_reason explains the full-text fallback.",
+        "properties": {
+          "mode": { "enum": ["full", "diff"], "type": "string" },
+          "fallback_reason": {
+            "oneOf": [
+              {
+                "enum": ["first_revision", "no_trusted_base", "external_artifact"],
+                "type": "string"
+              },
+              { "type": "null" }
+            ]
+          },
+          "current": {
+            "properties": {
+              "id": { "type": "string" },
+              "ordinal": { "minimum": 1, "type": "integer" },
+              "sha256": { "type": "string" }
+            },
+            "required": ["id", "ordinal", "sha256"],
+            "type": "object"
+          },
+          "base": {
+            "oneOf": [
+              {
+                "properties": {
+                  "id": { "type": "string" },
+                  "ordinal": { "minimum": 1, "type": "integer" },
+                  "sha256": { "type": "string" }
+                },
+                "required": ["id", "ordinal", "sha256"],
+                "type": "object"
+              },
+              { "type": "null" }
+            ]
+          },
+          "changed_blocks": {
+            "oneOf": [
+              {
+                "items": {
+                  "properties": {
+                    "id": { "description": "Stable native block identifier.", "type": "string" },
+                    "change": { "enum": ["inserted", "modified", "deleted"], "type": "string" },
+                    "current_number": {
+                      "oneOf": [{ "minimum": 1, "type": "integer" }, { "type": "null" }]
+                    },
+                    "base_number": {
+                      "oneOf": [{ "minimum": 1, "type": "integer" }, { "type": "null" }]
+                    }
+                  },
+                  "required": ["id", "change", "current_number", "base_number"],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              { "type": "null" }
+            ]
+          },
+          "round": { "minimum": 1, "type": "integer" },
+          "roster": {
+            "items": {
+              "properties": {
+                "participant_id": { "type": "string" },
+                "display_name": { "type": "string" },
+                "responded": { "type": "boolean" }
+              },
+              "required": ["participant_id", "display_name", "responded"],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "your_obligation": {
+            "oneOf": [{ "const": "review", "type": "string" }, { "type": "null" }]
+          },
+          "checkpoint": {
+            "description": "Neutral factual checkpoint, present at review rounds 3, 5, 8, and 13 only.",
+            "oneOf": [
+              {
+                "properties": {
+                  "threshold": { "enum": [3, 5, 8, 13], "type": "integer" },
+                  "elapsed_seconds": { "minimum": 0, "type": "integer" },
+                  "current_round": { "minimum": 1, "type": "integer" },
+                  "total_rounds": { "minimum": 1, "type": "integer" },
+                  "artifact_bytes": {
+                    "oneOf": [{ "minimum": 0, "type": "integer" }, { "type": "null" }]
+                  },
+                  "growth_bytes": { "oneOf": [{ "type": "integer" }, { "type": "null" }] },
+                  "changed_block_count": {
+                    "oneOf": [{ "minimum": 0, "type": "integer" }, { "type": "null" }]
+                  },
+                  "prior_round": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "approvals": { "minimum": 0, "type": "integer" },
+                          "changes_requested": { "minimum": 0, "type": "integer" }
+                        },
+                        "required": ["approvals", "changes_requested"],
+                        "type": "object"
+                      },
+                      { "type": "null" }
+                    ]
+                  },
+                  "outstanding_participant_ids": { "items": { "type": "string" }, "type": "array" }
+                },
+                "required": [
+                  "threshold",
+                  "elapsed_seconds",
+                  "current_round",
+                  "total_rounds",
+                  "artifact_bytes",
+                  "growth_bytes",
+                  "changed_block_count",
+                  "prior_round",
+                  "outstanding_participant_ids"
+                ],
+                "type": "object"
+              },
+              { "type": "null" }
+            ]
+          }
+        },
+        "required": [
+          "mode",
+          "fallback_reason",
+          "current",
+          "base",
+          "changed_blocks",
+          "round",
+          "roster",
+          "your_obligation",
+          "checkpoint"
+        ],
+        "type": "object"
+      },
+      "AppendActionReviewNoteRequest": {
+        "properties": {
+          "artifact_revision_id": { "type": "string" },
+          "kind": { "enum": ["late", "correction"], "type": "string" },
+          "corrects_review_id": { "type": "string" },
+          "body": { "maxLength": 32000, "minLength": 1, "type": "string" }
+        },
+        "required": ["artifact_revision_id", "kind", "body"],
+        "type": "object"
+      },
+      "ArtifactReviewNote": {
+        "properties": {
+          "id": { "type": "string" },
+          "action_id": { "type": "string" },
+          "artifact_revision_id": { "type": "string" },
+          "reviewer_id": { "type": "string" },
+          "kind": { "enum": ["late", "correction"], "type": "string" },
+          "corrects_review_id": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+          "body": { "type": "string" },
+          "non_dispositive": { "const": true },
+          "created_at": { "format": "date-time", "type": "string" }
+        },
+        "required": [
+          "id",
+          "action_id",
+          "artifact_revision_id",
+          "reviewer_id",
+          "kind",
+          "corrects_review_id",
+          "body",
+          "non_dispositive",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "AppendActionReviewNoteResponse": {
+        "properties": {
+          "review_note": { "$ref": "#/components/schemas/ArtifactReviewNote" },
+          "state_revision": { "type": "string" }
+        },
+        "required": ["review_note", "state_revision"],
         "type": "object"
       },
       "WebhookListResponse": {
@@ -2872,6 +3135,79 @@
         ],
         "summary": "Read the room",
         "tags": ["rooms"]
+      }
+    },
+    "/api/rooms/{slug}/actions/{actionId}/review-notes": {
+      "post": {
+        "description": "Append an explicitly non-dispositive note to an exact artifact revision. A late note preserves a raced review; a correction repudiates or clarifies a prior formal review without rewriting history.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Slug"
+          },
+          {
+            "in": "path",
+            "name": "actionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppendActionReviewNoteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppendActionReviewNoteResponse"
+                }
+              }
+            },
+            "description": "Review note appended"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
+            },
+            "description": "Bad request"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
+            },
+            "description": "Action, revision, or corrected review not found"
+          },
+          "409": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
+            },
+            "description": "Conflict"
+          }
+        },
+        "security": [{ "bearerAuth": [] }, { "mandate": [] }],
+        "summary": "Append an exact-revision review note",
+        "tags": ["actions"]
       }
     },
     "/api/rooms/{slug}/abstain": {

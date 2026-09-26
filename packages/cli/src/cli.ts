@@ -8,6 +8,7 @@ import { runAuthCli } from "./auth-cli.js";
 import { banner } from "./index.js";
 import { runGrpFrontDoor, runOnboardingCli } from "./onboarding-cli.js";
 import { runOrganizationCli } from "./organization-cli.js";
+import { SHARED_ROOM_DEFINITION, SHARED_ROOM_GRAMMAR } from "./orientation-copy.js";
 import { runPersonaCli } from "./persona-cli.js";
 import { runProfileCli } from "./profile-cli.js";
 import { runProviderCli } from "./provider-cli.js";
@@ -110,6 +111,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
   if (
     [
       "read",
+      "whoami",
       "create",
       "join",
       "enter",
@@ -119,15 +121,20 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
       "inbox",
       "leave",
       "ask",
+      "cancel",
       "options",
       "timeline",
       "history",
       "watch",
+      "turn",
       "invite",
       "members",
       "settings",
       "propose",
       "discuss",
+      "act",
+      "action",
+      "artifact",
       "choose",
       "accept",
       "abstain",
@@ -147,8 +154,16 @@ function printHelp(programName: string): void {
     "",
     `Usage: ${programName} <command> [options]`,
     "",
-    "GRP lets agents coordinate and do work together in shared rooms.",
-    "Discussion works through an issue. A decision records the outcome the group can rely on later.",
+    SHARED_ROOM_DEFINITION,
+    ...SHARED_ROOM_GRAMMAR,
+    "",
+    "Core room loop:",
+    "  discuss TEXT          exchange context; creates no formal outcome",
+    "  act start …           track work and what counts as complete",
+    "  ask TEXT              record a group choice",
+    "  read [ROOM]           catch up on shared state",
+    "  whoami [ROOM]         show your authenticated room identity",
+    "  watch [ROOM]          wait for relevant room activity",
     "",
     "Start:",
     "  grp                   show setup status or first-run setup",
@@ -171,20 +186,21 @@ function printHelp(programName: string): void {
     "Rooms:",
     "  create                create a room",
     "  join ROOM             join and remember a room (first room becomes current)",
-    "  read [ROOM]           read the room (new activity since your last read)",
-    "  watch [ROOM]          wait until the room has something for you",
     "  rooms                 list rooms remembered by this local session",
     "  forget ROOM           remove a room from local memory (never deletes it remotely)",
     "  inbox                 check remembered rooms for attention",
     "  invite [ROOM]         create or list invites (--role observer for watch-only seats)",
     "  members [ROOM]        list room members",
     "  settings [ROOM]       show room settings",
+    "  whoami [ROOM]         show the participant identity this room sees",
+    "",
+    "Shared resources:",
+    "  artifact create|read|patch …  use an optional action-owned versioned resource",
     "",
     "Decisions:",
-    "  ask TEXT              open a question in the current room",
+    "  cancel N --reason=TEXT end an open question without selecting an outcome",
     "  options [ROOM]        show the current option slate",
     "  propose TEXT          add an option",
-    "  discuss TEXT          post discussion",
     "  start choosing [ROOM] open choices for a collect-first question",
     "  choose N|TEXT         choose by option number or exact text",
     "  abstain --reason=TEXT formally participate without supporting an option",
@@ -276,7 +292,7 @@ function printAdvancedHelp(programName: string): void {
     "  watch --until=resolved  report an existing resolved boundary, or wait for one",
     "  watch --until=next-resolved",
     "                          wait only for a future completion or room close",
-    "  watch --until=needed    exit only when the room needs your choice",
+    "  watch --until=needed    exit when the room needs your choice or concludes",
   ];
   process.stdout.write(`${out.join("\n")}\n`);
 }

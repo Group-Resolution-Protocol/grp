@@ -227,7 +227,10 @@ export function runRankedChoice(input: RankedChoiceInput): RankedChoiceResult {
         eliminated: [],
         exhausted_ballots: exhaustedThisRound,
       });
-      const winner = topOptions[0]!;
+      const winner = requiredRankedChoiceOption(
+        topOptions[0],
+        "majority tally has no winning option",
+      );
       return {
         outcome: "pass",
         winner,
@@ -252,7 +255,10 @@ export function runRankedChoice(input: RankedChoiceInput): RankedChoiceResult {
         eliminated: [],
         exhausted_ballots: exhaustedThisRound,
       });
-      const winner = remaining[0]!;
+      const winner = requiredRankedChoiceOption(
+        remaining[0],
+        "single-option round has no remaining option",
+      );
       // It "wins" since it's the only option left, but with majority-of-cast-ballots
       // (not majority of active) being arguably below 50%. Still report as pass —
       // IRV is about preference aggregation, not absolute majority of original cast.
@@ -366,7 +372,9 @@ function breakBottomTie(
     // (the LEAST preferred at top of ballot). The "first listed" canonical
     // wins ties at the top; symmetrically, it survives ties at the bottom.
     const ordered = parameters.options.filter((o) => tiedOptions.includes(o));
-    return [ordered[ordered.length - 1]!];
+    return [
+      requiredRankedChoiceOption(ordered[ordered.length - 1], "bottom tie has no listed option"),
+    ];
   }
   // random_seeded — deterministic from seed
   const idxBytes = createHash("sha256")
@@ -374,7 +382,7 @@ function breakBottomTie(
     .update(canonicalize({ round: roundIdx, remaining, tied: tiedOptions }))
     .digest();
   const idx = idxBytes.readUInt32BE(0) % tiedOptions.length;
-  return [tiedOptions[idx]!];
+  return [requiredRankedChoiceOption(tiedOptions[idx], "bottom tie has no seeded option")];
 }
 
 function resolveExhausted(
@@ -409,14 +417,20 @@ function resolveExhausted(
   }
   let winner: string;
   if (parameters.tie_break === "first_listed") {
-    winner = parameters.options.find((o) => remaining.includes(o))!;
+    winner = requiredRankedChoiceOption(
+      parameters.options.find((o) => remaining.includes(o)),
+      "exhausted ballot has no first-listed remaining option",
+    );
   } else {
     const idxBytes = createHash("sha256")
       .update(deterministicSeed, "utf8")
       .update(canonicalize({ exhausted: true, remaining }))
       .digest();
     const idx = idxBytes.readUInt32BE(0) % remaining.length;
-    winner = remaining[idx]!;
+    winner = requiredRankedChoiceOption(
+      remaining[idx],
+      "exhausted ballot has no seeded remaining option",
+    );
   }
   return {
     outcome: "pass",
@@ -433,4 +447,9 @@ function resolveExhausted(
       tie_resolution_reason: `all ballots exhausted; ${parameters.tie_break} resolved to ${winner}`,
     },
   };
+}
+
+function requiredRankedChoiceOption(option: string | undefined, invariant: string): string {
+  if (option === undefined) throw new RankedChoiceError(`invariant violation: ${invariant}`);
+  return option;
 }

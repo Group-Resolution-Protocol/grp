@@ -1,4 +1,20 @@
 import * as ed25519 from "@noble/ed25519";
+import {
+  GRP_ACCEPT_PROTOCOL,
+  GRP_ACCEPT_PROTOCOL_HEADER,
+  GRP_PROTOCOL_HEADER,
+  GrpProtocolVersionError,
+  assertSupportedProtocol,
+} from "./protocol.js";
+export {
+  GRP_ACCEPT_PROTOCOL,
+  GRP_ACCEPT_PROTOCOL_HEADER,
+  GRP_PROTOCOL_HEADER,
+  GrpProtocolVersionError,
+  assertSupportedProtocol,
+  coordinationCapability,
+  type CoordinationCapability,
+} from "./protocol.js";
 
 export {
   type AgreementReceiptVerification,
@@ -228,6 +244,87 @@ export interface DecisionSummary {
   /** Spec 118 — proposer display names aligned with `options`; null entries
    * are creator-seeded. Present on full room reads. */
   option_proposers?: (string | null)[] | null;
+  /** Choice-independent response progress. Individual choices remain governed
+   * by the room's choice_visibility policy. */
+  response_state?: DecisionResponseState;
+}
+
+export interface DecisionResponseState {
+  eligible_count: number;
+  eligible: string[];
+  eligible_participant_ids: string[];
+  responded_count: number;
+  responded: string[];
+  responded_participant_ids: string[];
+  outstanding_count: number;
+  outstanding: string[];
+  outstanding_participant_ids: string[];
+  quorum: { required: number; met: boolean };
+  threshold:
+    | { kind: "unanimity"; value: 1; comparison: "inclusive" }
+    | { kind: "share"; value: number; comparison: "strict" | "inclusive" }
+    | { kind: "mechanism_defined"; mechanism: string };
+  choosing_opens_at: string;
+  settle_until: string | null;
+  closes_at: string;
+  caller: {
+    eligible: boolean;
+    responded: boolean;
+    may_submit: boolean;
+    may_revise: boolean;
+  };
+}
+
+export interface RoomReadPage {
+  displayed_from_event: number | null;
+  displayed_through_event: number | null;
+  through_event: number;
+  room_event: number;
+  complete: boolean;
+  next_since?: number;
+  bodies_elided?: boolean;
+  content?: Record<string, unknown>;
+}
+
+export interface ActionReviewChangedBlock {
+  id: string;
+  change: "inserted" | "modified" | "deleted";
+  current_number: number | null;
+  base_number: number | null;
+}
+
+export interface ActionReviewPresentation {
+  mode: "full" | "diff";
+  fallback_reason: "first_revision" | "no_trusted_base" | "external_artifact" | null;
+  current: { id: string; ordinal: number; sha256: string };
+  base: { id: string; ordinal: number; sha256: string } | null;
+  changed_blocks: ActionReviewChangedBlock[] | null;
+  round: number;
+  roster: Array<{ participant_id: string; display_name: string; responded: boolean }>;
+  your_obligation: "review" | null;
+  checkpoint: {
+    threshold: 3 | 5 | 8 | 13;
+    elapsed_seconds: number;
+    current_round: number;
+    total_rounds: number;
+    artifact_bytes: number | null;
+    growth_bytes: number | null;
+    changed_block_count: number | null;
+    prior_round: { approvals: number; changes_requested: number } | null;
+    outstanding_participant_ids: string[];
+  } | null;
+}
+
+export interface ArtifactReviewNote {
+  id: string;
+  action_id: string;
+  artifact_revision_id: string;
+  reviewer_id: string;
+  kind: "late" | "correction";
+  corrects_review_id: string | null;
+  body: string;
+  non_dispositive: true;
+  created_at: string;
 }
 
 export interface RoomState {
@@ -254,6 +351,7 @@ export interface RoomState {
   /** Spec 119 — the room's head event seq at read time: this read is a
    * complete picture through this seq (advance any delta mark here). */
   current_through?: number;
+  page?: RoomReadPage;
   active_decision_id: string | null;
   decisions: DecisionSummary[];
   participants: Array<{
@@ -328,7 +426,23 @@ export interface RoomDelta {
   your_status?: string;
   new: RoomDeltaEntry[];
   current_through: number;
+  page?: RoomReadPage;
   more: Record<string, string>;
+}
+
+export interface AppendActionReviewNoteRequest {
+  slug: string;
+  action_id: string;
+  artifact_revision_id: string;
+  kind: "late" | "correction";
+  body: string;
+  corrects_review_id?: string;
+  auth?: GrpAuth;
+}
+
+export interface AppendActionReviewNoteResponse {
+  review_note: ArtifactReviewNote;
+  state_revision: string;
 }
 
 export interface AskRequest {
@@ -600,8 +714,10 @@ export class GrpClient {
     }
   }
 
-  discover(): Promise<DiscoveryDocument> {
-    return this.request("/.well-known/grp.json");
+  async discover(): Promise<DiscoveryDocument> {
+    const document = await this.request<DiscoveryDocument>("/.well-known/grp.json");
+    assertSupportedProtocol(document.protocol_version);
+    return document;
   }
 
   health(): Promise<HealthResponse> {
@@ -691,6 +807,27 @@ export class GrpClient {
       headers: roomPasswordHeaders(password),
       query: { since },
     });
+  }
+
+  /** Candidate REST operation; requires a participant token, not a mandate.
+   * Appends commentary/correction only, never changes the formal disposition.
+   * Unlike CLI workflows this method does not manage read/turn state. */
+  appendActionReviewNote(
+    input: AppendActionReviewNoteRequest,
+  ): Promise<AppendActionReviewNoteResponse> {
+    return this.request(
+      `/api/rooms/${encodeURIComponent(input.slug)}/actions/${encodeURIComponent(input.action_id)}/review-notes`,
+      {
+        method: "POST",
+        auth: input.auth,
+        body: withoutUndefined({
+          artifact_revision_id: input.artifact_revision_id,
+          kind: input.kind,
+          body: input.body,
+          corrects_review_id: input.corrects_review_id,
+        }),
+      },
+    );
   }
 
   ask(input: AskRequest): Promise<AskResponse> {
@@ -919,6 +1056,7 @@ export class GrpClient {
 
     const headers = new Headers(init.headers);
     headers.set("accept", "application/json");
+    headers.set(GRP_ACCEPT_PROTOCOL_HEADER, GRP_ACCEPT_PROTOCOL);
     const auth = init.auth ?? this.defaultAuth;
     if (auth?.kind === "token") {
       headers.set("authorization", `Bearer ${auth.token}`);
@@ -970,9 +1108,11 @@ export class GrpClient {
       if (!response.ok) {
         throw protocolError(response.status, payload);
       }
+      const protocol = response.headers.get(GRP_PROTOCOL_HEADER);
+      if (protocol !== null) assertSupportedProtocol(protocol);
       return payload as T;
     } catch (err) {
-      if (err instanceof GrpError) throw err;
+      if (err instanceof GrpError || err instanceof GrpProtocolVersionError) throw err;
       throw new GrpTransportError(`request failed for ${safeRequestTarget(url)}`, err);
     } finally {
       if (timeout) clearTimeout(timeout);
@@ -1025,7 +1165,7 @@ function safeRequestTarget(url: URL): string {
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   form?: Record<string, unknown>;
   query?: Record<string, unknown> | undefined;

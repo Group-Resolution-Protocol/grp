@@ -44,7 +44,8 @@ npm run repository:check
 
 Protocol-affecting changes (normative requirements, receipt format,
 mechanism behavior, mandatory transports) follow the change process in
-[GOVERNANCE.md](GOVERNANCE.md), including a public discussion phase.
+[GOVERNANCE.md](GOVERNANCE.md). Maintainer work may be reviewed locally;
+there is no mandatory public discussion or waiting period.
 
 ## Maintainer commit identity
 

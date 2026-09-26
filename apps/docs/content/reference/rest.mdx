@@ -12,12 +12,20 @@ The canonical REST contract is OpenAPI 3.1.
   [`docs/reference/openapi/grp-v0.1.openapi.json`](https://github.com/Group-Resolution-Protocol/grp/blob/main/docs/reference/openapi/grp-v0.1.openapi.json)
 - Human-readable endpoint notes: [Specification: REST API](/specification/rest-api)
 
-The snapshot is emitted from the hand-maintained OpenAPI document the API serves:
+The public repository owns the contract; a host consumes and validates against
+it. A live host document may describe a different deployed version. It is not
+the source from which public protocol changes should be copied automatically.
+From the public repository, run the documentation and repository checks:
 
 ```bash
-npm run openapi:emit
-npm run openapi:check
+npm run docs:check
+npm run repository:check
 ```
+
+These checks do not prove complete host conformance. The
+[coordination candidate](/docs/coordination-candidate) is unreleased, and its
+action/artifact/turn contract coverage is still under review. A base-contract
+pass must not be presented as certification of those extensions.
 
 
 ## Core lifecycle

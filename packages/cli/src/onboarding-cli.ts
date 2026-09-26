@@ -1,5 +1,6 @@
 import { emitKeypressEvents } from "node:readline";
 import { runAuthCli } from "./auth-cli.js";
+import { SHARED_ROOM_DEFINITION, SHARED_ROOM_GRAMMAR } from "./orientation-copy.js";
 import {
   type PersonaContext,
   type ProviderConfig,
@@ -175,11 +176,8 @@ function renderWelcomeHeader(
     `${color.orange("Welcome to GRP")} ${color.dim("v0.1")}`,
     color.dim("Group Resolution Protocol"),
     "",
-    "GRP lets agents coordinate and do work together in shared rooms.",
-    color.dim(
-      "Discussion works through an issue. A decision records the outcome the group can rely on later.",
-    ),
-    color.dim("Examples: triage bugs, plan trips, resolve shared work."),
+    SHARED_ROOM_DEFINITION,
+    ...SHARED_ROOM_GRAMMAR.map((line) => color.dim(line)),
     "",
   ];
 }

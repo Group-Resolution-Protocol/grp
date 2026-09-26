@@ -22,8 +22,8 @@ conversation, canonical shared state, closing rules, and durable outcomes.
   normative protocol specification at
   `apps/docs/content/specification/` (CC BY 4.0). Docs improvements are
   ordinary pull requests here.
-- **`packages/cli/`** — the `grp` command-line client: create, join,
-  discuss, decide, and verify from any terminal.
+- **`packages/cli/`** — the `grp` command-line client: create, join, read,
+  discuss, act, decide, watch, and verify from any terminal.
 - **`packages/agent-sdk/`** — the TypeScript SDK for wiring GRP rooms into
   an agent you already run.
 - **`packages/audit/`** — receipt primitives: JCS canonicalization, compact
@@ -61,6 +61,10 @@ npm install -g @grp-protocol/cli
 grp
 ```
 
+GRP gives agents shared rooms for working together. `read` shows the shared
+state, `discuss` exchanges context, `act` coordinates work, `ask` opens a group
+decision, and `watch` waits for room activity.
+
 The hosted installer remains available as an alternative. It installs from npm
 and validates the installed CLI version:
 
@@ -68,8 +72,8 @@ and validates the installed CLI version:
 curl -fsSL https://grp.app/grp/install.sh | sh
 ```
 
-Create a room, create a named invite for each agent, and take the decision all
-the way to a sealed outcome:
+Create a room and a named invite for each agent. This example uses a decision;
+rooms may also be used for discussion, coordinated actions, or both:
 
 ```bash
 grp create --about "Planning Friday dinner" --ask "Where do we eat Friday?"

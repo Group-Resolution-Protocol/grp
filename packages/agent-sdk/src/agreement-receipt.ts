@@ -18,6 +18,12 @@ function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function isCanonicalIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const time = Date.parse(value);
+  return Number.isFinite(time) && new Date(time).toISOString() === value;
+}
+
 function sameTallies(actual: Record<string, unknown>, expected: Record<string, number>): boolean {
   const actualKeys = Object.keys(actual).sort();
   const expectedKeys = Object.keys(expected).sort();
@@ -36,6 +42,9 @@ function sameTallies(actual: Record<string, unknown>, expected: Record<string, n
  * compatibility. A choice-visibility `never` receipt can prove its aggregate
  * result was signed, but cannot replay attribution that was deliberately
  * omitted, so that case is reported as unavailable rather than verified.
+ * Cancellation replay checks the signed attribution shape, not independent
+ * evidence that the actor held the claimed room authority. That requires the
+ * relevant authenticated room history; it is not contained in this payload.
  */
 export function verifyAgreementReceiptSemantics(payload: unknown): AgreementReceiptVerification {
   if (!isRecord(payload) || !isRecord(payload.grp)) {
@@ -128,6 +137,59 @@ export function verifyAgreementReceiptSemantics(payload: unknown): AgreementRece
       reason: "agreement receipt vote diagnostics do not match signed votes",
     };
   }
+
+  // A cancellation is an administrative terminal state, not a computed vote
+  // outcome. The signed votes remain replayable evidence of participation,
+  // while the empty tally and one attributed cancellation override
+  // make clear that no option won and no history was rewritten.
+  if (grp.outcome.status === "canceled") {
+    if (
+      !("winning_option" in grp.outcome) ||
+      grp.outcome.winning_option !== null ||
+      !isRecord(grp.outcome.tallies) ||
+      Object.keys(grp.outcome.tallies).length !== 0
+    ) {
+      return {
+        status: "failed",
+        reason: "canceled agreement receipt must have no winner or option tallies",
+      };
+    }
+    if (!Array.isArray(grp.overrides) || grp.overrides.length !== 1) {
+      return {
+        status: "failed",
+        reason: "canceled agreement receipt must have one attributed cancellation override",
+      };
+    }
+    const override = grp.overrides[0];
+    if (!isRecord(override)) {
+      return { status: "failed", reason: "canceled agreement receipt has a malformed override" };
+    }
+    const by = override.by;
+    const reason = override.reason;
+    const firedAt = override.fired_at;
+    const authoritySource = override.authority_source;
+    if (
+      typeof by !== "string" ||
+      by.trim().length === 0 ||
+      /\p{Cc}/u.test(by) ||
+      typeof reason !== "string" ||
+      reason !== reason.trim() ||
+      reason.length === 0 ||
+      reason.length > 500 ||
+      /\p{Cc}/u.test(reason) ||
+      !isCanonicalIsoTimestamp(firedAt) ||
+      typeof authoritySource !== "string" ||
+      (!/^conclusion_authority:[a-z][a-z0-9_-]*$/.test(authoritySource) &&
+        authoritySource !== "action_submission:holder")
+    ) {
+      return {
+        status: "failed",
+        reason: "canceled agreement receipt has invalid actor, reason, time, or authority",
+      };
+    }
+    return { status: "verified" };
+  }
+
   const quorumMet = eligibleVoters > 0 && castVotes === eligibleVoters;
   const unanimousChoice =
     castVotes > 0 ? (options.find((option) => tallies[option] === castVotes) ?? null) : null;

@@ -14,7 +14,7 @@ You'll:
 
 1. Pick a host
 2. Walk the full room lifecycle via `curl`
-3. Verify the receipt with the TypeScript SDK (after the package publishes)
+3. Verify the receipt with the published TypeScript SDK
 4. Confirm the MCP transport responds
 
 You'll need a terminal with `curl`, and Node 22+ for the SDK step.
@@ -42,7 +42,7 @@ from `api.grp.app`.
 A host tells you everything about itself at its discovery document:
 
 ```bash
-curl -s $GRP_BASE/.well-known/grp.json | head -40
+curl -fsS "$GRP_BASE/.well-known/grp.json"
 ```
 
 ### Health check
@@ -262,7 +262,7 @@ The default read is the **agent view** — a windowed working set whose size sta
     "waiting_for": []
   },
   "decided": [],
-  "choices": null,                   // hidden until decided (choice_visibility: after_decided)
+  // choices is omitted while hidden by choice_visibility: after_decided
   "rules": {
     "how_to_choose": "choose with a single option (string) from the options list",
     "can_propose": true,

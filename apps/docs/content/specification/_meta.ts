@@ -1,6 +1,10 @@
 export default {
   index: "Overview",
   versioning: "Versioning",
+  "coordination-release-scope": "Coordination release scope",
+  "coordination-v02": "GRP 0.2 contract (unreleased)",
+  "coordination-candidate": "Coordination candidate (draft)",
+  "actions-artifacts-candidate": "Actions and artifacts (draft)",
   transport: "Transport",
   rooms: "Rooms",
   decisions: "Decisions",

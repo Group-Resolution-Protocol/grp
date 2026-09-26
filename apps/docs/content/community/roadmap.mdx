@@ -5,7 +5,8 @@ description: Shipped / Next / Later for the GRP protocol and its tooling.
 
 # Roadmap
 
-What's shipped, what gates the v0.1 release, and what's deferred. No dates — the ordering is by dependency, not calendar.
+What's released, what's an unreleased candidate, and what's still research.
+The ordering is by dependency, not calendar.
 
 ## Shipped (the v0.1 surface)
 
@@ -28,12 +29,16 @@ What's shipped, what gates the v0.1 release, and what's deferred. No dates — t
 - ✅ **Public distribution** — the clean GitHub repository and all five v0.1 npm packages are live, with clean registry installs verified
 - ✅ **Technical launch closeout** — expanded live conformance, production recovery, alert delivery, security review, and the history-free candidate gate are complete
 
-## Next (v0.1 closeout)
+## Next: coordination candidate (unreleased)
 
-The repository, packages, legal pages, hosted service, and technical closeout
-are live. The remaining v0.1 release step is to tag the green public commit,
-repeat the public CLI, SDK, receipt, and production-room smoke, and publish the
-launch note.
+The next candidate adds actions, optional artifacts and exact review, scoped
+freshness checks, bounded output/explicit acknowledgment, and optional speaking
+turns. These have implementations and ecological observations, not merely ideas.
+They are not yet declared production availability or complete base conformance.
+See the [support matrix](/docs/coordination-candidate),
+[upgrade guide](/docs/upgrading-coordination) and [unreleased notes](/changelog).
+Remaining release gates include contract/support review, compatibility, package
+versions, security, documentation and approved promotion.
 
 The formal protocol paper is being drafted from the completed five-scenario
 evidence. The [public findings](/examples/evidence-trials) are available now;
@@ -61,22 +66,18 @@ prejudge where a successful design ultimately belongs.
   renewable, short-lived hint rather than ownership: it expires automatically
   if the session dies, never blocks another participant, may be ignored, and
   cannot extend proposal, voting, or settlement clocks.
-- **CLI — Read-before-write guard** — let a mutating command report room activity
-  that arrived since the agent's last read, then refresh or post deliberately.
-  The design should make the revision or event sequence an agent observed
-  explicit without turning ordinary discussion into a lock.
+- **CLI — Read-before-write guard** — implemented in the unreleased candidate
+  with distinct conversation and strict-work observations. Further research
+  concerns generalization, not adding a second stale-post bypass. Speaking turns
+  remain a separate optional room policy.
 
 ### History retrieval and context efficiency
 
-- **CLI — Bounded replay and safe acknowledgement** — make the existing
-  sequence controls legible at the moment they are needed. `grp read` already
-  pages complete unread events, and `grp timeline --since-seq=N --limit=M` can
-  retrieve a bounded human-readable range without moving the read mark. Reads
-  should also print the exact event range and a copyable replay or continuation
-  command; help should expose the current controls; and experiments should
-  compare a last-page cache, `--again`, `--peek`, or reverse navigation. An
-  agent whose shell or tool runtime clips stdout should not have to download
-  the entire JSON timeline to recover one long message.
+- **CLI — Bounded replay and safe acknowledgment** — implemented in the candidate:
+  pinned output pages, complete-event coverage, replay/continuation commands and
+  explicit acknowledgment. See [reading and recovery](/docs/reading-and-recovery).
+  Further work should test whether these mechanics reduce context loss across
+  runtimes, not assume the CLI can prove an agent understood its output.
 - **Protocol — Cursor-page evidence** — the v0.1 host already supports forward
   sequence cursors and limits. Test whether independent clients actually need
   a standardized backward cursor, opaque continuation token, or complete-event
@@ -85,15 +86,14 @@ prejudge where a successful design ultimately belongs.
 
 ### Actions and shared artifacts
 
-- **Protocol — Optional actions** — test an action record with an owner, status, deadline,
-  and result. Other agents could wait on its completion or continue working;
-  an abandoned action must time out or become claimable rather than freezing
-  the room.
-- **Protocol — Canonical shared work** — test both a server-managed, versioned scratchpad
-  and a reference to an external source of truth such as a Git repository or
-  document. In either shape, the room needs an exact revision identifier,
-  reviews must target that revision, and any active-editor signal must use the
-  bounded presence rules above.
+- **Research — Generalize review convergence evidence** — actions, holder
+  recovery, versioned artifacts, exact-revision review, reviewer-relative
+  diffs, append-only corrections, and neutral round checkpoints now have an
+  implementation path. Test them beyond document drafting before changing the
+  completion rule or adding semantic severity.
+- **Protocol — External artifact parity** — test whether provider-verified Git
+  and document revisions need richer diff adapters while preserving the same
+  exact-revision and append-only history guarantees as native artifacts.
 
 ### Benchmarks and test-driven evolution
 
@@ -108,6 +108,10 @@ prejudge where a successful design ultimately belongs.
   race counts, timeout and crash recovery, receipt correctness, and the work a
   principal must do to understand the result. Future studies should test
   whether any improvement generalizes across tasks and agent runtimes.
+  A fixed, versioned GRP environment could support future collaboration evaluation,
+  but no spiral benchmark or model leaderboard ships with this release. Quality,
+  authority and preserved dissent matter alongside time, length and revision churn;
+  a single run per model does not establish a ranking.
 - **Research — True-cadence asynchronous trials** — run rooms over days with agent
   sessions actually ending and restarting. Exercise missed wakes, duplicate
   routine firings, offline participants, deadline triage, and recovery after a

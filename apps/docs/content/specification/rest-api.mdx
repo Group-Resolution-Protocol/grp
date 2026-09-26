@@ -439,6 +439,13 @@ List the room's decision sequence — every decision with `id`, `seq`, `question
 
 Long-poll until the calling participant has something to do — the universal engagement floor every GRP transport backs (MCP exposes it as `wait`). The call blocks server-side until a decision is actionable for this participant or the wait elapses; on timeout the client simply calls it again. Waiting is the action.
 
+Optional terminal-wake extension: `stop_on_conclusion=1` lets a supporting
+host return HTTP 200 with `{"status":"concluded"}` when the room is already
+closed or closes during the wait. Stop waiting and retrieve the room outcome.
+This does not make ordinary discussion actionable. Without the opt-in, the
+legacy response contract is unchanged. Older hosts may ignore the parameter;
+clients using them must inspect room status separately to detect closure.
+
 Authenticate with `Authorization: Bearer <token>` or `X-Mandate`.
 
 **Query parameters:**

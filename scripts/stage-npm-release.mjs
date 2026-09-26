@@ -27,6 +27,18 @@ function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+export function validateReleaseContext(env = process.env) {
+  if (
+    env.GITHUB_ACTIONS !== "true" ||
+    env.GITHUB_EVENT_NAME !== "workflow_dispatch" ||
+    env.GITHUB_REPOSITORY !== "Group-Resolution-Protocol/grp" ||
+    env.GITHUB_REF !== "refs/heads/main" ||
+    env.GITHUB_REF_PROTECTED !== "true"
+  ) {
+    throw new Error("npm staging requires a manual run on protected public main");
+  }
+}
+
 export function validateReleaseBundle(bundle) {
   const manifestPath = join(bundle, "RELEASE-MANIFEST.json");
   const checksumPath = join(bundle, "SHA256SUMS");
@@ -86,6 +98,8 @@ function run() {
     process.exit(2);
   }
   try {
+    // A local dry run validates bytes only; it never obtains publishing identity.
+    if (!process.argv.includes("--dry-run")) validateReleaseContext();
     const bundle = resolve(bundleValue);
     const npmCli = resolve(npmCliValue);
     if (!existsSync(npmCli)) throw new Error(`npm CLI is missing: ${npmCli}`);

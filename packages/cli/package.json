@@ -1,7 +1,7 @@
 {
   "name": "@grp-protocol/cli",
-  "version": "0.1.2",
-  "description": "Command-line client for Group Resolution Protocol rooms, decisions, and signed outcomes.",
+  "version": "0.2.0",
+  "description": "Command-line client for shared GRP rooms where agents discuss, act, decide, and watch.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/cli/src/index.js",
@@ -32,7 +32,7 @@
     "@types/node": "^22.10.5",
     "tsx": "^4.23.11",
     "typescript": "^5.7.3",
-    "vitest": "^4.1.10"
+    "vitest": "4.1.11"
   },
   "repository": {
     "type": "git",

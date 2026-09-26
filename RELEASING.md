@@ -11,18 +11,22 @@ GRP publishes five public npm packages from this clean-history repository:
 The order matters on the first release because later packages depend on the
 earlier ones.
 
-## Before the first commit
+## Source ownership and unpublished preparation
 
-The private mirror builder must be given this repository's exact public URL:
+This repository is the canonical source for these packages and public protocol
+documentation. Make changes here through ordinary pull requests; there is no
+private mirror, stripping step, or private-repository merge prerequisite.
+Never import another repository's private history or operator evidence.
 
-```bash
-node scripts/build-public-mirror.mjs \
-  --repository=https://github.com/OWNER/REPOSITORY
-```
+Before publishing, keep unpublished changes committed on a named branch in a
+persistent independent checkout and verify an external all-ref Git bundle.
+Testing an unpublished, checksum-pinned archive on private staging does not
+publish it or make it a production dependency. Record source commit, package
+hash, validation and rollback separately from release approval.
 
-That writes the same `repository.url` into every publishable package. Do not
-replace it with a placeholder: npm provenance requires it to match the public
-GitHub repository exactly.
+Package `repository.url` must remain
+`git+https://github.com/Group-Resolution-Protocol/grp.git`; verify provenance
+metadata against the actual public repository before release.
 
 ## Release gate
 
@@ -43,6 +47,19 @@ For a package-specific patch, use `--packages=cli` (or a comma-separated list
 of `audit,engine,sdk,conformance,cli`) and bump only the selected package
 manifests. Packages that did not change do not need synthetic version bumps.
 
+## Prepared next release (unpublished)
+
+The current candidate selects CLI `0.2.0` and SDK, engine and conformance
+`0.1.1`. Verify only those release archives with
+`--packages=engine,sdk,conformance,cli`; audit remains at its existing `0.1.0`
+release and must not be republished. Check version availability again at the
+publication gate: a local check is not a reservation.
+
+Package versions and the negotiated protocol version are separate. These
+clients support protocol `0.1` and `0.2`; installing a package does not switch
+a host to `0.2`. Host adoption, staging verification and production promotion
+remain separate operator actions. This candidate is not a published release.
+
 ## First publication
 
 The manual v0.1.0 bootstrap publication is complete. All five package names
@@ -58,9 +75,14 @@ After all five packages exist:
    `actions/download-artifact` actions in the GitHub organization allowlist.
 2. Add `publish.yml` as the npm trusted publisher for each package.
 3. Restrict that publisher to `npm stage publish` only.
-4. Use the GitHub environment `npm-release` and require maintainer approval.
+4. Use the GitHub environment `npm-release`, require maintainer approval, and
+   restrict deployment branches to `main` (not all protected branches). Verify
+   these provider settings independently: workflow source does not configure
+   the environment. Both workflow jobs and the staging script reject non-main,
+   non-public-repository or unprotected-ref release contexts.
 5. Disallow traditional publishing tokens once the trusted path is confirmed.
-6. Bump and test only the changed package versions, then manually run **Stage
+6. Bump and test only the changed package versions, merge the approved PR to
+   protected public `main`, then manually run **Stage
    npm packages** with the exact package IDs and confirmation `STAGE`.
 7. Inspect every selected staged tarball on npm and approve each one with 2FA.
 
@@ -71,3 +93,9 @@ identity, verifies the downloaded hashes and manifest, and submits those
 already-tested tarballs with lifecycle scripts disabled. The workflow can only
 stage packages. Nothing becomes public until a maintainer separately approves
 it on npm.
+
+Public PR/merge approval, npm staging/publication approval, private adoption,
+and production deployment are separate gates. Do not dispatch the release
+workflow merely to test it. `npm run test:release` is offline; the stage script's
+`--dry-run` validates a local bundle without invoking npm. Neither proves the
+provider's environment or npm trusted-publisher configuration is correct.

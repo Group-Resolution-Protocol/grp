@@ -1,10 +1,12 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as pathJoin } from "node:path";
 import { Readable } from "node:stream";
 import * as ed25519 from "@noble/ed25519";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { computeJwsReceiptHash, signCompactJws } from "../../audit/src/jws.js";
+import { observedFixture } from "../test-support/observation-fixture.js";
 import {
   readProviderConfig,
   resolveLocalSession,
@@ -19,6 +21,21 @@ import {
   resolveRoomRef,
   runRoomCli,
 } from "./room-cli.js";
+
+async function acknowledgeThrough(env: Record<string, string | undefined>, through: number) {
+  const fetch = vi.fn(async () => {
+    throw new Error("acknowledgment must not fetch");
+  });
+  expect(
+    await runRoomCli(["read", `--ack-through=${through}`], {
+      env,
+      fetch,
+      stdout: () => {},
+      stderr: () => {},
+    }),
+  ).toBe(0);
+  expect(fetch).not.toHaveBeenCalled();
+}
 
 describe("foreground watch timeout", () => {
   it("bounds a bare watch by default while preserving explicit overrides", () => {
@@ -51,6 +68,7 @@ describe("room CLI argument parsing", () => {
   it("keeps a room positional after bare boolean flags (spec 147 F146-S1)", () => {
     for (const flag of [
       "agreement",
+      "as-discussion",
       "creator-votes",
       "defer-first-decision",
       "early-close",
@@ -417,7 +435,7 @@ describe("room CLI requests", () => {
       { argv: ["create", "--help"], usage: "Usage: grp create", maxLines: 30 },
       { argv: ["create", "-h"], usage: "Usage: grp create", maxLines: 30 },
       { argv: ["join", "--help"], usage: "Usage: grp join <room-url|slug>", maxLines: 16 },
-      { argv: ["read", "--help"], usage: "Usage: grp read [room]", maxLines: 16 },
+      { argv: ["read", "--help"], usage: "Usage: grp read [room]", maxLines: 18 },
       { argv: ["watch", "--help"], usage: "Usage: grp watch [room]", maxLines: 16 },
     ]) {
       let stdout = "";
@@ -554,7 +572,9 @@ describe("room CLI requests", () => {
     const code = await runRoomCli(
       ["read", "https://operator.example/r/abc123?token=t_secret", "--json"],
       {
-        stdout: () => {},
+        stdout: (text) => {
+          stderr += text;
+        },
         stderr: (text) => {
           stderr += text;
         },
@@ -579,7 +599,9 @@ describe("room CLI requests", () => {
   it("rejects oversized JSON responses before buffering their bodies", async () => {
     let stderr = "";
     const code = await runRoomCli(["read", "https://operator.example/r/abc123", "--json"], {
-      stdout: () => {},
+      stdout: (text) => {
+        stderr += text;
+      },
       stderr: (text) => {
         stderr += text;
       },
@@ -901,6 +923,7 @@ describe("room CLI requests", () => {
   it("reads a full room URL using URL token auth", async () => {
     const requests: Request[] = [];
     let stdout = "";
+    const env = providerEnv({ providers: {} });
     const code = await runRoomCli(
       ["read", "https://operator.example/r/abc123?token=t_1", "--json"],
       {
@@ -918,7 +941,7 @@ describe("room CLI requests", () => {
             decisions: [],
           });
         },
-        env: {},
+        env,
       },
     );
 
@@ -1141,16 +1164,19 @@ describe("room CLI requests", () => {
       stderr: (text) => {
         stderr += text;
       },
-      fetch: async () =>
-        jsonResponse(
-          {
-            error: {
-              code: "participant.token_superseded",
-              message: "this seat was re-joined from another session",
+      fetch: withCoordinationDiscovery(
+        async () =>
+          jsonResponse(
+            {
+              error: {
+                code: "participant.token_superseded",
+                message: "this seat was re-joined from another session",
+              },
             },
-          },
-          401,
-        ),
+            401,
+          ),
+        false,
+      ),
       env: { GRP_BASE_URL: "https://operator.example" },
     });
 
@@ -1272,7 +1298,7 @@ describe("room CLI requests", () => {
     expect(stdout).toContain("Project: Planning Friday dinner with Alex, Blair, Casey, and Drew");
     expect(stdout).toContain("Question: Choose one dinner plan");
     expect(stdout).toContain("Who can choose: Alex, Blair");
-    expect(stdout).toContain("Available actions:");
+    expect(stdout).toContain("Other commands:");
     expect(stdout).toContain("grp propose");
     expect(stdout).toContain("Next:");
     expect(stdout).toContain("Build the option slate through the room.");
@@ -1385,14 +1411,12 @@ describe("room CLI requests", () => {
 
     expect(code).toBe(0);
     expect(stdout).toContain("Project: Bug triage");
-    expect(stdout).toContain("No active question yet.");
+    expect(stdout).toContain("Nothing currently needs your response.");
     expect(stdout).toContain("Next:");
-    expect(stdout).toContain("Wait for what's next: grp watch");
-    expect(stdout).toContain('grp discuss "..."');
-    expect(stdout).toContain("grp discuss --file=PATH");
-    expect(stdout).toContain("short, shell-safe message");
-    expect(stdout).toContain("exact, multiline, or shell-sensitive text");
+    expect(stdout).toContain("Discuss — exchange context; creates no formal outcome.");
+    expect(stdout).toContain("Watch — wait for relevant room activity.");
     expect(stdout).not.toContain('grp ask "..."');
+    expect(stdout).not.toContain("Coordinate work:");
   });
 
   it("shows ask as a secondary idle action when the server authorizes it", async () => {
@@ -1407,6 +1431,9 @@ describe("room CLI requests", () => {
           slug: "abc123",
           status: "open",
           decision: null,
+          state_revision: "rev-1",
+          actions: [],
+          artifacts: [],
           more: {
             wait: "GET /api/rooms/abc123/next-action",
             ask: "POST /api/rooms/abc123/ask",
@@ -1416,8 +1443,16 @@ describe("room CLI requests", () => {
     });
 
     expect(code).toBe(0);
-    expect(stdout.indexOf("grp watch")).toBeLessThan(stdout.indexOf("grp ask"));
-    expect(stdout).toContain('Or ask the next question: grp ask "..."');
+    expect(stdout).toContain("Discuss — exchange context; creates no formal outcome.");
+    expect(stdout).toContain("Act — track work inside or outside GRP and what counts as complete:");
+    expect(stdout).toContain('grp act start --title="Describe the work"');
+    expect(stdout).toContain("Ask — record a group choice.");
+    expect(stdout).toContain("Watch — wait for relevant room activity.");
+    expect(stdout).toContain(
+      "Attach an artifact for exact shared work. Modes and artifacts: grp act --help",
+    );
+    expect(stdout).not.toContain("One participant; peers continue");
+    expect(stdout).not.toContain("Canonical resource only when that action needs one");
   });
 
   it("tells agents to stay with unresolved choosing rooms", async () => {
@@ -1457,9 +1492,7 @@ describe("room CLI requests", () => {
     expect(stdout).not.toContain("every participant has chosen");
     expect(stdout).toContain("choices can be revised until the outcome locks");
     expect(stdout).toContain("If you have not responded yet: grp choose N abc123");
-    expect(stdout).toContain(
-      "If context or options are drifting, add to the discussion or propose another option:",
-    );
+    expect(stdout).toContain("If the option set is incomplete, propose another candidate answer:");
     expect(stdout).toContain('grp discuss "..." abc123');
     expect(stdout).toContain("grp discuss --file=PATH abc123");
     expect(stdout).toContain('grp propose "..." abc123');
@@ -1470,11 +1503,11 @@ describe("room CLI requests", () => {
     expect(stdout).not.toMatch(/\bturn\b/i);
   });
 
-  // Spec 112 (WR4-5) — the plain read renders the discussion tail the agent
-  // view carries; plain-read agents must not vote deliberation-blind.
+  // Spec 112 (WR4-5) — exact expansion renders the discussion tail the agent
+  // view carries; agents can recover the deliberation without truncation.
   it("renders the discussion tail between the options and the guidance", async () => {
     let stdout = "";
-    const code = await runRoomCli(["read", "abc123"], {
+    const code = await runRoomCli(["read", "abc123", "--expand"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -1523,7 +1556,7 @@ describe("room CLI requests", () => {
 
   it("renders long discussion entries in full (WR7-1: the read is the catch-up surface)", async () => {
     let stdout = "";
-    const code = await runRoomCli(["read", "abc123"], {
+    const code = await runRoomCli(["read", "abc123", "--expand"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -1567,6 +1600,8 @@ describe("room CLI requests", () => {
 
     expect(code).toBe(0);
     expect(stdout).not.toContain("Discussion:");
+    expect(stdout.match(/No decision is open right now\./g)).toHaveLength(1);
+    expect(stdout).not.toContain("\nNo open decision.\n");
   });
 
   it("accepts long options and pre-rejects only the 500k abuse rail", async () => {
@@ -1694,7 +1729,7 @@ describe("room CLI requests", () => {
     const io = {
       stdout: () => {},
       stderr: () => {},
-      fetch: fetchSpy,
+      fetch: withCoordinationDiscovery(fetchSpy, false),
       env: { GRP_BASE_URL: "https://operator.example" },
     };
 
@@ -2093,12 +2128,12 @@ describe("room CLI requests", () => {
     const code = await runRoomCli(["ask", "Choose one dinner plan"], {
       stdout: () => {},
       stderr: () => {},
-      fetch: async (input, init) => {
+      fetch: withCoordinationDiscovery(async (input, init) => {
         const request = new Request(input, init);
         requests.push(request);
         bodies.push(await request.json());
         return jsonResponse({ ok: true, decision_id: "d1" });
-      },
+      }, false),
       env,
     });
 
@@ -2124,10 +2159,10 @@ describe("room CLI requests", () => {
       {
         stdout: () => {},
         stderr: () => {},
-        fetch: async (_input, init) => {
+        fetch: withCoordinationDiscovery(async (_input, init) => {
           bodies.push(await new Request(_input, init).json());
           return jsonResponse({ ok: true, decision_id: "d1" });
-        },
+        }, false),
         env,
       },
     );
@@ -2219,10 +2254,10 @@ describe("room CLI requests", () => {
     const code = await runRoomCli(["ask", "Night action", "--eligible=felix,tessa"], {
       stdout: () => {},
       stderr: () => {},
-      fetch: async (_input, init) => {
+      fetch: withCoordinationDiscovery(async (_input, init) => {
         bodies.push(await new Request(_input, init).json());
         return jsonResponse({ ok: true, decision_id: "d1" });
-      },
+      }, false),
       env,
     });
 
@@ -2295,11 +2330,11 @@ describe("room CLI requests", () => {
     const code = await runRoomCli(["ask", "Choose one dinner plan"], {
       stdout: () => {},
       stderr: () => {},
-      fetch: async (_input, init) => {
+      fetch: withCoordinationDiscovery(async (_input, init) => {
         const request = new Request(_input, init);
         bodies.push(await request.json());
         return jsonResponse({ ok: true, decision_id: "d1" });
-      },
+      }, false),
       env,
     });
 
@@ -2316,11 +2351,11 @@ describe("room CLI requests", () => {
     const code = await runRoomCli(["ask", "Choose one dinner plan", "--collect-options=600"], {
       stdout: () => {},
       stderr: () => {},
-      fetch: async (_input, init) => {
+      fetch: withCoordinationDiscovery(async (_input, init) => {
         const request = new Request(_input, init);
         bodies.push(await request.json());
         return jsonResponse({ ok: true, decision_id: "d1" });
-      },
+      }, false),
       env,
     });
 
@@ -2341,11 +2376,11 @@ describe("room CLI requests", () => {
     const code = await runRoomCli(["ask", "Choose one dinner plan", "--collect-options"], {
       stdout: () => {},
       stderr: () => {},
-      fetch: async (_input, init) => {
+      fetch: withCoordinationDiscovery(async (_input, init) => {
         const request = new Request(_input, init);
         bodies.push(await request.json());
         return jsonResponse({ ok: true, decision_id: "d1" });
-      },
+      }, false),
       env,
     });
 
@@ -2410,12 +2445,12 @@ describe("room CLI requests", () => {
       {
         stdout: () => {},
         stderr: () => {},
-        fetch: async (input, init) => {
+        fetch: withCoordinationDiscovery(async (input, init) => {
           const request = new Request(input, init);
           expect(new URL(request.url).pathname).toBe("/api/rooms/abc123/discuss");
           bodies.push(await request.json());
           return jsonResponse({ ok: true, id: "msg_1" });
-        },
+        }, false),
         env: { GRP_BASE_URL: "https://operator.example" },
       },
     );
@@ -2544,6 +2579,107 @@ describe("room CLI requests", () => {
     expect(stdout.trim().split("\n")).toHaveLength(1200);
     expect(urls.map((url) => url.searchParams.get("limit"))).toEqual(["1000", "200"]);
     expect(urls[1]?.searchParams.get("since_seq")).toBe("1000");
+  });
+
+  it("auto-paginates the complete human timeline using event page metadata", async () => {
+    const urls: URL[] = [];
+    let stdout = "";
+    const code = await runRoomCli(["timeline", "abc123"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: async (input) => {
+        const url = new URL(String(input));
+        urls.push(url);
+        const since = Number(url.searchParams.get("since") ?? 0);
+        if (since === 0) {
+          return jsonResponse({
+            slug: "abc123",
+            current_through: 2,
+            page: { through_event: 2, room_event: 4, complete: false, next_since: 2 },
+            new: [
+              {
+                seq: 1,
+                type: "discussion",
+                at: "2026-08-25T12:00:00.000Z",
+                who: "Silica",
+                said: "First",
+              },
+              {
+                seq: 2,
+                type: "discussion",
+                at: "2026-08-25T12:01:00.000Z",
+                who: "Cobalt",
+                said: "Second",
+              },
+            ],
+          });
+        }
+        return jsonResponse({
+          slug: "abc123",
+          current_through: 4,
+          page: { through_event: 4, room_event: 4, complete: true },
+          new: [
+            {
+              seq: 3,
+              type: "discussion",
+              at: "2026-08-25T12:02:00.000Z",
+              who: "Argon",
+              said: "Third",
+            },
+            {
+              seq: 4,
+              type: "discussion",
+              at: "2026-08-25T12:03:00.000Z",
+              who: "Neon",
+              said: "Fourth",
+            },
+          ],
+        });
+      },
+      env: operatorEnv(),
+    });
+
+    expect(code).toBe(0);
+    expect(urls).toHaveLength(2);
+    expect(urls[0]?.searchParams.get("since")).toBe("0");
+    expect(urls[1]?.searchParams.get("since")).toBe("2");
+    expect(stdout).toContain("Silica: First");
+    expect(stdout).toContain("Neon: Fourth");
+  });
+
+  it("returns exactly one requested event in the raw timeline", async () => {
+    let stdout = "";
+    const code = await runRoomCli(["timeline", "abc123", "--event=3", "--jsonl"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: async (input) => {
+        const url = new URL(String(input));
+        expect(url.searchParams.get("since_seq")).toBe("2");
+        expect(url.searchParams.get("limit")).toBe("1");
+        return jsonResponse({
+          slug: "abc123",
+          events: [
+            {
+              id: "e3",
+              seq: 3,
+              event_type: "discussion.posted",
+              occurred_at: "2026-08-25T12:02:00.000Z",
+              data: {},
+            },
+          ],
+          page: { through_event: 3, room_event: 4, complete: false },
+        });
+      },
+      env: operatorEnv(),
+    });
+
+    expect(code).toBe(0);
+    expect(stdout.trim().split("\n")).toHaveLength(1);
+    expect(JSON.parse(stdout)).toMatchObject({ id: "e3", seq: 3 });
   });
 
   it("prints timeline history through the preferred timeline alias", async () => {
@@ -2780,7 +2916,7 @@ describe("room CLI requests", () => {
     expect(code).toBe(0);
     expect(stdout).toContain("Chosen: Love wins");
     expect(stdout).toContain(
-      "Room is still open. Next: grp read abc123 — a new question may follow; stay with the room.",
+      "Room is still open. Next: grp read abc123 — the shared state may have changed; stay with the room.",
     );
   });
 
@@ -3310,6 +3446,7 @@ describe("room CLI requests", () => {
     expect(url.pathname).toBe("/api/rooms/abc123/next-action");
     expect(url.searchParams.get("for")).toBe("my_choice");
     expect(url.searchParams.get("wait")).toBe("50");
+    expect(url.searchParams.get("stop_on_conclusion")).toBe("1");
     expect(url.searchParams.get("token")).toBeNull();
     expect(requests[0]?.headers.get("authorization")).toBe("Bearer t_1");
     // Nothing printed for the timeout; one compact wake line at the end.
@@ -3319,9 +3456,79 @@ describe("room CLI requests", () => {
     expect(stdout).not.toContain("timeout");
   });
 
+  it.each(["already closed", "closed during wait"])(
+    "ends needed-watch when the room is %s without another poll or acknowledgment",
+    async (scenario) => {
+      let stdout = "";
+      const fetch = vi.fn(async () => {
+        if (scenario === "closed during wait") await new Promise((r) => setTimeout(r, 20));
+        return jsonResponse({ status: "concluded" });
+      });
+      const code = await runRoomCli(
+        ["watch", "https://operator.example/r/abc123?token=t_1", "--until=needed", "--timeout=120"],
+        {
+          fetch,
+          stdout: (t) => {
+            stdout += t;
+          },
+          stderr: () => {},
+          env: providerEnv({ providers: {} }),
+        },
+      );
+      expect(code).toBe(0);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(stdout).toContain("Room concluded.");
+      expect(stdout).toContain("grp outcome abc123");
+      expect(stdout).not.toMatch(/Nothing new|choose|stay armed|watch abc123/);
+    },
+  );
+
+  it("recognizes closure in the final timeout read on older hosts", async () => {
+    let stdout = "";
+    const code = await runRoomCli(
+      ["watch", "https://operator.example/r/abc123?token=t_1", "--until=needed", "--timeout=1"],
+      {
+        fetch: async (input) => {
+          if (String(input).includes("/next-action")) {
+            await new Promise((r) => setTimeout(r, 1100));
+            return jsonResponse({ status: "timeout" });
+          }
+          return jsonResponse({ slug: "abc123", status: "concluded", current_through: 5 });
+        },
+        stdout: (t) => {
+          stdout += t;
+        },
+        stderr: () => {},
+        env: providerEnv({ providers: {} }),
+      },
+    );
+    expect(code).toBe(0);
+    expect(stdout).toContain("Room concluded.");
+    expect(stdout).toContain("grp outcome abc123");
+    expect(stdout).not.toContain("Nothing new");
+  });
+
+  it("fails once on an unknown needed-watch reply instead of tight-looping", async () => {
+    const fetch = vi.fn(async () => jsonResponse({ status: "unknown" }));
+    let stderr = "";
+    expect(
+      await runRoomCli(["watch", "https://operator.example/r/abc123?token=t_1", "--until=needed"], {
+        fetch,
+        stdout: () => {},
+        stderr: (t) => {
+          stderr += t;
+        },
+        env: providerEnv({ providers: {} }),
+      }),
+    ).toBe(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(stderr).toContain("Unexpected next-action response");
+  });
+
   // Spec 125 (WR12-1) — the opener-seal wake: a resolved-status actionable
   // means the caller's own question sealed with nothing else open; the wake
-  // says so and routes to ask/outcome, never to choose.
+  // says so and routes through read/outcome, never to choose or presume the
+  // room's next kind of work.
   it("renders the opener-seal wake distinctly for watch --until=needed", async () => {
     let stdout = "";
     const code = await runRoomCli(
@@ -3349,8 +3556,9 @@ describe("room CLI requests", () => {
 
     expect(code).toBe(0);
     expect(stdout).toContain('Your question resolved: "What is the ending tone?"');
-    expect(stdout).toContain('grp ask "..."');
     expect(stdout).toContain("grp outcome abc123");
+    expect(stdout).toContain("grp read abc123");
+    expect(stdout).not.toContain('grp ask "..."');
     expect(stdout).not.toContain("The room needs you");
     expect(stdout).not.toContain('grp choose "<option>"');
   });
@@ -3865,13 +4073,16 @@ describe("room CLI requests", () => {
     // without inventing an operator.
     expect(stdout).toContain("Paste this to the agent, intact:");
     expect(stdout).toContain(
-      "You’re invited to join a GRP room. GRP (Group Resolution Protocol) is an open protocol",
+      "You’re invited to join a GRP room. GRP gives agents shared rooms for working together.",
     );
-    expect(stdout).toContain("Room purpose: Planning Friday dinner");
+    expect(stdout).not.toContain("Room purpose: Planning Friday dinner");
     expect(stdout).toContain("This invite is for Alex (participant).");
     expect(stdout).toContain("Room service: https://operator.example.");
     expect(stdout).toContain("If needed, install the open-source GRP CLI:");
     expect(stdout).toContain("npm install -g @grp-protocol/cli");
+    expect(stdout).toContain(
+      "After joining, grp read shows the room’s purpose and current shared state.",
+    );
     expect(stdout).toContain("Join the room:");
     expect(stdout).not.toContain("operated by the person who sent you this invite");
     expect(stdout).not.toContain("stay with the room");
@@ -3881,8 +4092,8 @@ describe("room CLI requests", () => {
     );
   });
 
-  // Spec 126 (TS1-3) — the fallback block never clips the room purpose.
-  it("carries a long about whole in the locally built paste block", async () => {
+  // Spec 231 — purpose remains canonical room state regardless of length.
+  it("does not duplicate a long room purpose into the locally built paste block", async () => {
     const about = `${"the operative rules of this room matter ".repeat(8)}and the tail is load-bearing`;
     let stdout = "";
     const code = await runRoomCli(
@@ -3910,8 +4121,8 @@ describe("room CLI requests", () => {
     );
 
     expect(code).toBe(0);
-    expect(stdout).toContain(`Room purpose: ${about}`);
-    expect(stdout).not.toContain("...");
+    expect(stdout).not.toContain(`Room purpose: ${about}`);
+    expect(stdout).toContain("grp read shows the room’s purpose and current shared state");
   });
 
   it("drops the room-purpose line when the host does not return room context", async () => {
@@ -3942,7 +4153,7 @@ describe("room CLI requests", () => {
 
     expect(code).toBe(0);
     expect(stdout).toContain(
-      "You’re invited to join a GRP room. GRP (Group Resolution Protocol) is an open protocol",
+      "You’re invited to join a GRP room. GRP gives agents shared rooms for working together.",
     );
     expect(stdout).not.toContain("Room purpose:");
     expect(stdout).toContain("This invite is for Alex (participant).");
@@ -4387,7 +4598,7 @@ describe("room CLI requests", () => {
     // Spec 106 — targetless hints: this is the current room.
     expect(stdout).toContain("Read the room: grp read\n");
     // Spec 113 — the one wait; the floor rule covers the asker's own choice.
-    expect(stdout).toContain("Wait for what's next: grp watch\n");
+    expect(stdout).toContain("Wait for what's next: grp watch --timeout=300\n");
   });
 
   it("notes the collecting phase when ask opens a slate decision", async () => {
@@ -4484,8 +4695,8 @@ describe("room CLI requests", () => {
 
     expect(code).toBe(0);
     expect(stdout).toContain("Discussion posted.");
-    expect(stdout).toContain("Read the room: grp read abc123");
-    expect(stdout).toContain("If more work may follow: grp watch abc123");
+    expect(stdout).toContain("Read current state: grp read abc123");
+    expect(stdout).not.toContain("Stay with the room");
   });
 
   it("confirms open choices after start choosing", async () => {
@@ -4579,13 +4790,13 @@ describe("room CLI requests", () => {
     });
 
     expect(code).toBe(0);
-    expect(stdout).toContain("Available actions:");
+    expect(stdout).toContain("Other commands:");
     expect(stdout).toContain("grp outcome");
     expect(stdout).toContain("grp members");
     expect(stdout).not.toContain("grp ask");
     expect(stdout).not.toContain("grp discuss");
     expect(stdout).not.toContain("grp invite");
-    expect(stdout).not.toContain("No active question yet.");
+    expect(stdout).not.toContain("No open decision.");
   });
 
   // Spec 106 — hints for the current room use the targetless form, which is
@@ -4734,7 +4945,7 @@ describe("room CLI requests", () => {
     });
 
     expect(code).toBe(0);
-    expect(stdout).toContain("Watch for the next question: grp watch");
+    expect(stdout).toContain("Wait for room activity: grp watch");
     expect(stdout).toContain("grp outcome");
     expect(stdout).not.toContain("grp choose");
     expect(stdout).not.toContain("grp ask");
@@ -4861,7 +5072,6 @@ describe("spec 113 delta reads", () => {
       ...extra,
     },
   });
-
   const deltaBody = {
     slug: "abc123",
     status: "voting",
@@ -4899,7 +5109,7 @@ describe("spec 113 delta reads", () => {
     more: {},
   };
 
-  it("renders the anchored delta on a bare read and advances the mark", async () => {
+  it("renders the anchored delta and advances the mark when acknowledged", async () => {
     const env = providerEnv(roomConfig({ lastSeenSeq: 5 }));
     let stdout = "";
     let sinceParam: string | null = null;
@@ -4919,7 +5129,7 @@ describe("spec 113 delta reads", () => {
     expect(stdout).toContain("abc123 —"); // Spec 117 thin header
     expect(stdout).not.toContain("Project:"); // Spec 117 diet: no premise on deltas
     expect(stdout).toContain("You: you have not chosen on the open decision");
-    expect(stdout).toContain("New since your last read:");
+    expect(stdout).toContain("Updates in this fetched range:");
     expect(stdout).toContain("Full text of the argument, uncut.");
     expect(stdout).toContain("Option B");
     expect(stdout).toContain('Choose: grp choose "<option>"');
@@ -4927,9 +5137,60 @@ describe("spec 113 delta reads", () => {
       "This room resolves when its configured choice rules determine the outcome",
     );
     expect(stdout).not.toContain("every participant has chosen");
-    expect(stdout).toContain("Current through seq 8.");
+    expect(stdout).toContain("PINNED CATCH-UP — 3 updates in source batch, through event 8 of 8;");
+    await acknowledgeThrough(env, 8);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(8);
+  });
+
+  it("names a direct action handoff to its recipient", async () => {
+    const env = providerEnv(roomConfig({ lastSeenSeq: 8, participantId: "p_northline" }));
+    let stdout = "";
+    expect(
+      await runRoomCli(["read"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async () =>
+          jsonResponse({
+            slug: "abc123",
+            status: "open",
+            state: "no question open",
+            new: [
+              {
+                seq: 9,
+                type: "action_handed_off",
+                action_id: "act_1",
+                from: "Kestrel",
+                to: "Northline",
+                to_you: true,
+              },
+            ],
+            current_through: 9,
+            actions: [
+              {
+                id: "act_1",
+                revision: "4",
+                title: "Prepare the shared result",
+                status: "in_progress",
+                mode: "handoff",
+                holder_id: "p_northline",
+                holder_display_name: "Northline",
+                previous_holder_id: "p_kestrel",
+                previous_holder_display_name: "Kestrel",
+              },
+            ],
+            artifacts: [],
+            more: {},
+          }),
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("Kestrel handed action act_1 to you.");
+    expect(stdout).toContain("holder you");
+    expect(stdout).toContain("Continue with the action guidance above.");
+    expect(stdout).not.toContain("holder p_northline");
   });
 
   it("renders selector-bearing guidance for a plural delta (spec 145)", async () => {
@@ -4998,7 +5259,7 @@ describe("spec 113 delta reads", () => {
     expect(stdout).toContain("grp options --decision=N");
   });
 
-  it("keeps the full snapshot on first contact (no stored mark)", async () => {
+  it("keeps the working-set snapshot on first contact (no stored mark)", async () => {
     let sinceParam: string | null = "unset";
     let stdout = "";
     const code = await runRoomCli(["read"], {
@@ -5177,7 +5438,7 @@ describe("spec 113 delta reads", () => {
         env,
       }),
     ).toBe(0);
-    expect(human.startsWith(`${identity}\n\nDecision 2:`)).toBe(true);
+    expect(human).toContain(`${identity}\n\nDecision 2:`);
 
     let json = "";
     expect(
@@ -5386,13 +5647,16 @@ describe("spec 113 delta reads", () => {
     expect(stderr).toContain('seq 2: "Which venue?"');
   });
 
-  it("--full bypasses the stored mark", async () => {
+  it("--snapshot requests a fresh working-set snapshot rather than exhaustive content", async () => {
     let sinceParam: string | null = "unset";
-    const code = await runRoomCli(["read", "--full"], {
+    let includeParam: string | null = "unset";
+    const code = await runRoomCli(["read", "--snapshot"], {
       stdout: () => {},
       stderr: () => {},
       fetch: async (input, init) => {
-        sinceParam = new URL(new Request(input, init).url).searchParams.get("since");
+        const params = new URL(new Request(input, init).url).searchParams;
+        sinceParam = params.get("since");
+        includeParam = params.get("include");
         return jsonResponse({
           slug: "abc123",
           status: "voting",
@@ -5408,6 +5672,7 @@ describe("spec 113 delta reads", () => {
     });
     expect(code).toBe(0);
     expect(sinceParam).toBeNull();
+    expect(includeParam).toBeNull();
   });
 
   it("--since=N requests an explicit delta", async () => {
@@ -5450,7 +5715,7 @@ describe("spec 113 delta reads", () => {
       env: providerEnv(roomConfig({ lastSeenSeq: 9 })),
     });
     expect(code).toBe(0);
-    expect(stdout).toContain("Nothing new since seq 9.");
+    expect(stdout).toContain("Nothing new through event 9.");
   });
 });
 
@@ -5482,7 +5747,7 @@ describe("spec 113 unified watch", () => {
       },
     })}\n\n`;
 
-  it("wakes on discussion by someone else and pre-positions the mark", async () => {
+  it("wakes on discussion without consuming any content", async () => {
     const env = providerEnv(wakeConfig(4));
     let stdout = "";
     const code = await runRoomCli(["watch"], {
@@ -5512,7 +5777,60 @@ describe("spec 113 unified watch", () => {
     expect(stdout).toContain("grp read");
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     // Mark parks just before the wake event so the follow-up read includes it.
-    expect(saved.currentRoom.lastSeenSeq).toBe(5);
+    expect(saved.currentRoom.lastSeenSeq).toBe(4);
+    expect(saved.currentRoom.lastNotifiedSeq).toBe(6);
+  });
+
+  it("names a direct handoff when bare watch wakes its exact recipient", async () => {
+    const env = providerEnv(wakeConfig(4));
+    const handedOff = JSON.stringify({
+      id: "e6",
+      seq: 6,
+      event_type: "action.handed_off",
+      occurred_at: "2026-08-23T03:01:00.000Z",
+      decision_id: null,
+      data: {
+        action_id: "act_1",
+        from_holder_id: "p_kestrel",
+        to_holder_id: "p_me",
+      },
+    });
+    let stdout = "";
+    expect(
+      await runRoomCli(["watch"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input, init) => {
+          const url = new URL(new Request(input, init).url);
+          if (url.pathname.endsWith("/next-action")) return new Promise<Response>(() => {});
+          if (url.pathname.endsWith("/events/stream")) {
+            return new Response(
+              sseStream([`id: e6\nevent: action.handed_off\ndata: ${handedOff}\n\n`]),
+              { headers: { "content-type": "text/event-stream" } },
+            );
+          }
+          return jsonResponse({
+            slug: "abc123",
+            new: [
+              {
+                seq: 6,
+                type: "action_handed_off",
+                action_id: "act_1",
+                from: "Kestrel",
+                to: "Me",
+                to_you: true,
+              },
+            ],
+            current_through: 6,
+          });
+        },
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("Kestrel handed action act_1 to you.");
+    expect(stdout).toContain("Next:\n  grp read");
   });
 
   it("never wakes on the caller's own events", async () => {
@@ -5543,7 +5861,8 @@ describe("spec 113 unified watch", () => {
     expect(code).toBe(0);
     // Woke on seq 6 (the other participant), not the caller's own seq 5.
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
-    expect(saved.currentRoom.lastSeenSeq).toBe(5);
+    expect(saved.currentRoom.lastSeenSeq).toBe(4);
+    expect(saved.currentRoom.lastNotifiedSeq).toBe(6);
     expect(stdout).toContain("Neon posted discussion.");
   });
 
@@ -5579,6 +5898,81 @@ describe("spec 113 unified watch", () => {
     });
     expect(code).toBe(0);
     expect(stdout).toContain('The room needs you: "Pick the ending tone"');
+  });
+
+  it("wakes on another participant's transient working signal without moving either durable marker", async () => {
+    const base = wakeConfig(4);
+    const env = providerEnv({
+      ...base,
+      currentRoom: { ...base.currentRoom, observedStateRevision: "opaque-90" },
+    });
+    let stdout = "";
+    const code = await runRoomCli(["watch", "--timeout=2"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: async (input, init) => {
+        const url = new Request(input, init).url;
+        if (url.includes("/next-action")) {
+          return jsonResponse({
+            status: "working",
+            signal_change: {
+              signal_id: "signal_1",
+              participant_id: "p_other",
+              change: "started",
+            },
+            requires_read: true,
+          });
+        }
+        if (url.includes("/events/stream")) {
+          return new Response(sseStream([]), {
+            headers: { "content-type": "text/event-stream" },
+          });
+        }
+        return jsonResponse({ slug: "abc123", events: [] });
+      },
+      env,
+    });
+    expect(code).toBe(0);
+    expect(stdout).toContain("Working state changed (started) for participant p_other.");
+    expect(stdout).toContain("Signal: signal_1");
+    expect(stdout).toContain("grp read");
+    const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
+    expect(saved.currentRoom.lastSeenSeq).toBe(4);
+    expect(saved.currentRoom.observedStateRevision).toBe("opaque-90");
+  });
+
+  it("wakes from durable activity long-poll when the SSE racer misses an artifact review", async () => {
+    const env = providerEnv(wakeConfig(20));
+    let stdout = "";
+    const code = await runRoomCli(["watch", "--timeout=2"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: async (input, init) => {
+        const url = new Request(input, init).url;
+        if (url.includes("/next-action")) {
+          return jsonResponse({
+            status: "activity",
+            event: {
+              seq: 21,
+              type: "artifact.reviewed",
+              who: "Northline Ventures",
+            },
+          });
+        }
+        if (url.includes("/events/stream")) return new Promise<Response>(() => {});
+        throw new Error(`unexpected request: ${url}`);
+      },
+      env,
+    });
+    expect(code).toBe(0);
+    expect(stdout).toContain("Northline Ventures reviewed an artifact.");
+    expect(stdout).toContain("grp read");
+    const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
+    expect(saved.currentRoom.lastSeenSeq).toBe(20);
   });
 
   it("--jsonl never advances the stored mark", async () => {
@@ -5819,7 +6213,8 @@ describe("spec 114 surface", () => {
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     // Spec 125 (WR12-2) — the wake line carries the whole payload, so the
     // event is CONSUMED (mark through seq 6), never re-fired.
-    expect(saved.currentRoom.lastSeenSeq).toBe(6);
+    expect(saved.currentRoom.lastSeenSeq).toBe(4);
+    expect(saved.currentRoom.lastNotifiedSeq).toBe(6);
   });
 });
 
@@ -5830,11 +6225,4581 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function withCoordinationDiscovery(
+  next: typeof globalThis.fetch,
+  enabled = true,
+): typeof globalThis.fetch {
+  return async (input, init) => {
+    const request = new Request(input, init);
+    if (new URL(request.url).pathname === "/.well-known/grp.json") {
+      return jsonResponse(
+        enabled
+          ? {
+              metadata: {
+                experimental_coordination_state: { status: "experimental" },
+              },
+            }
+          : { metadata: {} },
+      );
+    }
+    return next(input, init);
+  };
+}
+
+// Retained temporarily as executable migration documentation. Spec 228 replaces
+// this operator-facing surface with actions, filtered watch, and action-owned
+// artifacts; these assertions describe the unpublished candidate it superseded.
+describe.skip("obsolete spec 224 candidate — replaced by spec 228", () => {
+  const roomConfig = (extra: Record<string, unknown> = {}) => ({
+    providers: {},
+    currentRoom: {
+      slug: "abc123",
+      baseUrl: "https://operator.example",
+      token: "t_1",
+      lastSeenSeq: 8,
+      ...extra,
+    },
+  });
+
+  it("teaches a bounded wait and economical shared work after a capable participant read", async () => {
+    const env = providerEnv(
+      roomConfig({
+        observedStateRevision: "10",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    let stdout = "";
+    const code = await runRoomCli(["read", "--snapshot"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: async () =>
+        jsonResponse({
+          slug: "abc123",
+          status: "open",
+          role: "participant",
+          state_revision: "10",
+          brief: "No question is open.",
+          decision: null,
+          discussion: [],
+          working_signals: [],
+          actions: [],
+          artifacts: [],
+        }),
+      env,
+    });
+
+    expect(code).toBe(0);
+    expect(stdout).toContain("Wait for what's next: grp watch --timeout=300");
+    expect(stdout).toContain("Coordinate work:");
+    expect(stdout).toContain('grp act start --title="Describe the work"');
+    expect(stdout).toContain("grp watch --action=ACTION_ID");
+    expect(stdout).toContain(
+      'grp artifact create --name="Shared output" --action=ACTION_ID --file=PATH',
+    );
+    expect(stdout).not.toContain("grp working start");
+    expect(stdout).not.toContain("--lock=enforced");
+    expect(stdout).not.toContain("exact reviews");
+    expect(stdout).not.toContain("finalization");
+  });
+
+  it("keeps shared-work and active-editor guidance visible after a decision resolves", async () => {
+    const env = providerEnv(
+      roomConfig({
+        observedStateRevision: "10",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    let stdout = "";
+    const code = await runRoomCli(["read", "--snapshot"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: async () =>
+        jsonResponse({
+          slug: "abc123",
+          status: "resolved",
+          role: "participant",
+          state_revision: "10",
+          brief: 'Decided: "Divert".',
+          discussion: [],
+          working_signals: [
+            {
+              display_name: "Silica",
+              kind: "drafting",
+              scope: { kind: "artifact", id: "artifact_1" },
+              summary: "Revising current artifact",
+              expires_at: "2026-08-21T20:00:00Z",
+            },
+          ],
+          actions: [],
+          artifacts: [
+            {
+              id: "artifact_1",
+              revision: "2",
+              name: "Shared output",
+              current_revision_id: "artifact_revision_1",
+              status: "open",
+              review_status: { current: [], superseded: [] },
+            },
+          ],
+        }),
+      env,
+    });
+
+    expect(code).toBe(0);
+    expect(stdout).toContain("Working now:");
+    expect(stdout).toContain("Silica — drafting artifact artifact_1: Revising current artifact");
+    expect(stdout).toContain("Coordinate work:");
+    expect(stdout).not.toContain('artifact create --name="Shared output"');
+  });
+
+  it("does not advertise candidate presence on a feature-off host", async () => {
+    const env = providerEnv(roomConfig({ coordinationStateCapability: "absent" }));
+    let stdout = "";
+    const code = await runRoomCli(["read", "--snapshot"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: async () =>
+        jsonResponse({
+          slug: "abc123",
+          status: "open",
+          role: "participant",
+          brief: "No question is open.",
+          decision: null,
+          discussion: [],
+        }),
+      env,
+    });
+
+    expect(code).toBe(0);
+    expect(stdout).not.toContain("Coordinate work:");
+    expect(stdout).not.toContain("grp working start");
+    expect(stdout).not.toContain("grp artifact create");
+  });
+
+  it("does not repeat artifact creation guidance after a shared artifact exists", async () => {
+    const env = providerEnv(
+      roomConfig({
+        observedStateRevision: "10",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    let stdout = "";
+    const code = await runRoomCli(["read", "--snapshot"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: async () =>
+        jsonResponse({
+          slug: "abc123",
+          status: "open",
+          role: "participant",
+          state_revision: "10",
+          brief: "No question is open.",
+          decision: null,
+          discussion: [],
+          working_signals: [],
+          actions: [],
+          artifacts: [
+            {
+              id: "artifact_1",
+              revision: "1",
+              name: "Shared output",
+              current_revision_id: "revision_1",
+              baton_mode: "none",
+              claim: null,
+              review_status: { current: [], superseded: [] },
+            },
+          ],
+        }),
+      env,
+    });
+
+    expect(code).toBe(0);
+    expect(stdout).toContain("Shared artifacts:");
+    expect(stdout).toContain("artifact_1 [state revision 1]");
+    expect(stdout).not.toContain("Canonical resource only when that action needs one:");
+    expect(stdout).not.toContain('artifact create --name="Shared output"');
+  });
+
+  it("does not infer artifact intent from a document-shaped proposal", async () => {
+    const dir = mkdtempSync(pathJoin(tmpdir(), "grp-spec224-proposal-"));
+    const file = pathJoin(dir, "term-sheet.md");
+    writeFileSync(file, "# Shared draft\n\n1. Economics\n2. Governance\n", "utf8");
+    const env = providerEnv(
+      roomConfig({
+        observedStateRevision: "10",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    let stdout = "";
+    const code = await runRoomCli(["propose", `--file=${file}`], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: withCoordinationDiscovery(async () =>
+        jsonResponse({
+          accepted: true,
+          options: ["# Shared draft"],
+          choosing_open: true,
+          state_revision: "11",
+        }),
+      ),
+      env,
+    });
+
+    expect(code).toBe(0);
+    expect(stdout).toContain('Option proposed: "# Shared draft');
+    expect(stdout).not.toContain("grp artifact create");
+    expect(stdout).not.toContain("artifact id + revision id + SHA-256 descriptor");
+  });
+
+  it("stores a room-wide observation independently while a focused read stores neither marker", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "opaque-old" }));
+    const response = {
+      slug: "abc123",
+      state_revision: "opaque-new",
+      current_through: 12,
+      status: "open",
+      brief: "No decision is open.",
+      decisions: [],
+    };
+
+    expect(
+      await runRoomCli(["read", "--json"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch: async () => jsonResponse(response),
+        env,
+      }),
+    ).toBe(0);
+    let saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
+    expect(saved.currentRoom).toEqual(
+      expect.objectContaining({
+        lastSeenSeq: 12,
+        observedStateRevision: "opaque-new",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+
+    expect(
+      await runRoomCli(["read", "--decision=1", "--json"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch: async () =>
+          jsonResponse({
+            state_revision: "must-not-be-observed",
+            decisions: [{ id: "d_1", seq: 1, question: "Focused?", status: "open" }],
+            discussion: [],
+            participants: [],
+          }),
+        env,
+      }),
+    ).toBe(0);
+    saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
+    expect(saved.currentRoom).toEqual(
+      expect.objectContaining({ lastSeenSeq: 12, observedStateRevision: "opaque-new" }),
+    );
+  });
+
+  it("requires a fresh room read before the first write to a capable host", async () => {
+    const env = providerEnv(roomConfig());
+    let mutationCalls = 0;
+    let stderr = "";
+    const code = await runRoomCli(["discuss", "hello"], {
+      stdout: () => {},
+      stderr: (text) => {
+        stderr += text;
+      },
+      fetch: withCoordinationDiscovery(async () => {
+        mutationCalls += 1;
+        return jsonResponse({ ok: true });
+      }),
+      env,
+    });
+
+    expect(code).toBe(1);
+    expect(mutationCalls).toBe(0);
+    expect(stderr).toContain("fresh room read before guarded writes");
+    expect(stderr).toContain("Read current room state: grp read");
+    expect(JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8")).currentRoom).toEqual(
+      expect.objectContaining({ coordinationStateCapability: "experimental" }),
+    );
+  });
+
+  it("live discovery detects a downgrade and clears the obsolete guard token", async () => {
+    const env = providerEnv(
+      roomConfig({
+        observedStateRevision: "41",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    let mutationHeader: string | null = "not-called";
+    const code = await runRoomCli(["discuss", "legacy after downgrade"], {
+      stdout: () => {},
+      stderr: () => {},
+      fetch: withCoordinationDiscovery(async (input, init) => {
+        mutationHeader = new Request(input, init).headers.get("x-grp-expected-room-revision");
+        return jsonResponse({ ok: true, id: "m_legacy" });
+      }, false),
+      env,
+    });
+
+    expect(code).toBe(0);
+    expect(mutationHeader).toBeNull();
+    const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8")).currentRoom;
+    expect(saved.coordinationStateCapability).toBe("absent");
+    expect(saved.observedStateRevision).toBeUndefined();
+  });
+
+  it("guards authored content and advances only the observation returned by a guarded success", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    let expectedHeader: string | null = null;
+    expect(
+      await runRoomCli(["discuss", "hello"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch: withCoordinationDiscovery(async (input, init) => {
+          expectedHeader = new Request(input, init).headers.get("x-grp-expected-room-revision");
+          return jsonResponse({ ok: true, id: "m_1", state_revision: "42" });
+        }),
+        env,
+      }),
+    ).toBe(0);
+    expect(expectedHeader).toBe("41");
+    const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
+    expect(saved.currentRoom).toEqual(
+      expect.objectContaining({ lastSeenSeq: 8, observedStateRevision: "42" }),
+    );
+  });
+
+  it("does not launder unseen room state returned by an unguarded resource claim", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "9" }));
+    let expectedHeader: string | null = "not-called";
+    expect(
+      await runRoomCli(["artifact", "claim", "artifact-1", "--revision=3", "--ttl=30", "--json"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch: async (input, init) => {
+          expectedHeader = new Request(input, init).headers.get("x-grp-expected-room-revision");
+          return jsonResponse({
+            artifact: { id: "artifact-1", revision: "4" },
+            state_revision: "11",
+          });
+        },
+        env,
+      }),
+    ).toBe(0);
+    expect(expectedHeader).toBeNull();
+    const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
+    expect(saved.currentRoom).toEqual(
+      expect.objectContaining({ lastSeenSeq: 8, observedStateRevision: "9" }),
+    );
+  });
+
+  it("labels external Git references as asserted instead of implying provider verification", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "9" }));
+    let body: Record<string, unknown> | null = null;
+    expect(
+      await runRoomCli(
+        [
+          "artifact",
+          "create",
+          "--name=README snapshot",
+          "--kind=external",
+          "--external-provider=git",
+          "--uri=https://github.com/example/private.git",
+          "--path=README.md",
+          "--provider-revision=9d1633911860c39a61ae982e57c5270bf60c0b14",
+          "--sha256=3e87a40800359fa8fe7fc5c94b1c59b2882bd3e75f828fefff31472277e5052c",
+          "--json",
+        ],
+        {
+          stdout: () => {},
+          stderr: () => {},
+          fetch: withCoordinationDiscovery(async (input, init) => {
+            body = JSON.parse(await new Request(input, init).text()) as Record<string, unknown>;
+            return jsonResponse({ artifact: { id: "artifact-1" }, state_revision: "10" });
+          }),
+          env,
+        },
+      ),
+    ).toBe(0);
+    expect(body).toMatchObject({
+      kind: "external",
+      external: {
+        provider: "git",
+        uri: "https://github.com/example/private.git",
+        path: "README.md",
+        provider_revision: "9d1633911860c39a61ae982e57c5270bf60c0b14",
+        verification: "asserted",
+      },
+    });
+  });
+
+  it("rejects credential-bearing external references before any request leaves the process", async () => {
+    for (const uri of [
+      "https://alice:secret@github.com/example/private.git",
+      "https://github.com/example/private.git?token=secret",
+    ]) {
+      const env = providerEnv(roomConfig({ observedStateRevision: "9" }));
+      let fetchCalls = 0;
+      let stderr = "";
+      const code = await runRoomCli(
+        [
+          "artifact",
+          "create",
+          "--name=unsafe reference",
+          "--kind=external",
+          "--external-provider=git",
+          `--uri=${uri}`,
+          "--path=README.md",
+          "--provider-revision=9d1633911860c39a61ae982e57c5270bf60c0b14",
+          "--sha256=3e87a40800359fa8fe7fc5c94b1c59b2882bd3e75f828fefff31472277e5052c",
+        ],
+        {
+          stdout: () => {},
+          stderr: (text) => {
+            stderr += text;
+          },
+          fetch: async () => {
+            fetchCalls += 1;
+            return jsonResponse({});
+          },
+          env,
+        },
+      );
+      expect(code).toBe(1);
+      expect(fetchCalls).toBe(0);
+      expect(stderr).toContain("credential-free HTTPS without query or fragment");
+    }
+  });
+
+  it("sends an explicit idempotency key alongside the room revision guard", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    let headers = new Headers();
+    expect(
+      await runRoomCli(["action", "create", "--title=Draft", "--idempotency-key=trial-action-1"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch: withCoordinationDiscovery(async (input, init) => {
+          headers = new Request(input, init).headers;
+          return jsonResponse({ action: { id: "action_1", revision: "1" }, state_revision: "42" });
+        }),
+        env,
+      }),
+    ).toBe(0);
+    expect(headers.get("idempotency-key")).toBe("trial-action-1");
+    expect(headers.get("x-grp-expected-room-revision")).toBe("41");
+  });
+
+  it("offers one payload-bound stale recovery only after a read and a second rejection", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    let currentRevision = "45";
+    let guardedWrites = 0;
+    let forcedWrites = 0;
+    const fetch = withCoordinationDiscovery(async (input, init) => {
+      const request = new Request(input, init);
+      if (request.method === "GET") {
+        return jsonResponse({ state_revision: currentRevision, brief: "Fresh room state." });
+      }
+      const expected = request.headers.get("x-grp-expected-room-revision");
+      if (expected) {
+        guardedWrites += 1;
+        return jsonResponse(
+          {
+            error: {
+              code: "state.precondition_failed",
+              message: "room changed",
+              details: {
+                expected_state_revision: expected,
+                current_state_revision: currentRevision,
+                posted: false,
+              },
+            },
+          },
+          412,
+        );
+      }
+      forcedWrites += 1;
+      return jsonResponse({ accepted: true, options: [], state_revision: "47" });
+    });
+
+    let stderr = "";
+    expect(
+      await runRoomCli(["propose", "new plan"], {
+        stdout: () => {},
+        stderr: (text) => {
+          stderr += text;
+        },
+        fetch,
+        env,
+      }),
+    ).toBe(1);
+    expect(stderr).toContain("Next: grp read");
+    expect(stderr).not.toContain("--force-stale-post");
+
+    let preemptive = "";
+    expect(
+      await runRoomCli(["propose", "new plan", "--force-stale-post"], {
+        stdout: () => {},
+        stderr: (text) => {
+          preemptive += text;
+        },
+        fetch,
+        env,
+      }),
+    ).toBe(1);
+    expect(preemptive).toContain("read the room before using --force-stale-post");
+
+    expect(
+      await runRoomCli(["read", "--json"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch,
+        env,
+      }),
+    ).toBe(0);
+
+    currentRevision = "46";
+    stderr = "";
+    expect(
+      await runRoomCli(["propose", "new plan"], {
+        stdout: () => {},
+        stderr: (text) => {
+          stderr += text;
+        },
+        fetch,
+        env,
+      }),
+    ).toBe(1);
+    expect(stderr).toContain("--force-stale-post");
+
+    let wrongPayload = "";
+    expect(
+      await runRoomCli(["propose", "different plan", "--force-stale-post"], {
+        stdout: () => {},
+        stderr: (text) => {
+          wrongPayload += text;
+        },
+        fetch,
+        env,
+      }),
+    ).toBe(1);
+    expect(wrongPayload).toContain("exact rejected command payload");
+
+    expect(
+      await runRoomCli(["propose", "new plan", "--force-stale-post"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch,
+        env,
+      }),
+    ).toBe(0);
+    expect(guardedWrites).toBe(2);
+    expect(forcedWrites).toBe(1);
+
+    let reused = "";
+    expect(
+      await runRoomCli(["propose", "new plan", "--force-stale-post"], {
+        stdout: () => {},
+        stderr: (text) => {
+          reused += text;
+        },
+        fetch,
+        env,
+      }),
+    ).toBe(1);
+    expect(reused).toContain("available only after this exact payload was rejected stale");
+    expect(readFileSync(String(env.GRP_CONFIG), "utf8")).not.toContain("new plan");
+  });
+
+  it("emits structured stale-write evidence and does not claim a guard on legacy hosts", async () => {
+    const guardedEnv = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    let stdout = "";
+    expect(
+      await runRoomCli(["ask", "Continue?", "--json"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: withCoordinationDiscovery(async () =>
+          jsonResponse(
+            {
+              error: {
+                code: "state.precondition_failed",
+                message: "room changed",
+                details: {
+                  expected_state_revision: "41",
+                  current_state_revision: "45",
+                  posted: false,
+                },
+              },
+            },
+            412,
+          ),
+        ),
+        env: guardedEnv,
+      }),
+    ).toBe(1);
+    expect(JSON.parse(stdout)).toEqual(
+      expect.objectContaining({
+        error: expect.objectContaining({
+          code: "state.precondition_failed",
+          details: {
+            expected_state_revision: "41",
+            current_state_revision: "45",
+            posted: false,
+          },
+        }),
+        suggested_command: "grp read",
+      }),
+    );
+
+    const legacyEnv = providerEnv(roomConfig());
+    let legacyHeader: string | null = "not-called";
+    expect(
+      await runRoomCli(["discuss", "legacy safe"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch: withCoordinationDiscovery(async (input, init) => {
+          legacyHeader = new Request(input, init).headers.get("x-grp-expected-room-revision");
+          return jsonResponse({ ok: true, id: "m_legacy" });
+        }, false),
+        env: legacyEnv,
+      }),
+    ).toBe(0);
+    expect(legacyHeader).toBeNull();
+  });
+
+  it("drives working signals and guarded resource transitions with exact wire tokens", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    const requests: Array<{
+      method: string;
+      path: string;
+      header: string | null;
+      body: Record<string, unknown>;
+    }> = [];
+    const fetch = withCoordinationDiscovery(
+      async (input: URL | RequestInfo, init?: RequestInit) => {
+        const request = new Request(input, init);
+        const body = request.body ? ((await request.json()) as Record<string, unknown>) : {};
+        requests.push({
+          method: request.method,
+          path: new URL(request.url).pathname,
+          header: request.headers.get("x-grp-expected-room-revision"),
+          body,
+        });
+        if (request.url.endsWith("/working-signals")) {
+          return jsonResponse({
+            working_signal: { id: "signal_1" },
+            lease_token: "lease_1",
+          });
+        }
+        if (request.url.endsWith("/actions")) {
+          return jsonResponse({ action: { id: "action_1", revision: "1" }, state_revision: "42" });
+        }
+        return jsonResponse({
+          artifact: { id: "artifact_1", revision: "4" },
+          revision: { id: "artifact_revision_2" },
+          state_revision: "43",
+        });
+      },
+    );
+
+    expect(
+      await runRoomCli(
+        [
+          "working",
+          "start",
+          "--kind=drafting",
+          "--scope=artifact",
+          "--scope-id=artifact_1",
+          "--summary=Editing exact bytes",
+          "--ttl=120",
+        ],
+        { stdout: () => {}, stderr: () => {}, fetch, env },
+      ),
+    ).toBe(0);
+    expect(
+      await runRoomCli(["action", "create", "--title=Draft", "--lock=enforced"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch,
+        env,
+      }),
+    ).toBe(0);
+    expect(
+      await runRoomCli(
+        [
+          "artifact",
+          "publish",
+          "artifact_1",
+          "--revision=3",
+          "--base-revision=artifact_revision_1",
+          "--epoch=7",
+          "--content=Revised bytes",
+        ],
+        { stdout: () => {}, stderr: () => {}, fetch, env },
+      ),
+    ).toBe(0);
+
+    expect(requests).toEqual([
+      expect.objectContaining({
+        method: "POST",
+        path: "/api/rooms/abc123/working-signals",
+        header: null,
+        body: expect.objectContaining({
+          kind: "drafting",
+          scope: { kind: "artifact", id: "artifact_1" },
+          ttl_seconds: 120,
+        }),
+      }),
+      expect.objectContaining({
+        method: "POST",
+        path: "/api/rooms/abc123/actions",
+        header: "41",
+        body: expect.objectContaining({ title: "Draft", baton_mode: "enforced" }),
+      }),
+      expect.objectContaining({
+        method: "POST",
+        path: "/api/rooms/abc123/artifacts/artifact_1/revisions",
+        header: "42",
+        body: expect.objectContaining({
+          expected_revision: "3",
+          base_revision_id: "artifact_revision_1",
+          claim_epoch: "7",
+          sync_content: "Revised bytes",
+        }),
+      }),
+    ]);
+    expect(
+      JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8")).currentRoom.observedStateRevision,
+    ).toBe("43");
+  });
+
+  it("makes native whole-snapshot replacement explicit with --rewrite", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    let body: Record<string, unknown> = {};
+    expect(
+      await runRoomCli(
+        [
+          "artifact",
+          "publish",
+          "artifact_1",
+          "--revision=3",
+          "--base-revision=artifact_revision_1",
+          "--content=Replacement bytes",
+          "--rewrite",
+        ],
+        {
+          stdout: () => {},
+          stderr: () => {},
+          fetch: withCoordinationDiscovery(async (_input, init) => {
+            body = JSON.parse(String(init?.body));
+            return jsonResponse({
+              artifact: { id: "artifact_1", revision: "4" },
+              revision: { id: "artifact_revision_2" },
+              state_revision: "42",
+            });
+          }),
+          env,
+        },
+      ),
+    ).toBe(0);
+    expect(body).toMatchObject({
+      expected_revision: "3",
+      base_revision_id: "artifact_revision_1",
+      content: "Replacement bytes",
+    });
+    expect(body).not.toHaveProperty("sync_content");
+  });
+
+  it("leaves external Git revisions provider-owned and refuses native rewrite semantics", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    let body: Record<string, unknown> = {};
+    const fetch = withCoordinationDiscovery(async (_input, init) => {
+      body = JSON.parse(String(init?.body));
+      return jsonResponse({
+        artifact: { id: "artifact_git", revision: "4" },
+        revision: { id: "artifact_revision_git" },
+        state_revision: "42",
+      });
+    });
+    expect(
+      await runRoomCli(
+        [
+          "artifact",
+          "publish",
+          "artifact_git",
+          "--revision=3",
+          "--base-revision=artifact_revision_1",
+          "--external-provider=git",
+          "--uri=https://github.com/example/project",
+          "--path=resolution.md",
+          "--provider-revision=0123456789abcdef0123456789abcdef01234567",
+          `--sha256=${"ab".repeat(32)}`,
+        ],
+        { stdout: () => {}, stderr: () => {}, fetch, env },
+      ),
+    ).toBe(0);
+    expect(body).toMatchObject({
+      base_revision_id: "artifact_revision_1",
+      external: {
+        provider: "git",
+        uri: "https://github.com/example/project",
+        path: "resolution.md",
+        provider_revision: "0123456789abcdef0123456789abcdef01234567",
+        verification: "asserted",
+      },
+    });
+    expect(body).not.toHaveProperty("content");
+    expect(body).not.toHaveProperty("sync_content");
+
+    let stderr = "";
+    expect(
+      await runRoomCli(
+        [
+          "artifact",
+          "publish",
+          "artifact_git",
+          "--revision=3",
+          "--base-revision=artifact_revision_1",
+          "--external-provider=git",
+          "--uri=https://github.com/example/project",
+          "--provider-revision=0123456789abcdef0123456789abcdef01234567",
+          `--sha256=${"ab".repeat(32)}`,
+          "--rewrite",
+        ],
+        {
+          stdout: () => {},
+          stderr: (text) => {
+            stderr += text;
+          },
+          fetch,
+          env,
+        },
+      ),
+    ).toBe(1);
+    expect(stderr).toContain("--rewrite applies only to native artifacts");
+  });
+
+  it("asks for explicit chat intent before substantial discussion regardless of transport", async () => {
+    const dir = mkdtempSync(pathJoin(tmpdir(), "grp-substantial-discussion-"));
+    const file = pathJoin(dir, "shared-work.txt");
+    writeFileSync(file, "f".repeat(10_001), "utf8");
+
+    for (const testCase of [
+      { argv: ["discuss", `--body=${"b".repeat(10_001)}`], stdin: undefined },
+      { argv: ["discuss", "-"], stdin: Readable.from(["s".repeat(10_001)]) },
+      { argv: ["discuss", `--file=${file}`], stdin: undefined },
+    ]) {
+      let stderr = "";
+      let fetches = 0;
+      expect(
+        await runRoomCli(testCase.argv, {
+          stdout: () => {},
+          stderr: (text) => {
+            stderr += text;
+          },
+          ...(testCase.stdin ? { stdin: testCase.stdin } : {}),
+          fetch: async () => {
+            fetches += 1;
+            return jsonResponse({});
+          },
+          env: providerEnv(roomConfig({ observedStateRevision: "41" })),
+        }),
+      ).toBe(1);
+      expect(fetches).toBe(0);
+      expect(stderr).toContain("This discussion is 10,001 characters.");
+      expect(stderr).toContain("preserve one exact version through an action and artifact");
+      expect(stderr).toContain("Continue as intentional discussion: add --as-discussion");
+      expect(stderr).toContain("Structured shared work: grp act --help");
+    }
+  });
+
+  it("keeps the threshold a soft confirmation distinct from room freshness", async () => {
+    const env = providerEnv(
+      roomConfig({
+        observedStateRevision: "41",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    const postedBodies: string[] = [];
+    const fetch = withCoordinationDiscovery(async (input, init) => {
+      const request = new Request(input, init);
+      postedBodies.push(String(((await request.json()) as { body: string }).body));
+      return jsonResponse({ ok: true, id: "message_1", state_revision: "42" });
+    });
+
+    expect(
+      await runRoomCli(["discuss", `--body=${"x".repeat(10_000)}`], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch,
+        env,
+      }),
+    ).toBe(0);
+    expect(postedBodies).toEqual(["x".repeat(10_000)]);
+
+    let postAnywayError = "";
+    let postAnywayFetches = 0;
+    expect(
+      await runRoomCli(["discuss", `--body=${"y".repeat(10_001)}`, "--force-stale-post"], {
+        stdout: () => {},
+        stderr: (text) => {
+          postAnywayError += text;
+        },
+        fetch: async () => {
+          postAnywayFetches += 1;
+          return jsonResponse({});
+        },
+        env,
+      }),
+    ).toBe(1);
+    expect(postAnywayFetches).toBe(0);
+    expect(postAnywayError).toContain("add --as-discussion");
+
+    const noReadEnv = providerEnv(
+      roomConfig({ observedStateRevision: undefined, coordinationStateCapability: "experimental" }),
+    );
+    let asDiscussionError = "";
+    let writes = 0;
+    expect(
+      await runRoomCli(["discuss", `--body=${"z".repeat(10_001)}`, "--as-discussion"], {
+        stdout: () => {},
+        stderr: (text) => {
+          asDiscussionError += text;
+        },
+        fetch: withCoordinationDiscovery(async (_input, init) => {
+          if (init?.method === "POST") writes += 1;
+          return jsonResponse({});
+        }),
+        env: noReadEnv,
+      }),
+    ).toBe(1);
+    expect(writes).toBe(0);
+    expect(asDiscussionError).toContain("requires a fresh room read");
+  });
+
+  it("explains discussion intent without coaching long shared work into chat", async () => {
+    let stdout = "";
+    expect(
+      await runRoomCli(["discuss", "--help"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async () => {
+          throw new Error("help must not fetch");
+        },
+        env: providerEnv(roomConfig()),
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("Discussion creates no formal outcome.");
+    expect(stdout).toContain("For shell-sensitive discussion, use --file=PATH or stdin.");
+    expect(stdout).toContain("use an action with an artifact: grp act --help");
+    expect(stdout).toContain("--as-discussion");
+    expect(stdout).not.toContain("Long or shell-sensitive messages");
+  });
+
+  it("renders the enforced lock, exact review, and decision descriptor after mutations", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    let stderr = "";
+    const digest = "ab".repeat(32);
+    const fetch = withCoordinationDiscovery(async (input) => {
+      const pathname = new URL(new Request(input).url).pathname;
+      if (pathname.endsWith("/working-signals")) {
+        return jsonResponse({
+          working_signal: { id: "signal_1" },
+          lease_token: "lease_1",
+        });
+      }
+      if (pathname.endsWith("/actions")) {
+        return jsonResponse({
+          action: { id: "action_1", revision: "2", baton_mode: "enforced" },
+          state_revision: "42",
+        });
+      }
+      if (pathname.endsWith("/artifacts")) {
+        return jsonResponse({
+          artifact: { id: "artifact_1", revision: "3", baton_mode: "enforced" },
+          current_revision: { id: "artifact_revision_1", sha256: digest },
+          state_revision: "43",
+        });
+      }
+      return jsonResponse({
+        artifact: { id: "artifact_1", revision: "4" },
+        revision: { id: "artifact_revision_2", sha256: digest },
+        state_revision: "44",
+      });
+    });
+    const io = {
+      stdout: () => {},
+      stderr: (text: string) => {
+        stderr += text;
+      },
+      fetch,
+      env,
+    };
+
+    expect(
+      await runRoomCli(
+        ["working", "start", "--kind=drafting", "--scope=room", "--summary=Drafting"],
+        io,
+      ),
+    ).toBe(0);
+    expect(await runRoomCli(["action", "create", "--title=Draft", "--lock=enforced"], io)).toBe(0);
+    expect(
+      await runRoomCli(
+        ["artifact", "create", "--name=Joint draft", "--content=Initial", "--lock=enforced"],
+        io,
+      ),
+    ).toBe(0);
+    expect(
+      await runRoomCli(
+        [
+          "artifact",
+          "publish",
+          "artifact_1",
+          "--revision=3",
+          "--base-revision=artifact_revision_1",
+          "--content=Revised",
+        ],
+        io,
+      ),
+    ).toBe(0);
+
+    expect(stderr).toContain("Working signal active: signal_1");
+    expect(stderr).toContain("grp working stop signal_1 --lease=lease_1");
+    expect(stderr).toContain("Durable action created: action_1 at resource revision 2");
+    expect(stderr).toContain("grp action claim action_1 --revision=2");
+    expect(stderr).toContain("Canonical shared artifact created: artifact_1");
+    expect(stderr).toContain("grp artifact claim artifact_1 --revision=3");
+    expect(stderr).toContain("grp artifact review artifact_1 artifact_revision_2");
+    expect(stderr).toContain(
+      `artifact artifact_1, revision artifact_revision_2, SHA-256 ${digest}`,
+    );
+  });
+
+  it("renders the exact reread and terminal handoff after action and artifact claims", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    let stderr = "";
+    const fetch = withCoordinationDiscovery(async (input) => {
+      const pathname = new URL(new Request(input).url).pathname;
+      if (pathname.includes("/actions/")) {
+        return jsonResponse({
+          action: {
+            id: "action_1",
+            revision: "3",
+            claim: { epoch: "7" },
+          },
+          state_revision: "42",
+        });
+      }
+      return jsonResponse({
+        artifact: {
+          id: "artifact_1",
+          revision: "4",
+          current_revision_id: "artifact_revision_1",
+          claim: { epoch: "8" },
+        },
+        state_revision: "43",
+      });
+    });
+    const io = {
+      stdout: () => {},
+      stderr: (text: string) => {
+        stderr += text;
+      },
+      fetch,
+      env,
+    };
+
+    expect(await runRoomCli(["action", "claim", "action_1", "--revision=2"], io)).toBe(0);
+    expect(await runRoomCli(["artifact", "claim", "artifact_1", "--revision=3"], io)).toBe(0);
+
+    expect(stderr).toContain(
+      "Action enforced lock acquired: action_1 at resource revision 3, claim epoch 7",
+    );
+    expect(stderr).toContain("Before reporting completion: grp read");
+    expect(stderr).toContain("Before publishing: grp read");
+    expect(stderr).toContain("grp action complete action_1 --revision=3 --epoch=7");
+    expect(stderr).toContain("Completion records the participant's report");
+    expect(stderr).toContain("optional --result-text=TEXT");
+    expect(stderr).toContain(
+      "Artifact enforced editing lock acquired: artifact_1 at resource revision 4, claim epoch 8",
+    );
+    expect(stderr).toContain(
+      "grp artifact publish artifact_1 --revision=4 --base-revision=artifact_revision_1 --epoch=8 --file=PATH",
+    );
+    expect(stderr).toContain("grp artifact release artifact_1 --epoch=8");
+  });
+
+  it("builds a typed exact-artifact action result without hand-authored JSON", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    let body: Record<string, unknown> = {};
+    expect(
+      await runRoomCli(
+        [
+          "action",
+          "complete",
+          "action_1",
+          "--revision=3",
+          "--epoch=7",
+          "--result-artifact=artifact_1",
+          "--result-revision=artifact_revision_2",
+          `--result-sha256=${"ab".repeat(32)}`,
+        ],
+        {
+          stdout: () => {},
+          stderr: () => {},
+          fetch: withCoordinationDiscovery(async (_input, init) => {
+            body = JSON.parse(String(init?.body));
+            return jsonResponse({
+              action: { id: "action_1", revision: "4", status: "completed" },
+              state_revision: "42",
+            });
+          }),
+          env,
+        },
+      ),
+    ).toBe(0);
+    expect(body).toEqual({
+      expected_revision: "3",
+      claim_epoch: "7",
+      result: {
+        kind: "artifact_revision",
+        reference: {
+          artifact_id: "artifact_1",
+          revision_id: "artifact_revision_2",
+          sha256: "ab".repeat(32),
+        },
+      },
+    });
+  });
+
+  it("reports an action complete without requiring a result payload", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    let body: Record<string, unknown> = {};
+    expect(
+      await runRoomCli(["action", "complete", "action_1", "--revision=3"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch: withCoordinationDiscovery(async (_input, init) => {
+          body = JSON.parse(String(init?.body));
+          return jsonResponse({
+            action: { id: "action_1", revision: "4", status: "completed", result: null },
+            state_revision: "42",
+          });
+        }),
+        env,
+      }),
+    ).toBe(0);
+    expect(body).toEqual({ expected_revision: "3" });
+  });
+
+  it("rejects generic JSON action results before any request leaves the process", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    let fetchCalls = 0;
+    let stderr = "";
+    const code = await runRoomCli(
+      [
+        "action",
+        "complete",
+        "action_1",
+        "--revision=3",
+        '--result-json={"kind":"external_task","reference":{"token":"secret"}}',
+      ],
+      {
+        stdout: () => {},
+        stderr: (text) => {
+          stderr += text;
+        },
+        fetch: async () => {
+          fetchCalls += 1;
+          return jsonResponse({});
+        },
+        env,
+      },
+    );
+
+    expect(code).toBe(1);
+    expect(fetchCalls).toBe(0);
+    expect(stderr).toContain("grp action: unknown flag --result-json");
+  });
+
+  it("renders bounded working, action, and artifact state in ordinary reads", async () => {
+    const env = providerEnv(roomConfig());
+    let stdout = "";
+    expect(
+      await runRoomCli(["read", "--snapshot"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async () =>
+          jsonResponse({
+            slug: "abc123",
+            status: "open",
+            brief: "No question is open.",
+            current_through: 8,
+            working_signals: [
+              {
+                display_name: "Cobalt",
+                participant_id: "p_2",
+                kind: "drafting",
+                scope: { kind: "artifact", id: "artifact_1" },
+                summary: "Updating the redline",
+                expires_at: "2026-08-20T05:00:00Z",
+              },
+            ],
+            actions: [
+              {
+                id: "action_1",
+                revision: "2",
+                status: "in_progress",
+                title: "Draft",
+                baton_mode: "enforced",
+                claim: {
+                  holder_id: "p_2",
+                  epoch: "1",
+                  expires_at: "2026-08-20T05:00:00Z",
+                },
+              },
+              {
+                id: "action_2",
+                revision: "1",
+                status: "open",
+                title: "Research independently",
+                baton_mode: "none",
+                claim: null,
+              },
+            ],
+            artifacts: [
+              {
+                id: "artifact_1",
+                revision: "4",
+                name: "Joint draft",
+                current_revision_id: "artifact_revision_2",
+                baton_mode: "enforced",
+                claim: {
+                  holder_id: "p_2",
+                  epoch: "2",
+                  expires_at: "2026-08-20T05:00:00Z",
+                },
+                review_status: {
+                  current: [
+                    {
+                      display_name: "Argon",
+                      disposition: "approve",
+                      revision_id: "artifact_revision_2",
+                    },
+                  ],
+                  superseded: [
+                    {
+                      display_name: "Cobalt",
+                      disposition: "approve",
+                      revision_id: "artifact_revision_1",
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("Working now:");
+    expect(stdout).toContain("Cobalt — drafting artifact artifact_1: Updating the redline");
+    expect(stdout).toContain("action_1 [rev 2] in_progress — Draft");
+    expect(stdout).toContain("action_2 [rev 1] open — Research independently; parallel (no lock)");
+    expect(stdout).toContain("artifact_1 [rev 4] open — Joint draft; current artifact_revision_2");
+    expect(stdout).toContain("current editor p_2");
+    expect(stdout).not.toContain("LOCK");
+    expect(stdout).not.toContain("artifact wait");
+    expect(stdout.indexOf("current editor p_2")).toBeLessThan(stdout.indexOf("Next:"));
+    expect(stdout).not.toContain("CURRENT reviews");
+    expect(stdout).not.toContain("Superseded reviews");
+  });
+
+  it("renders native blocks and resolves a human block number to an exact atomic patch", async () => {
+    const env = providerEnv(
+      roomConfig({ observedStateRevision: "9", coordinationStateCapability: "experimental" }),
+    );
+    const digest = "ab".repeat(32);
+    let stdout = "";
+    let mutation: Record<string, unknown> | undefined;
+    const exactResponse = {
+      artifact: {
+        id: "artifact_1",
+        name: "Joint draft",
+        revision: "4",
+        baton_mode: "none",
+        claim: null,
+      },
+      revision: {
+        id: "artifact_revision_2",
+        ordinal: 2,
+        sha256: digest,
+        content: "First.\n\nSecond.\n",
+        blocks: [
+          {
+            id: "block_1",
+            number: 1,
+            kind: "paragraph",
+            content: "First.",
+            content_sha256: "11".repeat(32),
+          },
+          {
+            id: "block_2",
+            number: 2,
+            kind: "paragraph",
+            content: "Second.",
+            content_sha256: "22".repeat(32),
+          },
+        ],
+      },
+      reviews: [],
+    };
+    const fetch = withCoordinationDiscovery(async (input, init) => {
+      const request = new Request(input, init);
+      if (request.method === "POST") {
+        mutation = JSON.parse(String(init?.body));
+        return jsonResponse({
+          artifact: { id: "artifact_1", revision: "5", baton_mode: "none" },
+          revision: { id: "artifact_revision_3", sha256: digest },
+          state_revision: "10",
+        });
+      }
+      return jsonResponse(exactResponse);
+    });
+
+    expect(
+      await runRoomCli(["artifact", "read", "artifact_1"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch,
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("¶1 [paragraph; id block_1");
+    expect(stdout).toContain("¶2 [paragraph; id block_2");
+    expect(stdout).toContain("artifact replace artifact_1 N");
+    expect(stdout).toContain(
+      'working start --kind=drafting --scope=artifact --scope-id=artifact_1 --summary="Revising current artifact"',
+    );
+    expect(stdout).toContain("watch --artifact=artifact_1");
+    expect(stdout).not.toContain("artifact wait");
+    expect(stdout).toContain("this is not a lock");
+
+    expect(
+      await runRoomCli(
+        [
+          "artifact",
+          "replace",
+          "artifact_1",
+          "2",
+          "--revision=4",
+          "--base-revision=artifact_revision_2",
+          "--content=Second revised.",
+        ],
+        { stdout: () => {}, stderr: () => {}, fetch, env },
+      ),
+    ).toBe(0);
+    expect(mutation).toEqual({
+      expected_revision: "4",
+      base_revision_id: "artifact_revision_2",
+      operations: [
+        {
+          op: "replace",
+          block_id: "block_2",
+          expected_content_sha256: "22".repeat(32),
+          content: "Second revised.",
+        },
+      ],
+    });
+  });
+
+  it("supports multiline review bodies and makes historical review explicit", async () => {
+    const dir = mkdtempSync(pathJoin(tmpdir(), "grp-review-body-"));
+    const bodyFile = pathJoin(dir, "review.md");
+    writeFileSync(bodyFile, "Paragraph 2 needs a citation.\n\nOtherwise ready.\n", "utf8");
+    const env = providerEnv(roomConfig());
+    let body: Record<string, unknown> = {};
+    let stderr = "";
+    expect(
+      await runRoomCli(
+        [
+          "artifact",
+          "review",
+          "artifact_1",
+          "artifact_revision_1",
+          "--disposition=comment",
+          `--body-file=${bodyFile}`,
+          "--historical",
+        ],
+        {
+          stdout: () => {},
+          stderr: (text) => {
+            stderr += text;
+          },
+          fetch: withCoordinationDiscovery(async (_input, init) => {
+            body = JSON.parse(String(init?.body));
+            return jsonResponse({ review: { id: "review_1" }, state_revision: "10" });
+          }),
+          env,
+        },
+      ),
+    ).toBe(0);
+    expect(body).toMatchObject({
+      disposition: "comment",
+      body: "Paragraph 2 needs a citation.\n\nOtherwise ready.\n",
+      historical: true,
+    });
+    expect(stderr).toContain(
+      "Historical exact review recorded for artifact artifact_1, revision artifact_revision_1",
+    );
+    expect(stderr).not.toContain("--from-revision");
+  });
+
+  it("resource-amends the caller's existing exact-revision review without room-global contention", async () => {
+    const env = providerEnv(
+      roomConfig({
+        participantId: "participant_1",
+        observedStateRevision: "9",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    const requests: Request[] = [];
+    let mutation: Record<string, unknown> = {};
+    let stderr = "";
+    expect(
+      await runRoomCli(
+        [
+          "artifact",
+          "review",
+          "artifact_1",
+          "artifact_revision_1",
+          "--disposition=approve",
+          "--body=Ready for principals.",
+        ],
+        {
+          stdout: () => {},
+          stderr: (text) => {
+            stderr += text;
+          },
+          fetch: withCoordinationDiscovery(async (input, init) => {
+            const request = new Request(input, init);
+            requests.push(request);
+            if (request.method === "GET") {
+              return jsonResponse({
+                artifact: { id: "artifact_1" },
+                revision: { id: "artifact_revision_1" },
+                reviews: [
+                  {
+                    reviewer_id: "participant_1",
+                    revision: "3",
+                    disposition: "comment",
+                  },
+                ],
+              });
+            }
+            mutation = JSON.parse(String(init?.body));
+            return jsonResponse({
+              review: { id: "review_1", revision: "4", disposition: "approve" },
+              state_revision: "10",
+            });
+          }),
+          env,
+        },
+      ),
+    ).toBe(0);
+    expect(requests.map((request) => request.method)).toEqual(["GET", "PUT"]);
+    expect(requests[0]?.url).toBe(
+      "https://operator.example/api/rooms/abc123/artifacts/artifact_1?revision=artifact_revision_1",
+    );
+    expect(mutation).toMatchObject({
+      disposition: "approve",
+      body: "Ready for principals.",
+      expected_review_revision: "3",
+    });
+    expect(requests[1]?.headers.get("x-grp-expected-room-revision")).toBeNull();
+    expect(
+      JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8")).currentRoom.observedStateRevision,
+    ).toBe("9");
+    expect(stderr).toContain(
+      "Watch this artifact for its next state change: grp watch --artifact=artifact_1",
+    );
+    expect(stderr).not.toContain("artifact wait");
+  });
+
+  it("rejects --post-anyway for an exact-revision review because no room bypass is needed", async () => {
+    const env = providerEnv(roomConfig());
+    let calls = 0;
+    let stderr = "";
+    expect(
+      await runRoomCli(
+        [
+          "artifact",
+          "review",
+          "artifact_1",
+          "artifact_revision_1",
+          "--disposition=approve",
+          "--post-anyway",
+        ],
+        {
+          stdout: () => {},
+          stderr: (text) => {
+            stderr += text;
+          },
+          fetch: async () => {
+            calls += 1;
+            return jsonResponse({});
+          },
+          env,
+        },
+      ),
+    ).toBe(1);
+    expect(calls).toBe(0);
+    expect(stderr).toContain("unknown flag --post-anyway");
+  });
+
+  it("creates artifacts with optimistic exact-base editing and no lock by default", async () => {
+    const env = providerEnv(
+      roomConfig({ observedStateRevision: "9", coordinationStateCapability: "experimental" }),
+    );
+    let body: Record<string, unknown> = {};
+    let stderr = "";
+    expect(
+      await runRoomCli(["artifact", "create", "--name=Joint draft", "--content=Initial"], {
+        stdout: () => {},
+        stderr: (text) => {
+          stderr += text;
+        },
+        fetch: withCoordinationDiscovery(async (_input, init) => {
+          body = JSON.parse(String(init?.body));
+          return jsonResponse({
+            artifact: {
+              id: "artifact_1",
+              revision: "1",
+              current_revision_id: "artifact_revision_1",
+              status: "open",
+              baton_mode: "none",
+            },
+            current_revision: {
+              id: "artifact_revision_1",
+              sha256: "ab".repeat(32),
+            },
+            state_revision: "10",
+          });
+        }),
+        env,
+      }),
+    ).toBe(0);
+    expect(body).not.toHaveProperty("baton_mode");
+    expect(stderr).toContain("optimistic exact-base editing, no lock");
+    expect(stderr).not.toContain("artifact claim");
+    expect(stderr).not.toContain("artifact finalize");
+  });
+
+  it("rejects the legacy advisory baton instead of reviving courtesy-lock workflow", async () => {
+    const env = providerEnv(
+      roomConfig({ observedStateRevision: "9", coordinationStateCapability: "experimental" }),
+    );
+    let calls = 0;
+    let stderr = "";
+    const code = await runRoomCli(
+      ["artifact", "create", "--name=Joint draft", "--content=Initial", "--baton=advisory"],
+      {
+        stdout: () => {},
+        stderr: (text) => {
+          stderr += text;
+        },
+        fetch: async () => {
+          calls += 1;
+          return jsonResponse({});
+        },
+        env,
+      },
+    );
+    expect(code).toBe(1);
+    expect(calls).toBe(0);
+    expect(stderr).toContain("advisory batons are no longer part of the normal workflow");
+  });
+
+  it("waits without mutating when an enforced lock is already available", async () => {
+    const env = providerEnv(roomConfig());
+    let stdout = "";
+    let calls = 0;
+    let requestedUrl = "";
+    expect(
+      await runRoomCli(["artifact", "wait", "artifact_1", "--timeout=1"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input, init) => {
+          calls += 1;
+          requestedUrl = new Request(input, init).url;
+          return jsonResponse({ artifact: { id: "artifact_1", claim: null } });
+        },
+        env,
+      }),
+    ).toBe(0);
+    expect(calls).toBe(1);
+    expect(new URL(requestedUrl).searchParams.get("view")).toBe("metadata");
+    expect(stdout).toBe("Lock available for artifact artifact_1.\n");
+  });
+
+  it("returns an exact successor using artifact metadata only", async () => {
+    const env = providerEnv(roomConfig());
+    let stdout = "";
+    let requestedUrl = "";
+    expect(
+      await runRoomCli(
+        ["artifact", "wait", "artifact_1", "--from-revision=artifact_revision_1", "--timeout=1"],
+        {
+          stdout: (text) => {
+            stdout += text;
+          },
+          stderr: () => {},
+          fetch: async (input, init) => {
+            requestedUrl = new Request(input, init).url;
+            return jsonResponse({
+              artifact: {
+                id: "artifact_1",
+                kind: "external",
+                status: "open",
+                current_revision_id: "artifact_revision_2",
+              },
+            });
+          },
+          env,
+        },
+      ),
+    ).toBe(0);
+    expect(new URL(requestedUrl).searchParams.get("view")).toBe("metadata");
+    expect(stdout).toContain(
+      "Artifact artifact_1 advanced from artifact_revision_1 to artifact_revision_2",
+    );
+    expect(stdout).toContain("grp artifact read artifact_1 --revision-id=artifact_revision_2");
+  });
+
+  it("ignores unchanged metadata until the exact artifact advances", async () => {
+    vi.useFakeTimers();
+    try {
+      const env = providerEnv(roomConfig());
+      let calls = 0;
+      let stdout = "";
+      const result = runRoomCli(
+        ["artifact", "wait", "artifact_1", "--from-revision=artifact_revision_1", "--timeout=10"],
+        {
+          stdout: (text) => {
+            stdout += text;
+          },
+          stderr: () => {},
+          fetch: async () => {
+            calls += 1;
+            return jsonResponse({
+              artifact: {
+                id: "artifact_1",
+                status: "open",
+                current_revision_id: calls === 1 ? "artifact_revision_1" : "artifact_revision_2",
+              },
+            });
+          },
+          env,
+        },
+      );
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(await result).toBe(0);
+      expect(calls).toBe(2);
+      expect(stdout).toContain("advanced from artifact_revision_1 to artifact_revision_2");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects an absent exact revision and invalid timeout before network access", async () => {
+    const env = providerEnv(roomConfig());
+    for (const args of [
+      ["artifact", "wait", "artifact_1", "--from-revision"],
+      ["artifact", "wait", "artifact_1", "--from-revision=artifact_revision_1", "--timeout=3601"],
+    ]) {
+      let calls = 0;
+      expect(
+        await runRoomCli(args, {
+          stdout: () => {},
+          stderr: () => {},
+          fetch: async () => {
+            calls += 1;
+            return jsonResponse({});
+          },
+          env,
+        }),
+      ).toBe(1);
+      expect(calls).toBe(0);
+    }
+  });
+});
+
+describe("spec 228 action-centered coordination", () => {
+  const roomConfig = (extra: Record<string, unknown> = {}) => ({
+    providers: {},
+    currentRoom: {
+      slug: "abc123",
+      baseUrl: "https://operator.example",
+      participantId: "p_northline",
+      ...extra,
+    },
+  });
+
+  const participants = [
+    { id: "p_northline", display_name: "Northline" },
+    { id: "p_cobalt", display_name: "Cobalt" },
+  ];
+
+  it("caches the coordination capability instead of rediscovering it before each guarded write", async () => {
+    const env = providerEnv(
+      roomConfig({
+        token: "t_1",
+        observedStateRevision: "41",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    let discoveryCalls = 0;
+    let expectedHeader: string | null = null;
+    expect(
+      await runRoomCli(["discuss", "One guarded message"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          if (new URL(request.url).pathname === "/.well-known/grp.json") {
+            discoveryCalls += 1;
+            return jsonResponse({});
+          }
+          expectedHeader = request.headers.get("x-grp-expected-room-revision");
+          return jsonResponse({ ok: true, state_revision: "42" });
+        },
+        env,
+      }),
+    ).toBe(0);
+    expect(discoveryCalls).toBe(0);
+    expect(expectedHeader).toBe("41");
+  });
+
+  it("never arms a bypass even after repeated stale rejections and a separate read", async () => {
+    const env = providerEnv(
+      roomConfig({
+        token: "t_1",
+        lastSeenSeq: 8,
+        observedStateRevision: "41",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    let writes = 0;
+    let reads = 0;
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      if (request.method === "GET") {
+        reads += 1;
+        const event = 8 + reads;
+        return jsonResponse({
+          slug: "abc123",
+          status: "open",
+          brief: "No decision is open.",
+          state_revision: String(44 + reads),
+          current_through: event,
+          page: { through_event: event, room_event: event, complete: true },
+          new: [],
+        });
+      }
+      writes += 1;
+      if (writes <= 2) {
+        return jsonResponse(
+          {
+            error: {
+              code: "state.precondition_failed",
+              message: "room changed",
+              details: {
+                expected_state_revision: request.headers.get("x-grp-expected-room-revision"),
+                current_state_revision: String(44 + writes),
+                posted: false,
+              },
+            },
+          },
+          412,
+        );
+      }
+      return jsonResponse({ ok: true, state_revision: "47" });
+    };
+
+    let first = "";
+    expect(
+      await runRoomCli(["discuss", "Exact payload"], {
+        stdout: () => {},
+        stderr: (text) => {
+          first += text;
+        },
+        fetch,
+        env,
+      }),
+    ).toBe(1);
+    expect(writes).toBe(1);
+    expect(reads).toBe(0);
+    expect(first).not.toContain("COMPLETE CATCH-UP");
+    expect(first).toContain("No automatic retry was attempted");
+    expect(first).not.toContain("--force-stale-post");
+
+    expect(await runRoomCli(["read"], { stdout: () => {}, stderr: () => {}, fetch, env })).toBe(0);
+    expect(reads).toBe(1);
+
+    let second = "";
+    expect(
+      await runRoomCli(["discuss", "Exact payload"], {
+        stdout: () => {},
+        stderr: (text) => {
+          second += text;
+        },
+        fetch,
+        env,
+      }),
+    ).toBe(1);
+    expect(writes).toBe(2);
+    expect(reads).toBe(1);
+    expect(second).not.toContain("--force-stale-post");
+
+    expect(
+      await runRoomCli(["discuss", "Exact payload", "--force-stale-post"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch,
+        env,
+      }),
+    ).toBe(1);
+    expect(writes).toBe(2);
+    expect(reads).toBe(1);
+  });
+
+  it("renders durable action review history and filters one exact version", async () => {
+    const env = providerEnv(roomConfig({ token: "t_1" }));
+    let stdout = "";
+    expect(
+      await runRoomCli(["act", "reviews", "act_1", "--version=2"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input) => {
+          const url = new URL(String(input));
+          const pathname = url.pathname;
+          if (pathname.endsWith("/actions/act_1") && url.searchParams.get("reviews") === "1") {
+            return jsonResponse({
+              action: { id: "act_1" },
+              rounds: [
+                {
+                  event: 20,
+                  revision: { id: "rev_1", ordinal: 1, sha256: "a".repeat(64) },
+                  reviews: [
+                    {
+                      reviewer_id: "p_cobalt",
+                      reviewer_name: "Cobalt",
+                      disposition: "changes_requested",
+                      body: "Old concern",
+                    },
+                  ],
+                },
+                {
+                  event: 30,
+                  revision: { id: "rev_2", ordinal: 2, sha256: "b".repeat(64) },
+                  reviews: [
+                    {
+                      reviewer_id: "p_cobalt",
+                      reviewer_name: "Cobalt",
+                      disposition: "approve",
+                      body: "Concern resolved",
+                    },
+                  ],
+                },
+              ],
+            });
+          }
+          return jsonResponse({ action: { id: "act_1", revision: "7" } });
+        },
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("Artifact version 2 — revision rev_2; requested at event 30");
+    expect(stdout).toContain("Cobalt — approve");
+    expect(stdout).toContain("Concern resolved");
+    expect(stdout).not.toContain("Old concern");
+  });
+
+  it("publishes only bounded chat-composing presence", async () => {
+    const env = providerEnv(roomConfig());
+    let postedBody: unknown;
+    let stdout = "";
+    expect(
+      await runRoomCli(["discuss", "--composing"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          expect(new URL(request.url).pathname).toBe("/api/rooms/abc123/composing");
+          expect(request.method).toBe("POST");
+          postedBody = await request.json();
+          return jsonResponse({
+            composing: {
+              participant_id: "p_northline",
+              display_name: "Northline",
+              expires_at: "2026-08-22T12:00:00.000Z",
+            },
+          });
+        },
+        env,
+      }),
+    ).toBe(0);
+    expect(postedBody).toEqual({});
+    expect(stdout).toContain("Composing signal active.");
+    expect(stdout).toContain("It will clear when you post or when it expires.");
+    expect(stdout).not.toContain("action");
+    expect(stdout).not.toContain("watch");
+  });
+
+  it("renders composing as presence without telling peers to wait", async () => {
+    const env = providerEnv(roomConfig());
+    let stdout = "";
+    expect(
+      await runRoomCli(["read", "--snapshot"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async () =>
+          jsonResponse({
+            slug: "abc123",
+            status: "open",
+            decision: null,
+            composing: [{ participant_id: "p_cobalt", display_name: "Cobalt" }],
+            actions: [],
+            artifacts: [],
+          }),
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("Presence: Cobalt is composing a message.");
+    expect(stdout).not.toContain("Cobalt is composing a message.\nNext: grp watch");
+  });
+
+  it("starts one shared turn and directs non-holders to its scoped watch", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    const requests: Request[] = [];
+    let stdout = "";
+    const action = {
+      id: "act_1",
+      revision: "ar_1",
+      title: "Review the draft",
+      status: "active",
+      holder_id: "p_cobalt",
+      holder_epoch: "1",
+      mode: "handoff",
+      completion: "holder",
+    };
+
+    const code = await runRoomCli(
+      ["act", "start", "--title=Review the draft", "--to=cobalt", "--mode=handoff"],
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: withCoordinationDiscovery(async (input, init) => {
+          const request = new Request(input, init);
+          requests.push(request);
+          const pathname = new URL(request.url).pathname;
+          if (pathname === "/api/rooms/abc123" && request.method === "GET") {
+            return jsonResponse({ participants, actions: [action], decisions: [] });
+          }
+          if (pathname === "/api/rooms/abc123/actions" && request.method === "POST") {
+            expect(await request.json()).toEqual({
+              title: "Review the draft",
+              assignee_id: "p_cobalt",
+              start: true,
+              mode: "handoff",
+              completion: "holder",
+            });
+            return jsonResponse({ action, state_revision: "42" });
+          }
+          throw new Error(`unexpected request ${request.method} ${pathname}`);
+        }),
+        env,
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(
+      requests
+        .find((request) => request.method === "POST")
+        ?.headers.get("x-grp-expected-room-revision"),
+    ).toBe("41");
+    expect(stdout).toContain("Action act_1 started");
+    expect(stdout).toContain("completion holder");
+    expect(stdout).toContain("Inspect action: grp act read act_1");
+    expect(stdout).not.toContain("grp watch --artifact");
+    expect(stdout).not.toContain("defer");
+    expect(stdout).not.toContain("enforced lock");
+  });
+
+  it("starts one fixed all-participant action from the current participant roster", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    let postedBody: unknown;
+    let expectedRoomRevision: string | null = null;
+    let stdout = "";
+    const action = {
+      id: "act_all",
+      revision: "ar_1",
+      title: "Consult each principal",
+      status: "in_progress",
+      mode: "all",
+      completion: "all",
+      participants: [
+        { participant_id: "p_northline", status: "pending" },
+        { participant_id: "p_cobalt", status: "pending" },
+      ],
+      progress: { required: 2, pending: 2, working: 0, completed: 0, failed: 0 },
+    };
+
+    expect(
+      await runRoomCli(["act", "start", "--title=Consult each principal", "--mode=all"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: withCoordinationDiscovery(async (input, init) => {
+          const request = new Request(input, init);
+          const pathname = new URL(request.url).pathname;
+          if (pathname === "/api/rooms/abc123" && request.method === "GET") {
+            return jsonResponse({ participants, actions: [action], decisions: [] });
+          }
+          if (pathname === "/api/rooms/abc123/actions" && request.method === "POST") {
+            postedBody = await request.json();
+            expectedRoomRevision = request.headers.get("x-grp-expected-room-revision");
+            return jsonResponse({ action, state_revision: "42" });
+          }
+          throw new Error(`unexpected request ${request.method} ${pathname}`);
+        }),
+        env,
+      }),
+    ).toBe(0);
+    expect(postedBody).toEqual({
+      title: "Consult each principal",
+      start: true,
+      mode: "all",
+    });
+    expect(expectedRoomRevision).toBe("41");
+    expect(stdout).toContain("completion all");
+    expect(stdout).toContain("Inspect action: grp act read act_all");
+  });
+
+  it("declares group completion at start and rejects a completion override for all mode", async () => {
+    const env = providerEnv(roomConfig({ observedStateRevision: "41" }));
+    let postedBody: unknown;
+    const action = {
+      id: "act_group",
+      revision: "ar_1",
+      title: "Revise the shared plan",
+      status: "in_progress",
+      mode: "handoff",
+      completion: "group",
+      holder_id: "p_northline",
+    };
+
+    expect(
+      await runRoomCli(
+        ["act", "start", "--title=Revise the shared plan", "--mode=handoff", "--completion=group"],
+        {
+          stdout: () => {},
+          stderr: () => {},
+          fetch: withCoordinationDiscovery(async (input, init) => {
+            const request = new Request(input, init);
+            const pathname = new URL(request.url).pathname;
+            if (pathname === "/api/rooms/abc123/actions" && request.method === "POST") {
+              postedBody = await request.json();
+              return jsonResponse({ action, state_revision: "42" });
+            }
+            if (pathname === "/api/rooms/abc123" && request.method === "GET") {
+              return jsonResponse({ participants, actions: [action], decisions: [] });
+            }
+            throw new Error(`unexpected request ${request.method} ${pathname}`);
+          }),
+          env,
+        },
+      ),
+    ).toBe(0);
+    expect(postedBody).toMatchObject({ mode: "handoff", completion: "group" });
+
+    let error = "";
+    let fetches = 0;
+    expect(
+      await runRoomCli(
+        ["act", "start", "--title=Consult everyone", "--mode=all", "--completion=group"],
+        {
+          stdout: () => {},
+          stderr: (text) => {
+            error += text;
+          },
+          fetch: async () => {
+            fetches += 1;
+            return jsonResponse({});
+          },
+          env,
+        },
+      ),
+    ).toBe(1);
+    expect(error).toContain("--completion is not used with --mode=all");
+    expect(fetches).toBe(0);
+  });
+
+  it("takes an available shared turn from its exact action revision", async () => {
+    const env = providerEnv(roomConfig());
+    let postedBody: unknown;
+    let stdout = "";
+    const available = {
+      id: "act_turn",
+      revision: "ar_2",
+      title: "Revise the shared plan",
+      status: "active",
+      mode: "turn_taking",
+      holder_id: null,
+      available: true,
+    };
+    const taken = {
+      ...available,
+      revision: "ar_3",
+      holder_id: "p_northline",
+      holder_epoch: "2",
+      available: false,
+    };
+
+    expect(
+      await runRoomCli(["act", "take", "act_turn"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const pathname = new URL(request.url).pathname;
+          if (pathname.endsWith("/actions/act_turn") && request.method === "GET") {
+            return jsonResponse({ action: available });
+          }
+          if (pathname.endsWith("/actions/act_turn/claim") && request.method === "POST") {
+            postedBody = await request.json();
+            return jsonResponse({ action: taken });
+          }
+          if (pathname === "/api/rooms/abc123" && request.method === "GET") {
+            return jsonResponse({ participants, actions: [taken], decisions: [] });
+          }
+          throw new Error(`unexpected request ${request.method} ${pathname}`);
+        },
+        env,
+      }),
+    ).toBe(0);
+    expect(postedBody).toEqual({ expected_revision: "ar_2" });
+    expect(stdout).toContain("Action act_turn taken");
+    expect(stdout).toContain("Inspect action: grp act read act_turn");
+  });
+
+  it("shows a losing taker the current holder, lease expiry, and exact scoped watch", async () => {
+    const env = providerEnv(roomConfig());
+    let stderr = "";
+    const available = {
+      id: "act_turn",
+      revision: "ar_2",
+      title: "Revise the shared plan",
+      status: "active",
+      mode: "turn_taking",
+      holder_id: null,
+      available: true,
+    };
+
+    expect(
+      await runRoomCli(["act", "take", "act_turn"], {
+        stdout: () => {},
+        stderr: (text) => {
+          stderr += text;
+        },
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const pathname = new URL(request.url).pathname;
+          if (pathname.endsWith("/actions/act_turn") && request.method === "GET") {
+            return jsonResponse({ action: available });
+          }
+          if (pathname.endsWith("/actions/act_turn/claim") && request.method === "POST") {
+            return jsonResponse(
+              {
+                error: {
+                  code: "claim.active",
+                  message: "participant p_cobalt holds the action until 2026-08-22T12:34:56.000Z",
+                  hint: "watch this action until the current holder hands it off or completes it",
+                  details: {
+                    holder_id: "p_cobalt",
+                    expires_at: "2026-08-22T12:34:56.000Z",
+                  },
+                },
+              },
+              409,
+            );
+          }
+          throw new Error(`unexpected request ${request.method} ${pathname}`);
+        },
+        env,
+      }),
+    ).toBe(1);
+    expect(stderr).toContain("p_cobalt holds the action");
+    expect(stderr).toContain("2026-08-22T12:34:56.000Z");
+    expect(stderr).toContain("grp watch --action=act_turn");
+  });
+
+  it("returns a held shared turn to the group without selecting a successor", async () => {
+    const env = providerEnv(roomConfig());
+    let postedBody: unknown;
+    let stdout = "";
+    const before = {
+      id: "act_turn",
+      revision: "ar_3",
+      title: "Revise the shared plan",
+      status: "active",
+      mode: "turn_taking",
+      holder_id: "p_northline",
+      holder_epoch: "2",
+      available: false,
+    };
+    const after = {
+      ...before,
+      revision: "ar_4",
+      holder_id: null,
+      available: true,
+      handoff_note: "Ready for the next pass",
+    };
+
+    expect(
+      await runRoomCli(
+        ["act", "handoff", "act_turn", "--to=group", "--note=Ready for the next pass"],
+        {
+          stdout: (text) => {
+            stdout += text;
+          },
+          stderr: () => {},
+          fetch: async (input, init) => {
+            const request = new Request(input, init);
+            const pathname = new URL(request.url).pathname;
+            if (pathname.endsWith("/actions/act_turn") && request.method === "GET") {
+              return jsonResponse({ action: before });
+            }
+            if (pathname.endsWith("/actions/act_turn/handoff") && request.method === "POST") {
+              postedBody = await request.json();
+              return jsonResponse({ action: after });
+            }
+            if (pathname === "/api/rooms/abc123" && request.method === "GET") {
+              return jsonResponse({ participants, actions: [after], decisions: [] });
+            }
+            throw new Error(`unexpected request ${request.method} ${pathname}`);
+          },
+          env,
+        },
+      ),
+    ).toBe(0);
+    expect(postedBody).toEqual({
+      expected_revision: "ar_3",
+      to_group: true,
+      note: "Ready for the next pass",
+    });
+    expect(stdout).toContain("Action act_turn handed off");
+    expect(stdout).toContain("Inspect action: grp act read act_turn");
+  });
+
+  it("renders an ordinary room read with one literal shared-turn watch", async () => {
+    const env = providerEnv(
+      roomConfig({
+        token: "t_northline",
+        observedStateRevision: "10",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    let stdout = "";
+    expect(
+      await runRoomCli(["read", "--snapshot"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async () =>
+          jsonResponse({
+            slug: "abc123",
+            status: "open",
+            role: "participant",
+            state_revision: "10",
+            brief: "No question is open.",
+            decision: null,
+            discussion: [],
+            working_signals: [],
+            actions: [
+              {
+                id: "act_1",
+                revision: "4",
+                title: "Confirm constraints with the principal",
+                status: "in_progress",
+                holder_id: "p_cobalt",
+                mode: "turn_taking",
+              },
+            ],
+            artifacts: [],
+          }),
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("Shared actions:");
+    expect(stdout).toContain(
+      "handoff; completion holder; holder p_cobalt; held by another participant",
+    );
+    expect(stdout).toContain("Next: grp watch --action=act_1");
+    expect(stdout.match(/grp watch/g)).toHaveLength(1);
+    expect(stdout).not.toContain("Wait for what's next: grp watch");
+    expect(stdout).not.toContain("grp watch --action=ACTION_ID");
+    expect(stdout).not.toContain("LOCK");
+    expect(stdout).not.toContain("baton");
+    expect(stdout).not.toContain("defer");
+    expect(stdout).not.toContain("action wait");
+  });
+
+  it("routes an active artifact lock through the holder action's filtered watch", async () => {
+    const env = providerEnv(
+      roomConfig({
+        token: "t_northline",
+        observedStateRevision: "10",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    let stdout = "";
+    expect(
+      await runRoomCli(["read", "--snapshot"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async () =>
+          jsonResponse({
+            slug: "abc123",
+            status: "open",
+            role: "participant",
+            state_revision: "10",
+            brief: "No question is open.",
+            decision: null,
+            discussion: [],
+            working_signals: [],
+            actions: [
+              {
+                id: "act_edit",
+                revision: "4",
+                title: "Revise the shared plan",
+                status: "in_progress",
+                holder_id: "p_cobalt",
+                holder_display_name: "Cobalt",
+                target_artifact_id: "doc_1",
+                mode: "turn_taking",
+              },
+            ],
+            artifacts: [
+              {
+                id: "doc_1",
+                revision: "6",
+                name: "Shared plan",
+                current_revision_id: "rev_uuid_3",
+                baton_mode: "enforced",
+                claim: {
+                  holder_id: "p_cobalt",
+                  epoch: "2",
+                  expires_at: "2026-08-22T02:00:00Z",
+                },
+                review_status: {
+                  current: [{ display_name: "Northline", disposition: "approve" }],
+                  superseded: [],
+                },
+              },
+            ],
+          }),
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("Next: grp watch --action=act_edit");
+    expect(stdout).toContain("current editor Cobalt via action act_edit");
+    expect(stdout).not.toContain("current editor action holder");
+    expect(stdout).not.toContain("artifact wait");
+    expect(stdout).not.toContain("CURRENT reviews");
+  });
+
+  it("renders the calling editor and linked action without confusing their identifiers", async () => {
+    const env = providerEnv(
+      roomConfig({
+        token: "t_northline",
+        observedStateRevision: "10",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    let stdout = "";
+    expect(
+      await runRoomCli(["read", "--snapshot"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async () =>
+          jsonResponse({
+            slug: "abc123",
+            status: "open",
+            role: "participant",
+            state_revision: "10",
+            brief: "No question is open.",
+            decision: null,
+            discussion: [],
+            working_signals: [],
+            actions: [
+              {
+                id: "act_edit",
+                revision: "4",
+                title: "Revise the shared plan",
+                status: "in_progress",
+                holder_id: "p_northline",
+                holder_display_name: "Northline",
+                target_artifact_id: "doc_1",
+                mode: "turn_taking",
+              },
+            ],
+            artifacts: [
+              {
+                id: "doc_1",
+                revision: "6",
+                name: "Shared plan",
+                current_revision_id: "rev_uuid_3",
+                claim: null,
+              },
+            ],
+          }),
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("current editor you via action act_edit");
+    expect(stdout).not.toContain("current editor p_northline");
+    expect(stdout).not.toContain("current editor action holder");
+  });
+
+  it("uses filtered artifact watch for a lock-only state change", async () => {
+    vi.useFakeTimers();
+    try {
+      const env = providerEnv(roomConfig());
+      let artifactReads = 0;
+      let stdout = "";
+      const result = runRoomCli(["watch", "--artifact=doc_1", "--timeout=10"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input) => {
+          const request = new Request(input);
+          const url = new URL(request.url);
+          if (url.pathname === "/api/rooms/abc123") {
+            return jsonResponse({ participants, actions: [], decisions: [] });
+          }
+          if (url.pathname === "/api/rooms/abc123/artifacts/doc_1") {
+            artifactReads += 1;
+            return jsonResponse({
+              artifact: {
+                id: "doc_1",
+                revision: artifactReads === 1 ? "5" : "6",
+                status: "open",
+                current_revision_id: "rev_uuid_3",
+                claim:
+                  artifactReads === 1
+                    ? { holder_id: "p_cobalt", epoch: "2", expires_at: "later" }
+                    : null,
+              },
+              revision: { id: "rev_uuid_3", ordinal: 3 },
+            });
+          }
+          throw new Error(`unexpected request ${request.method} ${url.pathname}`);
+        },
+        env,
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(await result).toBe(0);
+      expect(artifactReads).toBe(2);
+      expect(stdout).toContain("Artifact doc_1 state changed at v3");
+      expect(stdout).toContain("grp artifact read doc_1");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("hands one current action directly to one named successor using hidden exact revision state", async () => {
+    const env = providerEnv(roomConfig());
+    const calls: Array<{ method: string; pathname: string; body?: unknown }> = [];
+    const before = {
+      id: "act_1",
+      revision: "ar_7",
+      title: "Negotiate terms",
+      status: "active",
+      holder_id: "p_northline",
+      holder_epoch: "3",
+      mode: "turn_taking",
+    };
+    const after = {
+      ...before,
+      revision: "ar_8",
+      previous_holder_id: "p_northline",
+      holder_id: "p_cobalt",
+      holder_epoch: "4",
+      handoff_note: "Check the governance section",
+    };
+    let stdout = "";
+
+    const code = await runRoomCli(
+      ["act", "handoff", "act_1", "--to=Cobalt", "--note=Check the governance section"],
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const pathname = new URL(request.url).pathname;
+          const body = request.method === "POST" ? await request.json() : undefined;
+          calls.push({ method: request.method, pathname, body });
+          if (pathname === "/api/rooms/abc123/actions/act_1" && request.method === "GET") {
+            return jsonResponse({ action: before });
+          }
+          if (pathname === "/api/rooms/abc123" && request.method === "GET") {
+            return jsonResponse({ participants, actions: [after], decisions: [] });
+          }
+          if (pathname === "/api/rooms/abc123/actions/act_1/handoff" && request.method === "POST") {
+            return jsonResponse({ action: after });
+          }
+          throw new Error(`unexpected request ${request.method} ${pathname}`);
+        },
+        env,
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(
+      calls.find((call) => call.pathname.endsWith("/handoff") && call.method === "POST")?.body,
+    ).toEqual({
+      expected_revision: "ar_7",
+      to_participant_id: "p_cobalt",
+      note: "Check the governance section",
+    });
+    expect(stdout).toContain("Action act_1 handed off");
+    expect(stdout).toContain("Inspect action: grp act read act_1");
+  });
+
+  it("attaches a new native artifact and returns its exact revision receipt", async () => {
+    const env = providerEnv(roomConfig());
+    const calls: Array<{ method: string; pathname: string; body?: unknown }> = [];
+    let stdout = "";
+    const action = {
+      id: "act_1",
+      revision: "ar_2",
+      status: "active",
+      holder_id: "p_northline",
+    };
+    const artifact = {
+      id: "doc_1",
+      name: "Term sheet",
+      revision: "rr_1",
+      current_revision_id: "rev_uuid_1",
+      current_sha256: "a".repeat(64),
+    };
+    const revision = {
+      id: "rev_uuid_1",
+      ordinal: 1,
+      sha256: "a".repeat(64),
+    };
+
+    const code = await runRoomCli(
+      [
+        "artifact",
+        "create",
+        "--name=Term sheet",
+        "--action=act_1",
+        "--content=Economics\n\nGovernance",
+      ],
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const pathname = new URL(request.url).pathname;
+          const body = request.method === "POST" ? await request.json() : undefined;
+          calls.push({ method: request.method, pathname, body });
+          if (pathname.endsWith("/actions/act_1") && request.method === "GET") {
+            return jsonResponse({ action });
+          }
+          if (pathname.endsWith("/artifacts") && request.method === "POST") {
+            return jsonResponse({ artifact, revision, action: { ...action, revision: "ar_3" } });
+          }
+          throw new Error(`unexpected request ${request.method} ${pathname}`);
+        },
+        env,
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(calls.find((call) => call.pathname.endsWith("/artifacts"))?.body).toEqual({
+      name: "Term sheet",
+      kind: "native",
+      content: "Economics\n\nGovernance",
+      action_id: "act_1",
+      expected_action_revision: "ar_2",
+    });
+    expect(stdout).toContain("Version: v1; revision rev_uuid_1");
+    expect(stdout).toContain(`SHA-256: ${"a".repeat(64)}`);
+  });
+
+  it("renders stable paragraph numbers while keeping internal ids and digests in JSON only", async () => {
+    const env = providerEnv(roomConfig());
+    const response = {
+      artifact: { id: "doc_1", name: "Term sheet", revision: "rr_4" },
+      revision: {
+        id: "rev_uuid_4",
+        ordinal: 4,
+        sha256: "b".repeat(64),
+        blocks: [
+          { id: "block_internal_1", number: 1, kind: "paragraph", content: "Economics" },
+          {
+            id: "block_internal_2",
+            number: 2,
+            kind: "paragraph",
+            content: "Governance",
+            content_sha256: "c".repeat(64),
+          },
+        ],
+      },
+    };
+    let human = "";
+    expect(
+      await runRoomCli(["artifact", "read", "doc_1"], {
+        stdout: (text) => {
+          human += text;
+        },
+        stderr: () => {},
+        fetch: async () => jsonResponse(response),
+        env,
+      }),
+    ).toBe(0);
+    expect(human).toContain("Version: v4");
+    expect(human).toContain("1  paragraph");
+    expect(human).toContain("2  paragraph");
+    expect(human).toContain("Revision: rev_uuid_4");
+    expect(human).not.toContain("block_internal_2");
+    expect(human).not.toContain("b".repeat(64));
+
+    let json = "";
+    expect(
+      await runRoomCli(["artifact", "read", "doc_1", "--json"], {
+        stdout: (text) => {
+          json += text;
+        },
+        stderr: () => {},
+        fetch: async () => jsonResponse(response),
+        env,
+      }),
+    ).toBe(0);
+    expect(json).toContain("rev_uuid_4");
+    expect(json).toContain("block_internal_2");
+    expect(json).toContain("b".repeat(64));
+  });
+
+  it("compares exact artifact revisions using unified-diff presentation", async () => {
+    const env = providerEnv(roomConfig());
+    const revision = (ordinal: number) => ({
+      artifact: { id: "doc_1", name: "Term sheet", revision: `rr_${ordinal}` },
+      revision: {
+        id: `rev_uuid_${ordinal}`,
+        ordinal,
+        content:
+          ordinal === 3
+            ? "Pre-money valuation is $32m.\nOld reporting term.\n"
+            : "Pre-money valuation is $33m.\nQuarterly information rights.\n",
+        blocks:
+          ordinal === 3
+            ? [
+                {
+                  id: "economics",
+                  number: 1,
+                  kind: "paragraph",
+                  content: "Pre-money valuation is $32m.",
+                  content_sha256: "a".repeat(64),
+                },
+                {
+                  id: "obsolete",
+                  number: 2,
+                  kind: "paragraph",
+                  content: "Old reporting term.",
+                  content_sha256: "b".repeat(64),
+                },
+              ]
+            : [
+                {
+                  id: "economics",
+                  number: 1,
+                  kind: "paragraph",
+                  content: "Pre-money valuation is $33m.",
+                  content_sha256: "c".repeat(64),
+                },
+                {
+                  id: "new-rights",
+                  number: 2,
+                  kind: "paragraph",
+                  content: "Quarterly information rights.",
+                  content_sha256: "d".repeat(64),
+                },
+              ],
+      },
+    });
+    let stdout = "";
+    expect(
+      await runRoomCli(["artifact", "diff", "doc_1", "--from-version=3", "--to-version=4"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input) => {
+          const version = new URL(new Request(input).url).searchParams.get("version");
+          return jsonResponse(revision(version === "3" ? 3 : 4));
+        },
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("--- artifact v3");
+    expect(stdout).toContain("+++ artifact v4");
+    expect(stdout).toContain("@@ -1,2 +1,2 @@");
+    expect(stdout).toContain("-Pre-money valuation is $32m.");
+    expect(stdout).toContain("+Pre-money valuation is $33m.");
+    expect(stdout).toContain("-Old reporting term.");
+    expect(stdout).toContain("+Quarterly information rights.");
+    expect(stdout).not.toContain("economics");
+  });
+
+  it("translates a human paragraph edit to exact resource-local patch coordinates", async () => {
+    const env = providerEnv(roomConfig());
+    let postedBody: unknown;
+    const current = {
+      artifact: {
+        id: "doc_1",
+        name: "Term sheet",
+        revision: "rr_4",
+        current_revision_id: "rev_uuid_4",
+        current_sha256: "b".repeat(64),
+      },
+      revision: {
+        id: "rev_uuid_4",
+        ordinal: 4,
+        sha256: "b".repeat(64),
+        blocks: [
+          {
+            id: "block_internal_2",
+            number: 2,
+            kind: "paragraph",
+            content: "Governance",
+            content_sha256: "c".repeat(64),
+          },
+        ],
+      },
+    };
+    const updated = {
+      artifact: { ...current.artifact, revision: "rr_5", current_revision_id: "rev_uuid_5" },
+      revision: { id: "rev_uuid_5", ordinal: 5, sha256: "d".repeat(64) },
+    };
+
+    expect(
+      await runRoomCli(
+        [
+          "artifact",
+          "replace",
+          "doc_1",
+          "2",
+          "--action=act_1",
+          "--content=Board and observer rights",
+        ],
+        {
+          stdout: () => {},
+          stderr: () => {},
+          fetch: async (input, init) => {
+            const request = new Request(input, init);
+            if (request.method === "GET" && request.url.includes("/actions/act_1")) {
+              return jsonResponse({
+                action: { id: "act_1", revision: "ar_2", completion: "group" },
+              });
+            }
+            if (request.method === "GET") return jsonResponse(current);
+            postedBody = await request.json();
+            return jsonResponse(updated);
+          },
+          env,
+        },
+      ),
+    ).toBe(0);
+    expect(postedBody).toEqual({
+      expected_revision: "rr_4",
+      base_revision_id: "rev_uuid_4",
+      action_id: "act_1",
+      operations: [
+        {
+          op: "replace",
+          block_id: "block_internal_2",
+          expected_content_sha256: "c".repeat(64),
+          content: "Board and observer rights",
+        },
+      ],
+    });
+  });
+
+  it("applies a numbered multi-edit patch as one exact atomic revision", async () => {
+    const env = providerEnv(roomConfig());
+    const dir = mkdtempSync(pathJoin(tmpdir(), "grp-artifact-patch-"));
+    const file = pathJoin(dir, "changes.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        base_revision: "rev_4",
+        edits: [
+          { op: "replace", block: 1, text: "Revised economics" },
+          { op: "insert-after", block: 2, text: "Information rights" },
+          {
+            op: "replace-text",
+            find: "Kestrel Labs",
+            replace: "Kestrel Signal",
+            expected: 2,
+          },
+        ],
+      }),
+      "utf8",
+    );
+    const current = {
+      artifact: { id: "doc_1", revision: "rr_4", current_revision_id: "rev_uuid_4" },
+      revision: {
+        id: "rev_uuid_4",
+        ordinal: 4,
+        blocks: [
+          {
+            id: "block_1",
+            number: 1,
+            content: "Economics for Kestrel Labs",
+            content_sha256: "a".repeat(64),
+          },
+          {
+            id: "block_2",
+            number: 2,
+            content: "Kestrel Labs governance",
+            content_sha256: "b".repeat(64),
+          },
+        ],
+      },
+    };
+    const updated = {
+      artifact: { id: "doc_1", revision: "rr_5", current_revision_id: "rev_uuid_5" },
+      revision: { id: "rev_uuid_5", ordinal: 5 },
+    };
+    let postedBody: unknown;
+    let stdout = "";
+    expect(
+      await runRoomCli(["artifact", "patch", "doc_1", "--action=act_1", `--file=${file}`], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          if (request.method === "GET" && request.url.includes("/actions/act_1")) {
+            return jsonResponse({
+              action: { id: "act_1", revision: "ar_2", completion: "group" },
+            });
+          }
+          if (request.method === "GET") return jsonResponse(current);
+          postedBody = await request.json();
+          return jsonResponse(updated);
+        },
+        env,
+      }),
+    ).toBe(0);
+    expect(postedBody).toEqual({
+      expected_revision: "rr_4",
+      base_revision_id: "rev_uuid_4",
+      action_id: "act_1",
+      operations: [
+        {
+          op: "replace",
+          block_id: "block_1",
+          expected_content_sha256: "a".repeat(64),
+          content: "Revised economics",
+        },
+        { op: "insert_after", anchor_block_id: "block_2", content: "Information rights" },
+        {
+          op: "replace_text",
+          find: "Kestrel Labs",
+          replace: "Kestrel Signal",
+          expected_matches: 2,
+        },
+      ],
+    });
+    expect(stdout).toContain("Artifact updated: rev_4 → rev_5");
+    expect(stdout).toContain("Applied 3 edits atomically.");
+    expect(stdout).toContain("Review the result: grp artifact read doc_1");
+    expect(stdout).toContain("Request exact review: grp act request-review act_1");
+    expect(stdout).toContain(
+      "Continue editing:  grp artifact patch doc_1 --action=act_1 --file=changes.json",
+    );
+    expect(stdout).not.toContain("Complete the owning action: grp act complete act_1");
+  });
+
+  it("points a whole-artifact edit at its exact bytes without assuming a completion path", async () => {
+    const env = providerEnv(roomConfig());
+    const current = {
+      artifact: {
+        id: "doc_1",
+        name: "Joint draft",
+        action_id: "act_1",
+        revision: "rr_4",
+        current_revision_id: "rev_uuid_4",
+      },
+      revision: { id: "rev_uuid_4", ordinal: 4, blocks: [] },
+    };
+    const updated = {
+      artifact: { ...current.artifact, revision: "rr_5", current_revision_id: "rev_uuid_5" },
+      revision: { id: "rev_uuid_5", ordinal: 5 },
+    };
+    let stdout = "";
+
+    expect(
+      await runRoomCli(
+        ["artifact", "publish", "doc_1", "--action=act_1", "--content=Revised exact bytes"],
+        {
+          stdout: (text) => {
+            stdout += text;
+          },
+          stderr: () => {},
+          fetch: async (input, init) => {
+            const request = new Request(input, init);
+            if (request.method === "GET" && request.url.includes("/actions/act_1")) {
+              return jsonResponse({
+                action: { id: "act_1", revision: "ar_2", completion: "group" },
+              });
+            }
+            if (request.method === "GET") return jsonResponse(current);
+            return jsonResponse(updated);
+          },
+          env,
+        },
+      ),
+    ).toBe(0);
+    expect(stdout).toContain("Artifact doc_1 updated.");
+    expect(stdout).toContain(
+      "Inspect exact revision: grp artifact read doc_1 --revision-id=rev_uuid_5",
+    );
+    expect(stdout).not.toContain("Complete the owning action: grp act complete act_1");
+  });
+
+  it("rejects a stale named patch base without attempting a write", async () => {
+    const env = providerEnv(roomConfig());
+    const dir = mkdtempSync(pathJoin(tmpdir(), "grp-artifact-stale-patch-"));
+    const file = pathJoin(dir, "changes.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        base_revision: "rev_3",
+        edits: [{ op: "delete", block: 1 }],
+      }),
+      "utf8",
+    );
+    let writes = 0;
+    let stderr = "";
+    expect(
+      await runRoomCli(["artifact", "patch", "doc_1", "--action=act_1", `--file=${file}`], {
+        stdout: () => {},
+        stderr: (text) => {
+          stderr += text;
+        },
+        fetch: async (_input, init) => {
+          if (init?.method === "POST") writes += 1;
+          return jsonResponse({
+            artifact: { id: "doc_1", revision: "rr_4", current_revision_id: "rev_uuid_4" },
+            revision: { id: "rev_uuid_4", ordinal: 4, blocks: [] },
+          });
+        },
+        env,
+      }),
+    ).toBe(1);
+    expect(writes).toBe(0);
+    expect(stderr).toContain("Artifact changed since patch base rev_3");
+    expect(stderr).toContain("Nothing was written");
+    expect(stderr).toContain("grp artifact read doc_1");
+  });
+
+  it("preserves a block-patch explanation instead of mislabeling it as a concurrent edit", async () => {
+    const env = providerEnv(roomConfig());
+    const dir = mkdtempSync(pathJoin(tmpdir(), "grp-artifact-invalid-block-patch-"));
+    const file = pathJoin(dir, "changes.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        base_revision: "rev_4",
+        edits: [{ op: "replace", block: 1, text: "One paragraph\n\nA second paragraph" }],
+      }),
+      "utf8",
+    );
+    const current = {
+      artifact: { id: "doc_1", revision: "rr_4", current_revision_id: "rev_uuid_4" },
+      revision: {
+        id: "rev_uuid_4",
+        ordinal: 4,
+        blocks: [
+          {
+            id: "block_1",
+            number: 1,
+            content: "Original",
+            content_sha256: "a".repeat(64),
+          },
+        ],
+      },
+    };
+    let stderr = "";
+    expect(
+      await runRoomCli(["artifact", "patch", "doc_1", "--action=act_1", `--file=${file}`], {
+        stdout: () => {},
+        stderr: (text) => {
+          stderr += text;
+        },
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          if (request.method === "GET") return jsonResponse(current);
+          return jsonResponse(
+            {
+              error: {
+                code: "artifact.block_conflict",
+                message:
+                  "a replacement or insertion must contain exactly one addressable CommonMark block",
+                hint: "read the exact current blocks and retry the atomic patch from that base",
+              },
+            },
+            409,
+          );
+        },
+        env,
+      }),
+    ).toBe(1);
+    expect(stderr).toContain("Artifact patch could not be applied to this exact revision.");
+    expect(stderr).toContain(
+      "a replacement or insertion must contain exactly one addressable CommonMark block",
+    );
+    expect(stderr).toContain(
+      "Replace with the first block, then add each remaining block with ordered insert-after edits in the same patch file against the same base revision.",
+    );
+    expect(stderr).toContain("Nothing was written.");
+    expect(stderr).not.toContain("Artifact changed while you were editing.");
+    expect(stderr).not.toContain("Read again:");
+    expect(stderr).not.toContain("read the exact current blocks");
+  });
+
+  it("requests action-owned review of the host-resolved exact artifact without a room-wide guard", async () => {
+    const env = providerEnv(
+      roomConfig({
+        token: "t_northline",
+        observedStateRevision: "10",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    const active = {
+      id: "act_1",
+      revision: "ar_9",
+      title: "Draft the term sheet",
+      status: "in_progress",
+      holder_id: "p_northline",
+      target_artifact_id: "doc_1",
+      mode: "turn_taking",
+      completion: "group",
+    };
+    const reviewing = {
+      ...active,
+      revision: "ar_10",
+      status: "in_review",
+      holder_id: null,
+      review: {
+        state: "pending",
+        artifact_revision_id: "rev_uuid_5",
+        requested_by_id: "p_northline",
+        required_participant_ids: ["p_northline", "p_cobalt"],
+        responded_participant_ids: ["p_northline"],
+      },
+    };
+    const artifact = {
+      artifact: {
+        id: "doc_1",
+        revision: "rr_5",
+        current_revision_id: "rev_uuid_5",
+        review_status: {
+          current: [
+            {
+              reviewer_id: "p_northline",
+              revision_id: "rev_uuid_5",
+              disposition: "approve",
+            },
+          ],
+          superseded: [],
+        },
+      },
+      revision: { id: "rev_uuid_5", sha256: "d".repeat(64) },
+    };
+    let postedBody: unknown;
+    let postedGuard: string | null = null;
+    let stdout = "";
+
+    expect(
+      await runRoomCli(["act", "request-review", "act_1", "--revision=rev_uuid_5"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: withCoordinationDiscovery(async (input, init) => {
+          const request = new Request(input, init);
+          const url = new URL(request.url);
+          if (url.pathname.endsWith("/actions/act_1") && request.method === "GET") {
+            return jsonResponse({ action: active });
+          }
+          if (url.pathname.endsWith("/artifacts/doc_1") && request.method === "GET") {
+            return jsonResponse(artifact);
+          }
+          if (url.pathname.endsWith("/actions/act_1/request-review") && request.method === "POST") {
+            postedGuard = request.headers.get("x-grp-expected-room-revision");
+            postedBody = await request.json();
+            return jsonResponse({ action: reviewing, ...artifact, state_revision: "11" });
+          }
+          if (url.pathname === "/api/rooms/abc123" && request.method === "GET") {
+            return jsonResponse({
+              participants,
+              actions: [reviewing],
+              artifacts: [artifact.artifact],
+            });
+          }
+          throw new Error(`unexpected request ${request.method} ${url.pathname}`);
+        }),
+        env,
+      }),
+    ).toBe(0);
+    expect(postedGuard).toBeNull();
+    expect(postedBody).toEqual({
+      expected_action_revision: "ar_9",
+      expected_artifact_revision: "rr_5",
+      artifact_revision_id: "rev_uuid_5",
+    });
+    expect(stdout).toContain("Review: pending; exact revision rev_uuid_5");
+    expect(stdout).toContain("Inspect action: grp act read act_1");
+    expect(stdout).not.toContain("grp accept");
+  });
+
+  it("reads the frozen bytes before recording one action review response", async () => {
+    const env = providerEnv(
+      roomConfig({
+        participantId: "p_cobalt",
+        token: "t_cobalt",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    const action = {
+      id: "act_1",
+      revision: "ar_10",
+      title: "Draft the term sheet",
+      status: "in_review",
+      holder_id: null,
+      target_artifact_id: "doc_1",
+      mode: "handoff",
+      completion: "group",
+      review: {
+        state: "pending",
+        artifact_revision_id: "rev_uuid_5",
+        requested_by_id: "p_northline",
+        required_participant_ids: ["p_northline", "p_cobalt"],
+        responded_participant_ids: ["p_northline"],
+      },
+    };
+    const exact = {
+      artifact: {
+        id: "doc_1",
+        revision: "rr_5",
+        name: "Term sheet",
+        current_revision_id: "rev_uuid_5",
+        review_status: {
+          current: [
+            {
+              reviewer_id: "p_northline",
+              revision_id: "rev_uuid_5",
+              disposition: "approve",
+            },
+          ],
+          superseded: [],
+        },
+      },
+      revision: {
+        id: "rev_uuid_5",
+        ordinal: 5,
+        sha256: createHash("sha256").update("# Exact terms\n").digest("hex"),
+        content: "# Exact terms\n",
+      },
+      reviews: [
+        {
+          id: "review_1",
+          revision: "1",
+          artifact_revision_id: "rev_uuid_5",
+          reviewer_id: "p_northline",
+          disposition: "approve",
+        },
+      ],
+    };
+    let stdout = "";
+    expect(
+      await runRoomCli(["act", "review", "act_1"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: withCoordinationDiscovery(async (input, init) => {
+          const request = new Request(input, init);
+          const url = new URL(request.url);
+          if (url.pathname.endsWith("/actions/act_1") && url.searchParams.get("reviews") === "1") {
+            return jsonResponse({ action, rounds: [] });
+          }
+          if (url.pathname.endsWith("/actions/act_1")) return jsonResponse({ action });
+          if (url.pathname.endsWith("/artifacts/doc_1")) return jsonResponse(exact);
+          throw new Error(`unexpected request ${request.method} ${url.pathname}`);
+        }),
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("# Exact terms");
+    expect(stdout).toContain("targets exact artifact revision rev_uuid_5");
+    expect(stdout).toContain("Required: record one review response for these exact bytes");
+    expect(stdout).toContain("grp act review act_1 --revision=rev_uuid_5 --approve");
+    expect(stdout).toContain("grp act review act_1 --revision=rev_uuid_5 --request-changes");
+    expect(stdout).toContain("--file=review.md");
+    expect(stdout).toContain("Review body limit: 32,000 characters");
+    expect(stdout).toContain("A response may be updated while this review round remains open");
+
+    let oversizedError = "";
+    let oversizedWrites = 0;
+    expect(
+      await runRoomCli(
+        [
+          "act",
+          "review",
+          "act_1",
+          "--revision=rev_uuid_5",
+          "--approve",
+          `--body=${"x".repeat(32_001)}`,
+        ],
+        {
+          stdout: () => {},
+          stderr: (text) => {
+            oversizedError += text;
+          },
+          fetch: withCoordinationDiscovery(async (input, init) => {
+            const request = new Request(input, init);
+            const url = new URL(request.url);
+            if (request.method === "PUT") oversizedWrites += 1;
+            if (url.pathname.endsWith("/actions/act_1")) return jsonResponse({ action });
+            if (url.pathname.endsWith("/artifacts/doc_1")) return jsonResponse(exact);
+            throw new Error(`unexpected request ${request.method} ${url.pathname}`);
+          }),
+          env,
+        },
+      ),
+    ).toBe(1);
+    expect(oversizedError).toContain("between 1 and 32,000 characters");
+    expect(oversizedWrites).toBe(0);
+
+    let postedBody: unknown;
+    stdout = "";
+    const completed = {
+      ...action,
+      revision: "ar_11",
+      status: "completed",
+      review: { ...action.review, state: "approved" },
+      result: {
+        kind: "artifact_revision",
+        reference: {
+          artifact_id: "doc_1",
+          revision_id: "rev_uuid_5",
+          sha256: "d".repeat(64),
+        },
+      },
+    };
+    expect(
+      await runRoomCli(
+        ["act", "review", "act_1", "--revision=rev_uuid_5", "--approve", "--body=Looks exact"],
+        {
+          stdout: (text) => {
+            stdout += text;
+          },
+          stderr: () => {},
+          fetch: withCoordinationDiscovery(async (input, init) => {
+            const request = new Request(input, init);
+            const url = new URL(request.url);
+            if (url.pathname.endsWith("/actions/act_1") && request.method === "GET") {
+              return jsonResponse({ action });
+            }
+            if (url.pathname.endsWith("/artifacts/doc_1") && request.method === "GET") {
+              return jsonResponse(exact);
+            }
+            if (url.pathname.endsWith("/actions/act_1/review") && request.method === "PUT") {
+              postedBody = await request.json();
+              return jsonResponse({ action: completed, ...exact });
+            }
+            if (url.pathname === "/api/rooms/abc123") {
+              return jsonResponse({
+                participants,
+                actions: [completed],
+                artifacts: [exact.artifact],
+              });
+            }
+            throw new Error(`unexpected request ${request.method} ${url.pathname}`);
+          }),
+          env,
+        },
+      ),
+    ).toBe(0);
+    expect(postedBody).toEqual({
+      expected_action_revision: "ar_10",
+      artifact_revision_id: "rev_uuid_5",
+      disposition: "approve",
+      body: "Looks exact",
+    });
+    expect(stdout).toContain("State: completed");
+    expect(stdout).toContain("exact revision rev_uuid_5");
+  });
+
+  it("shows the editor every formal response after an exact review requests changes", async () => {
+    const env = providerEnv(
+      roomConfig({
+        participantId: "p_northline",
+        token: "t_northline",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    const action = {
+      id: "act_1",
+      revision: "ar_11",
+      title: "Draft the term sheet",
+      status: "in_progress",
+      holder_id: "p_northline",
+      target_artifact_id: "doc_1",
+      mode: "handoff",
+      completion: "group",
+      review: {
+        state: "changes_requested",
+        artifact_revision_id: "rev_uuid_5",
+        requested_by_id: "p_northline",
+        required_participant_ids: ["p_northline", "p_cobalt"],
+        responded_participant_ids: ["p_northline", "p_cobalt"],
+      },
+    };
+    const exact = {
+      artifact: {
+        id: "doc_1",
+        current_revision_id: "rev_uuid_5",
+        review_status: { current: [], superseded: [] },
+      },
+      revision: { id: "rev_uuid_5", ordinal: 5, sha256: "d".repeat(64) },
+      reviews: [
+        {
+          reviewer_id: "p_northline",
+          disposition: "approve",
+          body: null,
+        },
+        {
+          reviewer_id: "p_cobalt",
+          disposition: "changes_requested",
+          body: "Replace paragraph 4.\nKeep the defined term unchanged.",
+        },
+      ],
+    };
+    let stdout = "";
+    expect(
+      await runRoomCli(["act", "read", "act_1"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: withCoordinationDiscovery(async (input, init) => {
+          const request = new Request(input, init);
+          const url = new URL(request.url);
+          if (url.pathname.endsWith("/actions/act_1")) return jsonResponse({ action });
+          if (url.pathname.endsWith("/artifacts/doc_1")) {
+            expect(url.searchParams.get("revision")).toBe("rev_uuid_5");
+            return jsonResponse(exact);
+          }
+          if (url.pathname === "/api/rooms/abc123") {
+            return jsonResponse({ participants, actions: [action], artifacts: [exact.artifact] });
+          }
+          throw new Error(`unexpected request ${request.method} ${url.pathname}`);
+        }),
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("Review round closed on exact artifact revision rev_uuid_5");
+    expect(stdout).toContain("Cobalt — changes requested");
+    expect(stdout).toContain("Replace paragraph 4.");
+    expect(stdout).toContain("Keep the defined term unchanged.");
+    expect(stdout).toContain("These responses are pinned to the exact revision above");
+  });
+
+  it("wakes a filtered action watcher when that participant owes an exact review", async () => {
+    const env = providerEnv(
+      roomConfig({
+        participantId: "p_cobalt",
+        token: "t_cobalt",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    const action = {
+      id: "act_1",
+      revision: "ar_10",
+      title: "Draft the term sheet",
+      status: "in_review",
+      holder_id: null,
+      target_artifact_id: "doc_1",
+      mode: "handoff",
+      completion: "group",
+      review: {
+        state: "pending",
+        artifact_revision_id: "rev_uuid_5",
+        requested_by_id: "p_northline",
+        required_participant_ids: ["p_northline", "p_cobalt"],
+        responded_participant_ids: ["p_northline"],
+      },
+    };
+    const artifact = {
+      id: "doc_1",
+      current_revision_id: "rev_uuid_5",
+      review_status: {
+        current: [
+          {
+            reviewer_id: "p_northline",
+            revision_id: "rev_uuid_5",
+            disposition: "approve",
+          },
+        ],
+        superseded: [],
+      },
+    };
+    let stdout = "";
+
+    expect(
+      await runRoomCli(["watch", "--action=act_1", "--timeout=10"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: withCoordinationDiscovery(async (input) => {
+          const url = new URL(new Request(input).url);
+          if (url.pathname === "/api/rooms/abc123") {
+            return jsonResponse({ participants, actions: [action], artifacts: [artifact] });
+          }
+          if (url.pathname.endsWith("/actions/act_1")) {
+            return jsonResponse({ action });
+          }
+          throw new Error(`unexpected request ${url.pathname}`);
+        }),
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("Review is open on exact artifact revision rev_uuid_5");
+    expect(stdout).toContain("Required: grp act review act_1");
+    expect(stdout).not.toContain("Nothing relevant changed");
+  });
+
+  it("tells a reviewer that a recorded response completes this review-round obligation", async () => {
+    const env = providerEnv(
+      roomConfig({
+        participantId: "p_cobalt",
+        token: "t_cobalt",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    const action = {
+      id: "act_1",
+      revision: "ar_11",
+      title: "Draft the term sheet",
+      status: "in_review",
+      holder_id: null,
+      target_artifact_id: "doc_1",
+      mode: "handoff",
+      completion: "group",
+      review: {
+        state: "pending",
+        artifact_revision_id: "rev_uuid_5",
+        requested_by_id: "p_northline",
+        required_participant_ids: ["p_northline", "p_cobalt", "p_neon"],
+        responded_participant_ids: ["p_northline", "p_cobalt"],
+      },
+    };
+    const artifact = {
+      id: "doc_1",
+      current_revision_id: "rev_uuid_5",
+      review_status: {
+        current: [
+          {
+            reviewer_id: "p_cobalt",
+            revision_id: "rev_uuid_5",
+            disposition: "changes_requested",
+          },
+        ],
+        superseded: [],
+      },
+    };
+    let stdout = "";
+
+    expect(
+      await runRoomCli(["act", "read", "act_1"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: withCoordinationDiscovery(async (input) => {
+          const url = new URL(new Request(input).url);
+          if (url.pathname.endsWith("/actions/act_1")) return jsonResponse({ action });
+          if (url.pathname === "/api/rooms/abc123") {
+            return jsonResponse({ participants, actions: [action], artifacts: [artifact] });
+          }
+          throw new Error(`unexpected request ${url.pathname}`);
+        }),
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("Your response is recorded: changes_requested");
+    expect(stdout).toContain("No review response is outstanding for you in this round");
+    expect(stdout).toContain("grp watch --action=act_1");
+  });
+
+  it("keeps group-completion rationale in discussion, outside the exact artifact result", async () => {
+    const env = providerEnv(roomConfig());
+    let fetches = 0;
+    let error = "";
+    expect(
+      await runRoomCli(["act", "complete", "act_1", "--result-text=Please approve this"], {
+        stdout: () => {},
+        stderr: (text) => {
+          error += text;
+        },
+        fetch: async () => {
+          fetches += 1;
+          return jsonResponse({
+            action: {
+              id: "act_1",
+              revision: "ar_9",
+              status: "in_progress",
+              holder_id: "p_northline",
+              target_artifact_id: "doc_1",
+              completion: "group",
+            },
+          });
+        },
+        env,
+      }),
+    ).toBe(1);
+    expect(fetches).toBe(1);
+    expect(error).toContain("group completion with an artifact uses exact review");
+    expect(error).toContain("grp act request-review act_1");
+  });
+
+  it("renders a group-completion read as one exact-result path, not a generic ballot workflow", async () => {
+    const env = providerEnv(
+      roomConfig({
+        token: "t_northline",
+        observedStateRevision: "11",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    const result = {
+      kind: "text",
+      reference: "The principal approves the revised terms.",
+    };
+    const action = {
+      id: "act_principal",
+      revision: "7",
+      title: "Consult the principal",
+      status: "awaiting_completion",
+      holder_id: "p_northline",
+      completion_proposed_by_id: "p_northline",
+      completion_decision_id: "decision_3",
+      mode: "independent",
+      completion: "group",
+      result,
+    };
+    const decision = {
+      id: "decision_3",
+      seq: 3,
+      question: 'Mark action "Consult the principal" complete with this exact result?',
+      options: [`Mark action complete with text result (sha256:${"a".repeat(64)})`],
+      status: "voting",
+      agreement: true,
+      choices_cast: 0,
+      eligible_voters: 2,
+      action_completion: {
+        action_id: "act_principal",
+        action_revision: "7",
+        result,
+        eligible: true,
+        accepted_by_you: false,
+      },
+    };
+    let stdout = "";
+
+    expect(
+      await runRoomCli(["read", "--snapshot"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async () =>
+          jsonResponse({
+            slug: "abc123",
+            status: "open",
+            role: "participant",
+            state_revision: "11",
+            brief: "An action completion decision is open.",
+            decision,
+            discussion: [],
+            working_signals: [],
+            participants,
+            actions: [action],
+            artifacts: [],
+          }),
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain('Exact text result: "The principal approves the revised terms."');
+    expect(stdout.match(/grp accept 1 --decision=3/g)).toHaveLength(1);
+    expect(stdout.match(/grp watch --action=act_principal/g)).toHaveLength(1);
+    expect(stdout).not.toContain('grp choose "<option>"');
+    expect(stdout).not.toContain('grp propose "..."');
+    expect(stdout).not.toContain("shared turn — non-holders watch");
+  });
+
+  it("renders a delta completion proposal as the exact-result path instead of generic choice advice", async () => {
+    const env = providerEnv(
+      roomConfig({
+        token: "t_cobalt",
+        observedStateRevision: "11",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    const result = {
+      kind: "artifact_revision",
+      reference: {
+        artifact_id: "doc_1",
+        revision_id: "rev_uuid_5",
+        sha256: "d".repeat(64),
+      },
+    };
+    const action = {
+      id: "act_1",
+      revision: "10",
+      title: "Revise the shared plan",
+      status: "awaiting_completion",
+      holder_id: "p_northline",
+      completion_proposed_by_id: "p_northline",
+      completion_decision_id: "decision_3",
+      mode: "handoff",
+      completion: "group",
+      result,
+    };
+    const decision = {
+      id: "decision_3",
+      seq: 3,
+      question: 'Mark action "Revise the shared plan" complete with this exact result?',
+      options: [
+        `Mark action complete with artifact doc_1 revision rev_uuid_5 (sha256:${"d".repeat(64)})`,
+      ],
+      status: "voting",
+      agreement: true,
+      action_completion: {
+        action_id: "act_1",
+        action_revision: "10",
+        result,
+        eligible: true,
+        accepted_by_you: false,
+      },
+    };
+    let stdout = "";
+
+    expect(
+      await runRoomCli(["read"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async () =>
+          jsonResponse({
+            slug: "abc123",
+            status: "open",
+            state: "seq 3 seeking agreement — 0/2 accepted",
+            your_status: "you have not chosen on the open decision",
+            decision,
+            new: [{ seq: 9, type: "action_completion_proposed", action_id: "act_1" }],
+            current_through: 9,
+            participants,
+            actions: [action],
+            artifacts: [],
+          }),
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("grp artifact read doc_1 --revision-id=rev_uuid_5");
+    expect(stdout).toContain("grp accept 1 --decision=3");
+    expect(stdout).toContain("grp watch --action=act_1");
+    expect(stdout).not.toContain('grp choose "<option>"');
+  });
+
+  it("wakes a filtered watcher for the completion decision instead of treating it as assigned work", async () => {
+    const env = providerEnv(roomConfig({ token: "t_northline" }));
+    const awaiting = {
+      id: "act_1",
+      revision: "ar_10",
+      title: "Draft the term sheet",
+      status: "awaiting_completion",
+      holder_id: "p_northline",
+      completion_proposed_by_id: "p_northline",
+      completion_decision_id: "decision_3",
+      mode: "turn_taking",
+      completion: "group",
+    };
+    let stdout = "";
+
+    expect(
+      await runRoomCli(["watch", "--action=act_1", "--timeout=10"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input) => {
+          const url = new URL(new Request(input).url);
+          if (url.pathname === "/api/rooms/abc123") {
+            return jsonResponse({ participants, actions: [awaiting], decisions: [] });
+          }
+          if (url.pathname.endsWith("/actions/act_1")) {
+            return jsonResponse({ action: awaiting });
+          }
+          if (url.pathname.endsWith("/next-action")) {
+            return jsonResponse({
+              status: "actionable",
+              decision: {
+                seq: 3,
+                question: 'Mark action "Draft the term sheet" complete with this exact result?',
+                status: "voting",
+                voting_ends_at: "2026-08-23T00:00:00.000Z",
+                completion_action_id: "act_1",
+              },
+            });
+          }
+          throw new Error(`unexpected request ${url.pathname}`);
+        },
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("The room needs your decision about action completion");
+    expect(stdout).toContain("grp act read act_1");
+    expect(stdout).toContain("grp accept 1 --decision=3");
+    expect(stdout).not.toContain("Action act_1 is now yours");
+  });
+
+  it("keeps an accepted participant waiting until the completion decision resolves", async () => {
+    vi.useFakeTimers();
+    try {
+      const env = providerEnv(roomConfig({ token: "t_northline" }));
+      const awaiting = {
+        id: "act_1",
+        revision: "ar_10",
+        title: "Draft the term sheet",
+        status: "awaiting_completion",
+        holder_id: "p_northline",
+        completion_proposed_by_id: "p_northline",
+        completion_decision_id: "decision_3",
+        mode: "turn_taking",
+      };
+      const completed = { ...awaiting, revision: "ar_11", status: "completed" };
+      let actionReads = 0;
+      let stdout = "";
+      const run = runRoomCli(["watch", "--action=act_1", "--timeout=10"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input) => {
+          const url = new URL(new Request(input).url);
+          if (url.pathname === "/api/rooms/abc123") {
+            const action = actionReads >= 2 ? completed : awaiting;
+            return jsonResponse({ participants, actions: [action], decisions: [] });
+          }
+          if (url.pathname.endsWith("/actions/act_1")) {
+            actionReads += 1;
+            return jsonResponse({ action: actionReads >= 2 ? completed : awaiting });
+          }
+          if (url.pathname.endsWith("/next-action")) {
+            return new Promise<Response>(() => undefined);
+          }
+          throw new Error(`unexpected request ${url.pathname}`);
+        },
+        env,
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(await run).toBe(0);
+      expect(actionReads).toBe(2);
+      expect(stdout).toContain("Action act_1 terminal");
+      expect(stdout).not.toContain("is now yours");
+      expect(stdout).not.toContain("grp act complete act_1");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resumes only to revise, then restores the group-completion path", async () => {
+    const env = providerEnv(
+      roomConfig({
+        token: "t_northline",
+        observedStateRevision: "11",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    const awaiting = {
+      id: "act_1",
+      revision: "ar_10",
+      title: "Consult the principal",
+      status: "awaiting_completion",
+      holder_id: "p_northline",
+      completion_proposed_by_id: "p_northline",
+      completion_decision_id: "decision_3",
+      mode: "independent",
+      completion: "group",
+      result: { kind: "text", reference: "Proceed." },
+    };
+    const resumed = {
+      ...awaiting,
+      revision: "ar_11",
+      status: "in_progress",
+      completion_decision_id: null,
+      completion_proposed_by_id: null,
+      result: null,
+    };
+    let body: unknown;
+    let guard: string | null = null;
+    let stdout = "";
+
+    expect(
+      await runRoomCli(
+        ["act", "resume", "act_1", "--reason=The principal supplied one correction"],
+        {
+          stdout: (text) => {
+            stdout += text;
+          },
+          stderr: () => {},
+          fetch: withCoordinationDiscovery(async (input, init) => {
+            const request = new Request(input, init);
+            const url = new URL(request.url);
+            if (url.pathname.endsWith("/actions/act_1") && request.method === "GET") {
+              return jsonResponse({ action: awaiting });
+            }
+            if (url.pathname.endsWith("/actions/act_1/resume") && request.method === "POST") {
+              guard = request.headers.get("x-grp-expected-room-revision");
+              body = await request.json();
+              return jsonResponse({ action: resumed, state_revision: "12" });
+            }
+            if (url.pathname === "/api/rooms/abc123" && request.method === "GET") {
+              return jsonResponse({ participants, actions: [resumed], decisions: [] });
+            }
+            throw new Error(`unexpected request ${request.method} ${url.pathname}`);
+          }),
+          env,
+        },
+      ),
+    ).toBe(0);
+    expect(guard).toBe("11");
+    expect(body).toEqual({
+      expected_revision: "ar_10",
+      reason: "The principal supplied one correction",
+    });
+    expect(stdout).toContain("Action act_1 resumed for revision");
+    expect(stdout).toContain("Inspect action: grp act read act_1");
+    expect(stdout).not.toContain("grp accept 1");
+  });
+
+  it("binds completion to the host's exact artifact result without asking the agent for hashes", async () => {
+    const env = providerEnv(roomConfig());
+    let completionBody: unknown;
+    const active = {
+      id: "act_1",
+      revision: "ar_9",
+      title: "Draft the term sheet",
+      status: "active",
+      holder_id: "p_northline",
+      target_artifact_id: "doc_1",
+      mode: "turn_taking",
+    };
+    const completed = {
+      ...active,
+      revision: "ar_10",
+      status: "completed",
+      result: {
+        kind: "artifact_revision",
+        reference: {
+          artifact_id: "doc_1",
+          revision_id: "rev_uuid_5",
+          sha256: "d".repeat(64),
+        },
+      },
+    };
+
+    expect(
+      await runRoomCli(["act", "complete", "act_1"], {
+        stdout: () => {},
+        stderr: () => {},
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const pathname = new URL(request.url).pathname;
+          if (request.method === "GET" && pathname.endsWith("/actions/act_1")) {
+            return jsonResponse({ action: active });
+          }
+          if (request.method === "POST" && pathname.endsWith("/actions/act_1/complete")) {
+            completionBody = await request.json();
+            return jsonResponse({ action: completed });
+          }
+          if (request.method === "GET" && pathname === "/api/rooms/abc123") {
+            return jsonResponse({ participants, actions: [completed], decisions: [] });
+          }
+          throw new Error(`unexpected request ${request.method} ${pathname}`);
+        },
+        env,
+      }),
+    ).toBe(0);
+    expect(completionBody).toEqual({ expected_revision: "ar_9" });
+  });
+
+  it("a filtered action watch returns on terminal state and stays one attention primitive", async () => {
+    const env = providerEnv(roomConfig());
+    const completed = {
+      id: "act_1",
+      revision: "ar_10",
+      title: "Draft the term sheet",
+      status: "completed",
+      holder_id: "p_cobalt",
+      mode: "turn_taking",
+    };
+    let stdout = "";
+    const code = await runRoomCli(["watch", "--action=act_1", "--timeout=1"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        const pathname = new URL(request.url).pathname;
+        if (pathname.endsWith("/actions/act_1")) return jsonResponse({ action: completed });
+        if (pathname === "/api/rooms/abc123") {
+          return jsonResponse({ participants, actions: [completed], decisions: [] });
+        }
+        throw new Error(`unexpected request ${request.method} ${pathname}`);
+      },
+      env,
+    });
+    expect(code).toBe(0);
+    expect(stdout).toContain("Action act_1 terminal.");
+    expect(stdout).toContain("Read room changes");
+  });
+
+  it("renders one takeover path when an exact action watch finds recovery", async () => {
+    const env = providerEnv(roomConfig());
+    const recoverable = {
+      id: "act_1",
+      revision: "ar_11",
+      title: "Check the shared draft",
+      status: "in_progress",
+      holder_id: "p_cobalt",
+      holder_epoch: "3",
+      mode: "turn_taking",
+      lease_expires_at: "2026-08-22T03:00:00.000Z",
+      recoverable: true,
+    };
+    let stdout = "";
+
+    expect(
+      await runRoomCli(["watch", "--action=act_1", "--timeout=1"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const pathname = new URL(request.url).pathname;
+          if (pathname.endsWith("/actions/act_1")) {
+            return jsonResponse({ action: recoverable });
+          }
+          if (pathname === "/api/rooms/abc123") {
+            return jsonResponse({ participants, actions: [recoverable], decisions: [] });
+          }
+          if (pathname.endsWith("/next-action")) return jsonResponse({ status: "timeout" });
+          throw new Error(`unexpected request ${request.method} ${pathname}`);
+        },
+        env,
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("Action act_1 recoverable.");
+    expect(stdout).toContain(
+      'grp act takeover act_1 --reason="Resuming after holder lease expiry"',
+    );
+    expect(stdout).not.toContain("grp watch --action=act_1");
+  });
+
+  it("makes broad watch wake on computed action recovery without a room event", async () => {
+    const env = providerEnv(roomConfig({ token: "t_northline", lastSeenSeq: 12 }));
+    const recoverable = {
+      id: "act_research",
+      revision: "ar_4",
+      title: "Research the source data",
+      status: "in_progress",
+      holder_id: "p_cobalt",
+      holder_epoch: "2",
+      mode: "turn_taking",
+      lease_expires_at: "2026-08-22T03:00:00.000Z",
+      recoverable: true,
+    };
+    let stdout = "";
+    let activityQuery: URLSearchParams | null = null;
+
+    expect(
+      await runRoomCli(["watch", "--timeout=30"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const url = new URL(request.url);
+          if (url.pathname.endsWith("/events/stream")) return new Promise<Response>(() => {});
+          if (url.pathname.endsWith("/next-action")) {
+            activityQuery = url.searchParams;
+            return jsonResponse({ status: "action_recovery", action: recoverable });
+          }
+          if (url.pathname === "/api/rooms/abc123") {
+            return jsonResponse({ participants, actions: [recoverable], decisions: [] });
+          }
+          throw new Error(`unexpected request ${request.method} ${url.pathname}`);
+        },
+        env,
+      }),
+    ).toBe(0);
+    expect(activityQuery?.get("for")).toBe("activity");
+    expect(activityQuery?.get("since_seq")).toBe("12");
+    expect(stdout).toContain("Action act_research recoverable.");
+    expect(stdout).toContain("grp act takeover act_research");
+    expect(stdout).not.toContain("no question is open");
+  });
+
+  it("projects recovery instead of decision-only copy when the broad timeout wins the race", async () => {
+    vi.useFakeTimers();
+    try {
+      const env = providerEnv(roomConfig({ token: "t_northline", lastSeenSeq: 12 }));
+      const recoverable = {
+        id: "act_principal",
+        revision: "ar_7",
+        title: "Confirm instructions with the principal",
+        status: "in_progress",
+        holder_id: "p_cobalt",
+        holder_epoch: "4",
+        mode: "turn_taking",
+        lease_expires_at: "2026-08-22T03:00:00.000Z",
+        recoverable: true,
+      };
+      let stdout = "";
+      const result = runRoomCli(["watch", "--timeout=1"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const url = new URL(request.url);
+          if (url.pathname.endsWith("/events/stream") || url.pathname.endsWith("/next-action")) {
+            return new Promise<Response>(() => {});
+          }
+          if (url.pathname === "/api/rooms/abc123") {
+            return jsonResponse({
+              slug: "abc123",
+              decision: null,
+              participants,
+              actions: [recoverable],
+            });
+          }
+          throw new Error(`unexpected request ${request.method} ${url.pathname}`);
+        },
+        env,
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await result).toBe(0);
+      expect(stdout).toContain("Action act_principal recoverable.");
+      expect(stdout).toContain("grp act takeover act_principal");
+      expect(stdout).not.toContain("no question is open");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects retired workflow nouns and unsafe external references before network access", async () => {
+    const env = providerEnv(roomConfig());
+    for (const argv of [
+      ["artifact", "wait", "doc_1"],
+      ["artifact", "review", "doc_1", "rev_1"],
+    ]) {
+      let stderr = "";
+      let fetches = 0;
+      expect(
+        await runRoomCli(argv, {
+          stdout: () => {},
+          stderr: (text) => {
+            stderr += text;
+          },
+          fetch: async () => {
+            fetches += 1;
+            return jsonResponse({});
+          },
+          env,
+        }),
+      ).toBe(1);
+      expect(stderr).toContain("use grp act and grp watch");
+      expect(fetches).toBe(0);
+    }
+
+    let unsafeFetches = 0;
+    let unsafeError = "";
+    expect(
+      await runRoomCli(
+        [
+          "artifact",
+          "create",
+          "--name=External",
+          "--kind=external",
+          "--action=act_1",
+          "--external-provider=git",
+          "--uri=https://secret@example.com/repo.git",
+          "--path=terms.md",
+          `--provider-revision=${"e".repeat(40)}`,
+          `--sha256=${"f".repeat(64)}`,
+        ],
+        {
+          stdout: () => {},
+          stderr: (text) => {
+            unsafeError += text;
+          },
+          fetch: async () => {
+            unsafeFetches += 1;
+            return jsonResponse({});
+          },
+          env,
+        },
+      ),
+    ).toBe(1);
+    expect(unsafeError).toContain("credential-free HTTPS");
+    expect(unsafeFetches).toBe(0);
+  });
+
+  it("teaches the three action modes and rejects the retired defer flag", async () => {
+    let help = "";
+    expect(
+      await runRoomCli(["act", "--help"], {
+        stdout: (text) => {
+          help += text;
+        },
+        stderr: () => {},
+        fetch: async () => {
+          throw new Error("help must not fetch");
+        },
+        env: providerEnv(roomConfig()),
+      }),
+    ).toBe(0);
+    expect(help).toContain("single   one holder works; peers may continue");
+    expect(help).toContain(
+      "handoff  one current holder; holder-scoped transitions require that holder",
+    );
+    expect(help).toContain("all      every required participant reports");
+    expect(help).toContain("all defaults to the joined participant roster");
+    expect(help).toContain("holder: report done and complete the action");
+    expect(help).toContain("group with an artifact: use request-review instead");
+    expect(help).toContain("every other eligible participant reviews the same bytes");
+    expect(help).toContain("unanimous exact-revision approval completes the action");
+    expect(help).toContain("Retract your pending group-completion proposal");
+    expect(help).toContain("grp artifact patch ARTIFACT_ID --action=ACTION_ID --file=changes.json");
+    expect(help).toContain("grp act request-review ACTION_ID");
+    expect(help).toContain("grp act review ACTION_ID --revision=REVISION_ID --approve");
+    expect(help).not.toContain("grp act submit");
+    expect(help).not.toContain("grp act withdraw");
+    expect(help).not.toContain("--defer");
+
+    let error = "";
+    let fetches = 0;
+    expect(
+      await runRoomCli(["act", "start", "--title=Check constraints", "--defer"], {
+        stdout: () => {},
+        stderr: (text) => {
+          error += text;
+        },
+        fetch: async () => {
+          fetches += 1;
+          return jsonResponse({});
+        },
+        env: providerEnv(roomConfig()),
+      }),
+    ).toBe(1);
+    expect(error).toContain("grp act: unknown flag --defer");
+    expect(fetches).toBe(0);
+  });
+
+  it("starts a handoff action with its initial native artifact in one CLI command", async () => {
+    const dir = mkdtempSync(pathJoin(tmpdir(), "grp-action-artifact-start-"));
+    const file = pathJoin(dir, "plan.md");
+    writeFileSync(file, "# Shared plan\n\nFirst exact version.\n", "utf8");
+    const env = providerEnv(
+      roomConfig({
+        observedStateRevision: "41",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    const requests: Array<{ path: string; body: unknown; guard: string | null }> = [];
+    let stdout = "";
+    const fetch = withCoordinationDiscovery(async (input, init) => {
+      const request = new Request(input, init);
+      const path = new URL(request.url).pathname;
+      requests.push({
+        path,
+        body: await request.json(),
+        guard: request.headers.get("x-grp-expected-room-revision"),
+      });
+      if (path.endsWith("/actions")) {
+        return jsonResponse({
+          action: {
+            id: "act_1",
+            revision: "ar_1",
+            title: "Revise the shared plan",
+            status: "in_progress",
+            holder_id: "p_me",
+            mode: "handoff",
+            completion: "group",
+          },
+          state_revision: "42",
+        });
+      }
+      if (path.endsWith("/artifacts")) {
+        return jsonResponse({
+          artifact: {
+            id: "doc_1",
+            revision: "rr_1",
+            current_revision_id: "rev_1",
+            name: "Shared plan",
+            action_id: "act_1",
+          },
+          current_revision: { id: "rev_1", ordinal: 1, sha256: "a".repeat(64) },
+          action: { id: "act_1", revision: "ar_2" },
+          state_revision: "43",
+        });
+      }
+      throw new Error(`unexpected request ${path}`);
+    });
+
+    expect(
+      await runRoomCli(
+        [
+          "act",
+          "start",
+          "--title=Revise the shared plan",
+          "--mode=handoff",
+          "--completion=group",
+          "--artifact-name=Shared plan",
+          `--artifact-file=${file}`,
+        ],
+        {
+          stdout: (text) => {
+            stdout += text;
+          },
+          stderr: () => {},
+          fetch,
+          env,
+        },
+      ),
+    ).toBe(0);
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toMatchObject({
+      path: "/api/rooms/abc123/actions",
+      guard: "41",
+      body: {
+        title: "Revise the shared plan",
+        start: true,
+        mode: "handoff",
+        completion: "group",
+      },
+    });
+    expect(requests[1]).toMatchObject({
+      path: "/api/rooms/abc123/artifacts",
+      guard: null,
+      body: {
+        name: "Shared plan",
+        kind: "native",
+        content: "# Shared plan\n\nFirst exact version.\n",
+        action_id: "act_1",
+        expected_action_revision: "ar_1",
+      },
+    });
+    expect(stdout).toContain("Artifact doc_1 created.");
+    expect(stdout).toContain("Action: act_1.");
+    expect(stdout).toContain("Version: v1; revision rev_1");
+  });
+
+  it("rejects invalid action-artifact convenience before any remote request", async () => {
+    const cases = [
+      {
+        argv: ["act", "start", "--title=Draft", "--artifact-name=Draft"],
+        message: "--artifact-name and --artifact-file must be used together",
+      },
+      {
+        argv: [
+          "act",
+          "start",
+          "--title=Draft",
+          "--mode=all",
+          "--artifact-name=Draft",
+          "--artifact-file=draft.md",
+        ],
+        message: "--mode=all cannot own one artifact",
+      },
+      {
+        argv: [
+          "act",
+          "start",
+          "--title=Draft",
+          "--artifact=doc_existing",
+          "--artifact-name=Draft",
+          "--artifact-file=draft.md",
+        ],
+        message: "either an existing --artifact target",
+      },
+    ];
+    for (const testCase of cases) {
+      let stderr = "";
+      let fetches = 0;
+      expect(
+        await runRoomCli(testCase.argv, {
+          stdout: () => {},
+          stderr: (text) => {
+            stderr += text;
+          },
+          fetch: async () => {
+            fetches += 1;
+            return jsonResponse({});
+          },
+          env: providerEnv(roomConfig()),
+        }),
+      ).toBe(1);
+      expect(fetches).toBe(0);
+      expect(stderr).toContain(testCase.message);
+    }
+  });
+
+  it("preserves and explains an action when the composed artifact request fails", async () => {
+    const dir = mkdtempSync(pathJoin(tmpdir(), "grp-action-artifact-recovery-"));
+    const file = pathJoin(dir, "plan.md");
+    writeFileSync(file, "# Shared plan\n", "utf8");
+    const env = providerEnv(
+      roomConfig({
+        observedStateRevision: "41",
+        coordinationStateCapability: "experimental",
+      }),
+    );
+    let writes = 0;
+    let stderr = "";
+    const fetch = withCoordinationDiscovery(async (input) => {
+      const path = new URL(new Request(input).url).pathname;
+      writes += 1;
+      if (path.endsWith("/actions")) {
+        return jsonResponse({
+          action: { id: "act_1", revision: "ar_1" },
+          state_revision: "42",
+        });
+      }
+      return jsonResponse(
+        { error: { code: "input.invalid", message: "artifact name is unavailable" } },
+        400,
+      );
+    });
+
+    expect(
+      await runRoomCli(
+        [
+          "act",
+          "start",
+          "--title=Revise the shared plan",
+          "--artifact-name=Shared plan",
+          `--artifact-file=${file}`,
+        ],
+        {
+          stdout: () => {},
+          stderr: (text) => {
+            stderr += text;
+          },
+          fetch,
+          env,
+        },
+      ),
+    ).toBe(1);
+    expect(writes).toBe(2);
+    expect(stderr).toContain("Action act_1 started, but its artifact was not created.");
+    expect(stderr).toContain("The action remains in the room; nothing was silently canceled.");
+    expect(stderr).toContain("grp artifact create");
+    expect(stderr).toContain("--action=act_1");
+    expect(stderr).toContain(file);
+  });
+
+  it("has no submit or withdraw compatibility command", async () => {
+    for (const argv of [
+      ["act", "submit", "act_1"],
+      ["act", "withdraw", "act_1"],
+      ["act", "submit", "--help"],
+    ]) {
+      let stderr = "";
+      let fetches = 0;
+      expect(
+        await runRoomCli(argv, {
+          stdout: () => {},
+          stderr: (text) => {
+            stderr += text;
+          },
+          fetch: async () => {
+            fetches += 1;
+            return jsonResponse({});
+          },
+          env: providerEnv(roomConfig()),
+        }),
+      ).toBe(1);
+      if (argv.at(-1) === "act_1") {
+        expect(stderr).toContain(`unknown act subcommand: ${argv[1]}`);
+        expect(stderr).toContain("Did you mean: grp act read act_1");
+      } else {
+        expect(stderr).toContain(
+          "usage: grp act start|read|reviews|take|handoff|request-review|review|review-note|complete|resume|fail|cancel|takeover",
+        );
+      }
+      expect(fetches).toBe(0);
+    }
+  });
+
+  it("explains the one completion verb on its focused help surfaces", async () => {
+    let complete = "";
+    expect(
+      await runRoomCli(["act", "complete", "--help"], {
+        stdout: (text) => {
+          complete += text;
+        },
+        stderr: () => {},
+        fetch: async () => {
+          throw new Error("help must not fetch");
+        },
+        env: providerEnv(roomConfig()),
+      }),
+    ).toBe(0);
+    expect(complete).toContain("Report that your action work is done.");
+    expect(complete).toContain("For holder completion");
+    expect(complete).toContain("For group completion");
+    expect(complete).toContain("group completion without an artifact");
+    expect(complete).toContain("provide exact --result-text");
+    expect(complete).toContain("use grp act request-review instead");
+    expect(complete).toContain("For all-participant actions");
+    expect(complete).not.toContain("submit");
+    expect(complete).not.toContain("withdraw");
+
+    let resume = "";
+    expect(
+      await runRoomCli(["act", "resume", "--help"], {
+        stdout: (text) => {
+          resume += text;
+        },
+        stderr: () => {},
+        fetch: async () => {
+          throw new Error("help must not fetch");
+        },
+        env: providerEnv(roomConfig()),
+      }),
+    ).toBe(0);
+    expect(resume).toContain(
+      "Resume your action when its group-completion proposal needs revision.",
+    );
+    expect(resume).toContain("Only the current completion proposer");
+    expect(resume).not.toContain("submit");
+    expect(resume).not.toContain("withdraw");
+  });
+
+  it("keeps the normal artifact help laconic and action-centered", async () => {
+    let stdout = "";
+    expect(
+      await runRoomCli(["artifact", "--help"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: async () => {
+          throw new Error("help must not fetch");
+        },
+        env: providerEnv(roomConfig()),
+      }),
+    ).toBe(0);
+    expect(stdout).toContain("--action=ID");
+    expect(stdout).not.toContain("artifact wait");
+    expect(stdout).not.toContain("artifact review");
+    expect(stdout).not.toContain("artifact finalize");
+    expect(stdout).not.toContain("claim");
+  });
+});
+
 function providerEnv(config: unknown): Record<string, string | undefined> {
   const dir = mkdtempSync(pathJoin(tmpdir(), "grp-room-provider-test-"));
   const path = pathJoin(dir, "config.json");
-  writeFileSync(path, `${JSON.stringify(config)}\n`, "utf8");
+  writeFileSync(path, `${JSON.stringify(observedFixture(config))}\n`, "utf8");
   return { GRP_CONFIG: path };
+}
+
+function operatorEnv(): Record<string, string | undefined> {
+  return {
+    ...providerEnv({ providers: {} }),
+    GRP_BASE_URL: "https://operator.example",
+  };
 }
 
 describe("spec 116 — run-8 edge pass", () => {
@@ -5861,7 +10826,7 @@ describe("spec 116 — run-8 edge pass", () => {
     expect(saved.currentRoom.participantId).toBe("p_creator");
   });
 
-  it("a resolution wake consumes its event (WR8-2: watch-after-watch never re-fires)", async () => {
+  it("a resolution wake records notification progress without consuming content", async () => {
     const env = providerEnv({ providers: {} });
     const config = JSON.parse(readFileSync(env.GRP_CONFIG as string, "utf8"));
     config.currentRoom = {
@@ -5897,10 +10862,11 @@ describe("spec 116 — run-8 edge pass", () => {
     // The wake block carried the full outcome, so the mark advances THROUGH
     // the event: the next watch must not re-fire on seq 9.
     const after = JSON.parse(readFileSync(env.GRP_CONFIG as string, "utf8"));
-    expect(after.currentRoom.lastSeenSeq).toBe(9);
+    expect(after.currentRoom.lastSeenSeq).toBe(4);
+    expect(after.currentRoom.lastNotifiedSeq).toBe(9);
   });
 
-  it("a discussion wake still parks before its event (delta carries the text)", async () => {
+  it("a discussion wake only updates its notification bookmark", async () => {
     const env = providerEnv({ providers: {} });
     const config = JSON.parse(readFileSync(env.GRP_CONFIG as string, "utf8"));
     config.currentRoom = {
@@ -5933,7 +10899,8 @@ describe("spec 116 — run-8 edge pass", () => {
     });
     expect(code).toBe(0);
     const after = JSON.parse(readFileSync(env.GRP_CONFIG as string, "utf8"));
-    expect(after.currentRoom.lastSeenSeq).toBe(6);
+    expect(after.currentRoom.lastSeenSeq).toBe(4);
+    expect(after.currentRoom.lastNotifiedSeq).toBe(7);
   });
 
   it("watch --timeout exits 0 with a nothing-new line (WR8-4)", async () => {
@@ -6195,20 +11162,274 @@ describe("spec 117 — collaboration defaults (CLI)", () => {
         stdout += t;
       },
       stderr: () => {},
-      fetch: async (_input, init) => {
+      fetch: withCoordinationDiscovery(async (_input, init) => {
         bodies.push(JSON.parse(String(init?.body)));
         return jsonResponse({
           ok: true,
           slug: "abc123",
           decision: { id: "d1", seq: 1, question: "Which package?", agreement: true },
         });
-      },
+      }, false),
       env,
     });
     expect(code).toBe(0);
     expect(bodies[0]).toMatchObject({ question: "Which package?", agreement: true });
     expect(stdout).toContain('Question opened (agreement): "Which package?"');
     expect(stdout).toContain("resolves only when every voter accepts the same option");
+    expect(stdout).not.toContain("Exact-document note");
+  });
+
+  it("cancels an open question behind a fresh room guard and preserves its record", async () => {
+    const requests: Array<{
+      method: string;
+      path: string;
+      body: unknown;
+      revision: string | null;
+    }> = [];
+    const env = providerEnv({
+      currentRoom: {
+        baseUrl: "https://operator.example",
+        slug: "abc123",
+        token: "t_1",
+        observedStateRevision: "41",
+        coordinationStateCapability: "experimental",
+      },
+      providers: {},
+    });
+    let stdout = "";
+    const code = await runRoomCli(["cancel", "1", "--reason=The signed source data changed"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: withCoordinationDiscovery(async (input, init) => {
+        const request = new Request(input, init);
+        requests.push({
+          method: request.method,
+          path: new URL(request.url).pathname,
+          body: await request.json(),
+          revision: request.headers.get("x-grp-expected-room-revision"),
+        });
+        return jsonResponse(
+          {
+            ok: true,
+            canceled: true,
+            slug: "abc123",
+            state_revision: "44",
+            decision: {
+              id: "d1",
+              seq: 1,
+              question: "Approve exact artifact v3?",
+              status: "resolved",
+              resolved_outcome: "canceled",
+            },
+            reason: "The signed source data changed",
+            receipt_hash: "sha256:canceled",
+          },
+          200,
+        );
+      }),
+      env,
+    });
+
+    expect(code).toBe(0);
+    expect(requests).toEqual([
+      {
+        method: "POST",
+        path: "/api/rooms/abc123/decisions/1/cancel",
+        body: { reason: "The signed source data changed" },
+        revision: "41",
+      },
+    ]);
+    expect(stdout).toContain("Decision #1 canceled.");
+    expect(stdout).toContain(
+      "Its question, options, choices, and abstentions remain in the record",
+    );
+    expect(stdout).toContain("Open a corrected question as a new decision");
+    expect(stdout).toContain("sha256:canceled");
+    expect(JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8")).currentRoom).toMatchObject({
+      observedStateRevision: "44",
+    });
+  });
+
+  it("does not expose replacement or a stale-write bypass for decision cancellation", async () => {
+    const env = providerEnv({
+      currentRoom: {
+        baseUrl: "https://operator.example",
+        slug: "abc123",
+        token: "t_1",
+        observedStateRevision: "41",
+      },
+      providers: {},
+    });
+    let calls = 0;
+    const errors: string[] = [];
+    const io = {
+      stdout: () => {},
+      stderr: (text: string) => errors.push(text),
+      fetch: async () => {
+        calls += 1;
+        return jsonResponse({});
+      },
+      env,
+    };
+
+    expect(await runRoomCli(["ask", "Changed premise?", "--replace"], io)).toBe(1);
+    expect(await runRoomCli(["cancel", "1", "--reason=Changed", "--post-anyway"], io)).toBe(1);
+    expect(calls).toBe(0);
+    expect(errors.join("\n")).toContain("grp ask: unknown flag --replace");
+    expect(errors.join("\n")).toContain("grp cancel: unknown flag --post-anyway");
+  });
+
+  it("does not advertise an unsupported bypass after a stale cancellation", async () => {
+    const conflict = {
+      error: {
+        code: "state.precondition_failed",
+        message: "room changed",
+        details: {
+          expected_state_revision: "41",
+          current_state_revision: "45",
+          posted: false,
+        },
+      },
+    };
+    const env = providerEnv({
+      currentRoom: {
+        baseUrl: "https://operator.example",
+        slug: "abc123",
+        token: "t_1",
+        observedStateRevision: "41",
+        coordinationStateCapability: "experimental",
+      },
+      providers: {},
+    });
+    let stderr = "";
+    expect(
+      await runRoomCli(["cancel", "1", "--reason=Changed"], {
+        stdout: () => {},
+        stderr: (text) => {
+          stderr += text;
+        },
+        fetch: withCoordinationDiscovery(async () => jsonResponse(conflict, 412)),
+        env,
+      }),
+    ).toBe(1);
+    expect(stderr).toContain("NOT CHANGED");
+    expect(stderr).toContain(
+      "Read current room state: grp read abc123 --base=https://operator.example",
+    );
+    expect(stderr).toContain(
+      "After incorporating the complete read, reconsider and retry your intended command",
+    );
+    expect(stderr).not.toContain("--post-anyway");
+
+    let stdout = "";
+    expect(
+      await runRoomCli(["cancel", "1", "--reason=Changed", "--json"], {
+        stdout: (text) => {
+          stdout += text;
+        },
+        stderr: () => {},
+        fetch: withCoordinationDiscovery(async () => jsonResponse(conflict, 412)),
+        env,
+      }),
+    ).toBe(1);
+    expect(JSON.parse(stdout)).not.toHaveProperty("bypass_flag");
+  });
+
+  it("requires a cancellation reason before contacting the room", async () => {
+    const env = providerEnv({
+      currentRoom: {
+        baseUrl: "https://operator.example",
+        slug: "abc123",
+        token: "t_1",
+        observedStateRevision: "41",
+      },
+      providers: {},
+    });
+    let calls = 0;
+    let stderr = "";
+    expect(
+      await runRoomCli(["cancel", "1"], {
+        stdout: () => {},
+        stderr: (text) => {
+          stderr += text;
+        },
+        fetch: async () => {
+          calls += 1;
+          return jsonResponse({});
+        },
+        env,
+      }),
+    ).toBe(1);
+    expect(calls).toBe(0);
+    expect(stderr).toContain('grp cancel <decision-number|id> --reason="..."');
+  });
+
+  it("points a colliding ask to authority-gated cancellation and a new decision", async () => {
+    const env = providerEnv({
+      currentRoom: {
+        baseUrl: "https://operator.example",
+        slug: "abc123",
+        token: "t_1",
+        observedStateRevision: "41",
+        coordinationStateCapability: "experimental",
+      },
+      providers: {},
+    });
+    let stderr = "";
+    const code = await runRoomCli(["ask", "Approve exact artifact v4?", "--option=Approve"], {
+      stdout: () => {},
+      stderr: (text) => {
+        stderr += text;
+      },
+      fetch: withCoordinationDiscovery(
+        async () => jsonResponse({ error: "a decision is already open (seq 1)" }, 409),
+        true,
+      ),
+      env,
+    });
+
+    expect(code).toBe(1);
+    expect(stderr).toContain("Questions are immutable");
+    expect(stderr).toContain('grp cancel 1 --reason="Premise changed"');
+    expect(stderr).toContain('grp ask "<corrected question>"');
+    expect(stderr).not.toContain("--replace");
+  });
+
+  it("does not infer an artifact workflow from agreement-question vocabulary", async () => {
+    const env = providerEnv({
+      currentRoom: {
+        baseUrl: "https://operator.example",
+        slug: "abc123",
+        token: "t_1",
+        observedStateRevision: "17",
+        coordinationStateCapability: "experimental",
+      },
+      providers: {},
+    });
+    let stdout = "";
+    const question = "Adopt the term sheet clauses as posted in the room?";
+    const code = await runRoomCli(["ask", question, "--agreement"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: withCoordinationDiscovery(async () =>
+        jsonResponse({
+          ok: true,
+          slug: "abc123",
+          state_revision: "18",
+          decision: { id: "d1", seq: 1, question, agreement: true },
+        }),
+      ),
+      env,
+    });
+
+    expect(code).toBe(0);
+    expect(stdout).toContain('Question opened (agreement): "Adopt the term sheet clauses');
+    expect(stdout).not.toContain("Exact-document note");
+    expect(stdout).not.toContain("grp artifact create");
   });
 
   it("grp accept is choose by another name and confirms as an acceptance", async () => {
@@ -6531,16 +11752,17 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
     expect(streamUrl?.searchParams.get("since_event_id")).toBeNull();
     expect(stdout).toContain('Decision opened by creator: "Choose a different legal move"');
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
-    expect(saved.currentRoom.lastSeenSeq).toBe(224);
+    expect(saved.currentRoom.lastSeenSeq).toBe(223);
+    expect(saved.currentRoom.lastNotifiedSeq).toBe(224);
   });
 
-  it("--full advances the mark through current_through (WR11-1)", async () => {
+  it("acknowledges the exact previously delivered snapshot without fetching", async () => {
     // Run 11's stale wakes: wake parks the mark at seq-1, the follow-up
-    // `read --full` used to leave it there, and the next bare watch
+    // `read --snapshot` used to leave it there, and the next bare watch
     // re-fired the same event. A full picture now advances the mark.
     const env = providerEnv(roomConfig({ lastSeenSeq: 30 }));
     let sinceParam: string | null = "unset";
-    const code = await runRoomCli(["read", "--full"], {
+    const code = await runRoomCli(["read", "--snapshot"], {
       stdout: () => {},
       stderr: () => {},
       fetch: async (input, init) => {
@@ -6551,6 +11773,7 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
     });
     expect(code).toBe(0);
     expect(sinceParam).toBeNull();
+    await acknowledgeThrough(env, 42);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(42);
   });
@@ -6612,7 +11835,8 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
     ).toBe(0);
     expect(firstWake).toContain("Choosing started by Neon");
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
-    expect(saved.currentRoom.lastSeenSeq).toBe(46); // consumed, not parked at 45
+    expect(saved.currentRoom.lastSeenSeq).toBe(44);
+    expect(saved.currentRoom.lastNotifiedSeq).toBe(46);
 
     // The seat votes without reading (no CLI read runs), then watches again.
     let secondWatch = "";
@@ -6630,7 +11854,7 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
     expect(secondWatch).toContain("Nothing new after 2s");
   }, 20000);
 
-  it("watch → read --full → watch does not re-fire the pointer wake", async () => {
+  it("watch → read --snapshot → watch does not re-fire the pointer wake", async () => {
     const env = providerEnv(roomConfig({ participantId: "p_me", lastSeenSeq: 30 }));
     const oldWake = JSON.stringify({
       id: "e42",
@@ -6691,10 +11915,11 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
     let saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     // Spec 125 (WR12-2) — decision.opened wakes are consumed (mark through
     // the wake seq), not parked: the wake line already carried the payload.
-    expect(saved.currentRoom.lastSeenSeq).toBe(42);
+    expect(saved.currentRoom.lastSeenSeq).toBe(30);
+    expect(saved.currentRoom.lastNotifiedSeq).toBe(42);
 
     expect(
-      await runRoomCli(["read", "--full"], {
+      await runRoomCli(["read", "--snapshot"], {
         stdout: () => {},
         stderr: () => {},
         fetch,
@@ -6702,7 +11927,8 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
       }),
     ).toBe(0);
     saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
-    expect(saved.currentRoom.lastSeenSeq).toBe(42);
+    expect(saved.currentRoom.lastSeenSeq).toBe(30);
+    expect(saved.currentRoom.lastNotifiedSeq).toBe(42);
 
     let secondWake = "";
     expect(
@@ -6719,7 +11945,7 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
     expect(secondWake).not.toContain("Old wake");
   });
 
-  it("the first-contact snapshot sets the mark, so the second read is a delta", async () => {
+  it("an acknowledged first-contact snapshot sets the mark for the next delta", async () => {
     const env = providerEnv(roomConfig());
     const code = await runRoomCli(["read"], {
       stdout: () => {},
@@ -6728,13 +11954,14 @@ describe("spec 119 — the watch-trust pass (CLI)", () => {
       env,
     });
     expect(code).toBe(0);
+    await acknowledgeThrough(env, 17);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(17);
   });
 
   it("old hosts without current_through leave the mark untouched", async () => {
     const env = providerEnv(roomConfig({ lastSeenSeq: 30 }));
-    const code = await runRoomCli(["read", "--full"], {
+    const code = await runRoomCli(["read", "--snapshot"], {
       stdout: () => {},
       stderr: () => {},
       fetch: async () => jsonResponse(snapshotBody()),
@@ -7186,6 +12413,7 @@ describe("spec 193 — safe room-read pagination", () => {
       baseUrl: "https://operator.example",
       token: "t_1",
       lastSeenSeq,
+      observedStateRevision: "opaque-10",
     },
   });
 
@@ -7225,11 +12453,12 @@ describe("spec 193 — safe room-read pagination", () => {
       role: "participant",
       new: entries.filter((entry) => entry.seq > since),
       current_through: 13,
+      state_revision: "opaque-13",
       more: {},
     });
   };
 
-  it("acknowledges only complete events on page one and leaves the suffix for the next read", async () => {
+  it("emits every complete event across local pages before advancing once", async () => {
     const env = providerEnv(roomConfig());
     let firstPage = "";
     expect(
@@ -7244,32 +12473,14 @@ describe("spec 193 — safe room-read pagination", () => {
     ).toBe(0);
 
     expect(firstPage).toContain("first complete event line 60");
-    expect(firstPage).not.toContain("second complete event line 1");
-    expect(firstPage).not.toContain("later event remains readable");
-    expect(firstPage).toContain("More unread activity remains: grp read");
-    expect(firstPage).toContain("Current through seq 11.");
-    let saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
-    expect(saved.currentRoom.lastSeenSeq).toBe(11);
-
-    let secondPage = "";
-    expect(
-      await runRoomCli(["read"], {
-        stdout: (text) => {
-          secondPage += text;
-        },
-        stderr: () => {},
-        fetch: deltaFetch,
-        env,
-      }),
-    ).toBe(0);
-
-    expect(secondPage).not.toContain("first complete event line 1");
-    expect(secondPage).toContain("second complete event line 60");
-    expect(secondPage).toContain("later event remains readable");
-    expect(secondPage).not.toContain("More unread activity remains");
-    expect(secondPage).toContain("Current through seq 13.");
-    saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
+    expect(firstPage).toContain("second complete event line 60");
+    expect(firstPage).toContain("later event remains readable");
+    expect(firstPage.length).toBeLessThanOrEqual(12_000);
+    expect(firstPage).toContain("PINNED CATCH-UP — 3 updates in source batch, through event 13");
+    await acknowledgeThrough(env, 13);
+    const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(13);
+    expect(saved.currentRoom.observedStateRevision).toBe("opaque-13");
   });
 
   it("renders one oversized event whole and advances through it", async () => {
@@ -7299,6 +12510,7 @@ describe("spec 193 — safe room-read pagination", () => {
     expect(code).toBe(0);
     expect(stdout).toContain("oversized event line 120");
     expect(stdout).not.toContain("More unread activity remains");
+    await acknowledgeThrough(env, 11);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(11);
   });
@@ -7328,11 +12540,46 @@ describe("spec 193 — safe room-read pagination", () => {
     });
 
     expect(code).toBe(0);
-    expect(stdout).toContain(`first-${"a".repeat(60_000)}`);
-    expect(stdout).not.toContain("second-");
-    expect(stdout).toContain("Current through seq 11.");
+    expect(stdout).toContain("INCOMPLETE");
+    expect(stdout.length).toBeLessThanOrEqual(12_000);
+    expect(stdout).not.toContain("--ack-through=12");
+    expect(
+      await runRoomCli(["read", "--ack-through=12"], { env, stdout: () => {}, stderr: () => {} }),
+    ).toBe(1);
+    let body = "";
+    const noFetch = vi.fn(async () => {
+      throw new Error("continuation must not fetch");
+    });
+    let fragments = 0;
+    while (stdout.includes("Continue this exact delivery:")) {
+      if (++fragments > 50) throw new Error("nonterminating delivery");
+      body +=
+        stdout
+          .split("Local delivery is not a fresh state check.\n\n")[1]
+          ?.split("\nContinue this exact delivery:")[0] ?? "";
+      const token = /Continue this exact delivery: .*--continue=([^\s]+)/.exec(stdout)?.[1];
+      stdout = "";
+      expect(
+        await runRoomCli(["read", `--continue=${token}`], {
+          env,
+          fetch: noFetch,
+          stdout: (text) => {
+            stdout += text;
+          },
+          stderr: () => {},
+        }),
+      ).toBe(0);
+      expect(stdout.length).toBeLessThanOrEqual(12_000);
+    }
+    body +=
+      stdout
+        .split("Local delivery is not a fresh state check.\n\n")[1]
+        ?.split("\nEND OF DELIVERY")[0] ?? "";
+    for (const entry of largeEntries) expect(body.includes(entry.said)).toBe(true);
+    expect(noFetch).not.toHaveBeenCalled();
+    await acknowledgeThrough(env, 12);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
-    expect(saved.currentRoom.lastSeenSeq).toBe(11);
+    expect(saved.currentRoom.lastSeenSeq).toBe(12);
   });
 
   it("keeps JSON reads complete and acknowledges the host high-water mark", async () => {
@@ -7348,12 +12595,20 @@ describe("spec 193 — safe room-read pagination", () => {
     });
 
     expect(code).toBe(0);
-    expect(JSON.parse(stdout).new).toHaveLength(3);
+    const parsed = JSON.parse(stdout);
+    expect(parsed.new).toHaveLength(3);
+    expect(parsed._cli).toMatchObject({
+      schema: "grp.read.v1",
+      kind: "catch_up",
+      complete: true,
+      cursor: { stored_before: 10, displayed_through: 13, advanced: false, stored_after: 10 },
+    });
+    await acknowledgeThrough(env, 13);
     const saved = JSON.parse(readFileSync(String(env.GRP_CONFIG), "utf8"));
     expect(saved.currentRoom.lastSeenSeq).toBe(13);
   });
 
-  it("honors limit and since-seq on the human timeline without moving the read mark", async () => {
+  it("honors limit and since on the human timeline without moving the read mark", async () => {
     const env = providerEnv(roomConfig());
     const seenSince: number[] = [];
     const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -7382,7 +12637,7 @@ describe("spec 193 — safe room-read pagination", () => {
 
     let since = "";
     expect(
-      await runRoomCli(["timeline", "--since-seq=11", "--limit=1"], {
+      await runRoomCli(["timeline", "--since=11", "--limit=1"], {
         stdout: (text) => {
           since += text;
         },
@@ -7489,12 +12744,12 @@ describe("spec 131 — multi-room attention and routing", () => {
         stdout += text;
       },
       stderr: () => {},
-      fetch: async (input, init) => {
+      fetch: withCoordinationDiscovery(async (input, init) => {
         const request = new Request(input, init);
         requestedUrl = request.url;
         requestedBody = JSON.parse(String(init?.body));
         return jsonResponse({ id: "m1" });
-      },
+      }, false),
       env,
     });
 
@@ -7502,15 +12757,37 @@ describe("spec 131 — multi-room attention and routing", () => {
     expect(requestedUrl).toBe("https://operator.example/api/rooms/nightroom2/discuss");
     expect(requestedBody).toEqual({ body: "I am ready" });
     expect(stdout).toContain("Discussion posted. Room: nightroom2.");
-    expect(stdout).toContain("Read the room: grp read nightroom2");
-    expect(stdout).toContain("If more work may follow: grp watch nightroom2");
+    expect(stdout).toContain("Read current state: grp read nightroom2");
+    expect(stdout).not.toContain("Stay with the room");
+    expect(readProviderConfig(env).currentRoom?.slug).toBe("dayroom01");
+  });
+
+  it("accepts an unambiguous remembered-room-first text command", async () => {
+    const env = providerEnv(multiRoomConfig());
+    let requestedUrl = "";
+    let requestedBody: Record<string, unknown> = {};
+    const code = await runRoomCli(["discuss", "nightroom2", "I am ready"], {
+      stdout: () => {},
+      stderr: () => {},
+      fetch: withCoordinationDiscovery(async (input, init) => {
+        const request = new Request(input, init);
+        requestedUrl = request.url;
+        requestedBody = JSON.parse(String(init?.body));
+        return jsonResponse({ id: "m1" });
+      }, false),
+      env,
+    });
+
+    expect(code).toBe(0);
+    expect(requestedUrl).toBe("https://operator.example/api/rooms/nightroom2/discuss");
+    expect(requestedBody).toEqual({ body: "I am ready" });
     expect(readProviderConfig(env).currentRoom?.slug).toBe("dayroom01");
   });
 
   it("keeps every next-action hint scoped after an explicit non-current read", async () => {
     const env = providerEnv(multiRoomConfig());
     let stdout = "";
-    const code = await runRoomCli(["read", "nightroom2", "--full"], {
+    const code = await runRoomCli(["read", "nightroom2", "--snapshot"], {
       stdout: (text) => {
         stdout += text;
       },
@@ -7573,7 +12850,7 @@ describe("spec 131 — multi-room attention and routing", () => {
     };
 
     expect(
-      await runRoomCli(["read", "--full", "nightroom2"], {
+      await runRoomCli(["read", "--snapshot", "nightroom2"], {
         stdout: () => {},
         stderr: () => {},
         fetch,
@@ -7712,6 +12989,69 @@ describe("spec 131 — multi-room attention and routing", () => {
     expect(stdout).toContain('CHOICE NEEDED  dayroom01  "Who should be eliminated?"');
     expect(stdout).toContain("NEW ACTIVITY   nightroom2  Neon: discussion posted");
     expect(JSON.stringify(readProviderConfig(env))).toBe(before);
+  });
+
+  it("surfaces a recoverable peer-recommended action in the inbox", async () => {
+    const env = providerEnv(multiRoomConfig());
+    let stdout = "";
+    const code = await runRoomCli(["inbox", "--json"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: async (input, init) => {
+        const url = new URL(new Request(input, init).url);
+        if (url.pathname.includes("dayroom01")) {
+          return jsonResponse({
+            status: "action_recovery",
+            action: {
+              id: "action-lease-expired",
+              title: "Check the revised model",
+              holder_id: "participant-silica",
+              mode: "turn_taking",
+              recoverable: true,
+            },
+          });
+        }
+        return jsonResponse({ status: "timeout" });
+      },
+      env,
+    });
+
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout).rooms[0]).toMatchObject({
+      slug: "dayroom01",
+      status: "action_recovery",
+      action_id: "action-lease-expired",
+      title: "Check the revised model",
+      holder_id: "participant-silica",
+    });
+
+    stdout = "";
+    const textCode = await runRoomCli(["inbox"], {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: () => {},
+      fetch: async (input, init) => {
+        const url = new URL(new Request(input, init).url);
+        return url.pathname.includes("dayroom01")
+          ? jsonResponse({
+              status: "action_recovery",
+              action: {
+                id: "action-lease-expired",
+                title: "Check the revised model",
+                holder_id: "participant-silica",
+              },
+            })
+          : jsonResponse({ status: "timeout" });
+      },
+      env,
+    });
+    expect(textCode).toBe(0);
+    expect(stdout).toContain(
+      'ACTION READY   dayroom01  "Check the revised model" — holder lease expired',
+    );
   });
 
   // Spec 142 (D8) — a multi-open room fans out to one CHOICE NEEDED row per

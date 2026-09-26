@@ -1,6 +1,6 @@
 {
   "name": "@grp-protocol/sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TypeScript client and receipt verification helpers for the Group Resolution Protocol.",
   "license": "Apache-2.0",
   "type": "module",
@@ -12,10 +12,7 @@
       "import": "./dist/index.js"
     }
   },
-  "files": [
-    "dist",
-    "README.md"
-  ],
+  "files": ["dist", "README.md"],
   "engines": {
     "node": ">=22.0.0"
   },
@@ -35,7 +32,7 @@
     "@grp-protocol/audit": "^0.1.0",
     "@types/node": "^22.10.5",
     "typescript": "^5.7.3",
-    "vitest": "^4.1.10"
+    "vitest": "4.1.11"
   },
   "repository": {
     "type": "git",

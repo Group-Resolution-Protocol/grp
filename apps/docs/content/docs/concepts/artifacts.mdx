@@ -1,0 +1,78 @@
+---
+title: Artifacts and exact review
+description: Immutable revisions, edit ownership, review rounds and authoritative results.
+---
+
+# Artifacts and exact review
+
+**Unreleased coordination candidate.** See [support](/docs/coordination-candidate).
+
+An artifact gives shared work a stable identity and immutable content revisions.
+It is useful when participants need to revise or approve the same bytes, rather
+than independently quote a document in discussion.
+
+Native artifacts contain Markdown or plain text. The host hashes the UTF-8
+content. External artifacts currently record an asserted Git commit, optional
+repository path and supplied SHA-256; the host does not fetch or verify those
+external bytes. A Google Doc URL is not a supported provider-verified artifact.
+Work in another service can still be reported by an action, without pretending
+the protocol has verified that service.
+
+## Identity, counters and ownership
+
+The artifact ID names the lineage. An immutable revision ID and its content
+hash identify exact bytes. A displayed content version (`v2`) is different from
+the artifact's mutable state revision counter. Claims and reviews can change
+state without changing content. Keep these identifiers separate.
+
+Publishing checks both the expected artifact state and exact base revision.
+There is no silent last-writer-wins merge. An action-owned native artifact uses
+single-writer edit control tied to that action's holder. An unrelated speaking
+turn does not grant edit ownership. Review/completion states can freeze editing
+even when a previous edit lease expired.
+
+Native updates may replace full content, synchronize a full document while
+retaining supported block identities, or apply explicit block/text operations.
+These forms are mutually exclusive. Block operations fence the affected text;
+they are not an excuse to publish against an old artifact base.
+
+## Exact review is a round, not a comment thread
+
+For an attached artifact on a group-completion action, the holder submits its
+current revision. That request records the holder's approval and fixes the
+required review set. The holder is cleared during review and the revision is
+frozen. Reviewers submit approval or a change request against that revision.
+
+Peer responses can arrive in either order without making each other stale;
+the round identity and each reviewer's own disposition remain fenced. A change
+request prevents unanimous approval, but the round remains pending until all
+required reviewers respond. `can_approve=false` exposes that current state.
+When all respond, changes return the action to its editor; otherwise unanimous
+approval records the exact result and completes it. A missing reviewer can leave
+the round pending. Authorized cancellation abandons it; no timer approves it.
+
+A revised round requires a new revision after requested changes. Later reads
+lead with the reviewer's diff when there is a trusted base; full text remains
+retrievable. A diff identifies changed bytes, not independently verified facts.
+Use [bounded reading and recovery](/docs/reading-and-recovery) to retrieve the
+whole review without losing its continuations.
+
+Standalone artifact reviews do not count as formal responses to an action's
+pending round. Late review notes preserve comments after a round ends. Correction
+notes link to the author's own formal response without changing its disposition
+or reopening a settled result. History shows both the original and correction.
+
+## Amendments and authoritative results
+
+A successor to a completed exact-reviewed action keeps the same artifact lineage
+and group-completion policy. Its next exact round includes the current required
+roster and retained original reviewers still present in the room. The old approved
+revision remains authoritative while an amendment is open; room conclusion is
+blocked by that open successor. A newly approved exact result replaces its
+predecessor as the reviewed head. Cancellation is not a replacement result.
+
+Room reads expose `authoritative_results` for independent reviewed deliverables.
+The singular compatibility pointer is meaningful only when there is one head.
+Focused action reads expose the latest direct `superseded_by` edge, including
+unsuccessful attempts; that edge alone does not certify a new approved result.
+These projections do not create a new action receipt or rewrite decision receipts.

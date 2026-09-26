@@ -1,6 +1,6 @@
 {
   "name": "@grp-protocol/engine",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pure-function reference implementations of GRP decision mechanisms.",
   "license": "Apache-2.0",
   "type": "module",
@@ -12,10 +12,7 @@
       "import": "./dist/engine/src/index.js"
     }
   },
-  "files": [
-    "dist/engine/src",
-    "README.md"
-  ],
+  "files": ["dist/engine/src", "README.md"],
   "engines": {
     "node": ">=22.0.0"
   },
@@ -35,7 +32,7 @@
     "@types/node": "^22.10.5",
     "fast-check": "^3.23.2",
     "typescript": "^5.7.3",
-    "vitest": "^4.1.10"
+    "vitest": "4.1.11"
   },
   "repository": {
     "type": "git",
