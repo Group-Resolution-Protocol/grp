@@ -16,5 +16,5 @@ export default {
   schema: "Schema reference",
   "rest-api": "REST API (OpenAPI)",
   interop: "Interop",
-  changelog: "Changelog",
+  changelog: "Specification history",
 };

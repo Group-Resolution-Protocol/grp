@@ -45,10 +45,11 @@ evidence. The [public findings](/examples/evidence-trials) are available now;
 the paper is a separate research artifact, not a condition for using or
 publishing the v0.1 protocol and tools.
 
-## Post-v0.1 research priorities
+## Research beyond the current release
 
 GRP will evolve from reproducible use, not from adding a primitive for every
-plausible problem. These are the first beta-learning priorities. Each may land
+plausible problem. The capabilities listed as shipped above are available now;
+the questions below concern extensions and broader evidence. Each may land
 as CLI ergonomics, an agent-harness pattern, an optional protocol capability,
 or no new feature at all after comparative testing.
 
@@ -66,18 +67,17 @@ prejudge where a successful design ultimately belongs.
   renewable, short-lived hint rather than ownership: it expires automatically
   if the session dies, never blocks another participant, may be ignored, and
   cannot extend proposal, voting, or settlement clocks.
-- **CLI — Read-before-write guard** — implemented in CLI 0.2
-  with distinct conversation and strict-work observations. Further research
-  concerns generalization, not adding a second stale-post bypass. Speaking turns
-  remain a separate optional room policy.
+- **Research — Freshness and participation across runtimes** — evaluate the
+  released scoped read guards and optional speaking turns with other runtimes
+  and workloads. The research question is how well they generalize, not whether
+  GRP should add these capabilities or restore a stale-post bypass.
 
 ### History retrieval and context efficiency
 
-- **CLI — Bounded replay and safe acknowledgment** — implemented in CLI 0.2:
-  pinned output pages, complete-event coverage, replay/continuation commands and
-  explicit acknowledgment. See [reading and recovery](/docs/reading-and-recovery).
-  Further work should test whether these mechanics reduce context loss across
-  runtimes, not assume the CLI can prove an agent understood its output.
+- **Research — Context delivery across runtimes** — test whether the released
+  [bounded pages and explicit acknowledgment](/docs/reading-and-recovery)
+  reduce consequential context loss across runtimes. Delivery and acknowledgment
+  cannot prove that an agent understood the output.
 - **Protocol — Cursor-page evidence** — the v0.1 host already supports forward
   sequence cursors and limits. Test whether independent clients actually need
   a standardized backward cursor, opaque continuation token, or complete-event
@@ -88,8 +88,8 @@ prejudge where a successful design ultimately belongs.
 
 - **Research — Generalize review convergence evidence** — actions, holder
   recovery, versioned artifacts, exact-revision review, reviewer-relative
-  diffs, append-only corrections, and neutral round checkpoints now have an
-  implementation path. Test them beyond document drafting before changing the
+  diffs, append-only corrections, and neutral round checkpoints are implemented
+  in GRP 0.2 and CLI 0.2.0. Test them beyond document drafting before changing the
   completion rule or adding semantic severity.
 - **Protocol — External artifact parity** — test whether provider-verified Git
   and document revisions need richer diff adapters while preserving the same
@@ -100,8 +100,9 @@ prejudge where a successful design ultimately belongs.
 - **Research — Concurrent Drafting trial** — preserve a public-safe version of the
   four-agent decree exercise as a sixth stress test. The v0.1 baseline reached
   a signed decision, then accumulated crossed reviews and corrections against
-  stale drafts. Future presence, action, artifact, CLI, and harness designs
-  should rerun the same task before they are promoted.
+  stale drafts. Subsequent development runs exercised actions, exact review,
+  bounded reads and speaking turns. A public, versioned evaluation should preserve
+  the task and distinguish those development observations from a controlled benchmark.
 - **Research — Broader measurement** — extend the existing five-scenario evidence beyond
   task completion. Measure independently judged answer and artifact quality,
   wall time, tokens, messages and tool calls, revision churn, stale-review and
@@ -129,7 +130,7 @@ prejudge where a successful design ultimately belongs.
 
 ## Later
 
-- **Protocol — Delegation chains** — liquid-democracy-style topical delegation (a v0.2 design; see the [city budget sketch](/examples/city-budget)).
+- **Protocol — Delegation chains** — liquid-democracy-style topical delegation remains a future design, not part of GRP 0.2; see the [city budget sketch](/examples/city-budget).
 - **Protocol — Reserved mechanisms** — `conviction_vote`, `budget_allocation`, `bilateral_negotiation` are reserved identifiers awaiting engine bindings.
 - **Agent runtime — Computer-use / browser seats** — first-class support for browser-bound consumer agents.
 - **CLI — Organization process operations** — evaluate whether an explicit non-interactive or supervised launch mode is useful after real user feedback. Any such mode would need opt-in permissions, per-seat logs, aggregate status/exit reporting, cancellation, and time bounds; the v0.1 evidence harness is not that product.
@@ -140,9 +141,9 @@ prejudge where a successful design ultimately belongs.
 
 ## Sequencing rationale
 
-v0.1 establishes the shape: primitives + conformance + worked examples. The
-five-scenario comparison and the concurrent-drafting failure now provide
-baselines for the research program above. That is evidence for post-v0.1
-experimentation, not a reason to expand the protocol at the launch line. v0.2
-fills in the next coordination, delegation, and mechanism work. v1.0 adds
-money. Federation comes when there's a second large operator.
+GRP 0.1 established the decision foundation, conformance tools and worked
+examples. GRP 0.2 adds shared work and the coordination improvements listed
+above. The original studies and subsequent development trials inform the next
+questions; they are not proof that every proposed extension is needed.
+Delegation, new mechanisms, federation and payment capabilities remain future
+work, without a promised release version or date.
