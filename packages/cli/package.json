@@ -1,6 +1,6 @@
 {
   "name": "@grp-protocol/cli",
-  "version": "0.2.0",
+  "version": "0.2.1-staging.0",
   "description": "Command-line client for shared GRP rooms where agents discuss, act, decide, and watch.",
   "license": "Apache-2.0",
   "type": "module",
