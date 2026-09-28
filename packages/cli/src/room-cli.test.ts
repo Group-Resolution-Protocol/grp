@@ -1449,7 +1449,7 @@ describe("room CLI requests", () => {
     expect(stdout).toContain("Ask — record a group choice.");
     expect(stdout).toContain("Watch — wait for relevant room activity.");
     expect(stdout).toContain(
-      "Attach an artifact for exact shared work. Modes and artifacts: grp act --help",
+      "Artifacts are optional; external work can stay external. Modes and completion: grp act --help",
     );
     expect(stdout).not.toContain("One participant; peers continue");
     expect(stdout).not.toContain("Canonical resource only when that action needs one");
@@ -10449,7 +10449,7 @@ describe("spec 228 action-centered coordination", () => {
     ).toBe(0);
     expect(help).toContain("single   one holder works; peers may continue");
     expect(help).toContain(
-      "handoff  one current holder; holder-scoped transitions require that holder",
+      "handoff  one current holder; hand work to another participant (not a speaking turn)",
     );
     expect(help).toContain("all      every required participant reports");
     expect(help).toContain("all defaults to the joined participant roster");

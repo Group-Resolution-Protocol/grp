@@ -186,7 +186,15 @@ describe("GRP CLI quickstart", () => {
     expect(renderDefaultsHelp()).toContain("Default option flow: fluid");
     expect(renderDefaultsHelp()).toContain("grp ask ... --collect-options");
     expect(renderDefaultsHelp()).toContain("--completion=group");
-    expect(renderDefaultsHelp()).toContain("In every mode, report done with `grp act complete`.");
+    expect(renderDefaultsHelp()).toContain(
+      "For group completion with an artifact, use `grp act request-review ID",
+    );
+    expect(renderDefaultsHelp()).toContain(
+      "In all-participant mode, `grp act complete` records only your required",
+    );
+    expect(renderDefaultsHelp()).not.toContain("In every mode, report done");
+    expect(renderDefaultsHelp()).toContain("subject to the configured settling period");
+    expect(renderDefaultsHelp()).not.toContain("the room\n    resolves");
     expect(renderDefaultsHelp()).not.toContain("grp act submit");
     expect(renderDefaultsHelp()).not.toContain("grp act withdraw");
   });
