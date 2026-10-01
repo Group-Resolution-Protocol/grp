@@ -5023,7 +5023,10 @@ async function writeActionResponse(
         );
       }
       if (event === "completion proposed")
-        lines.push("Completion proposed; this is not a completed action.");
+        lines.push(
+          "Completion proposed; this is not a completed action.",
+          "Proposing completion does not record your acceptance.",
+        );
       if (
         Array.isArray(review.required_participant_ids) &&
         Array.isArray(review.responded_participant_ids)
