@@ -28,7 +28,7 @@ import {
   insertForegroundBlock,
   renderForegroundBlock,
 } from "./foreground-cli.js";
-import { SHARED_ROOM_DEFINITION } from "./orientation-copy.js";
+import { ACTION_OVERVIEW, ARTIFACT_OVERVIEW, SHARED_ROOM_DEFINITION } from "./orientation-copy.js";
 import {
   clearCurrentRoom,
   findRememberedRoom,
@@ -3350,7 +3350,7 @@ function appendIdleGuidance(
     lines.push(
       "  Act — track work inside or outside GRP and what counts as complete:",
       `    ${grpCommand(`act start --title="Describe the work"${room}`)}`,
-      `    Attach an artifact for exact shared work. Modes and artifacts: ${grpCommand("act --help")}`,
+      `    Artifacts are optional; external work can stay external. Modes and completion: ${grpCommand("act --help")}`,
     );
   }
   if (hasRoomAction(response, "ask")) {
@@ -4164,7 +4164,7 @@ async function roomDiscuss(
       [
         `This discussion is ${body.length.toLocaleString("en-US")} characters.`,
         "",
-        "If this is shared work that others will revise or approve, preserve one exact version through an action and artifact.",
+        "Discussion exchanges context. An action tracks work and completion; an optional artifact records versions. External work need not be copied into GRP.",
         "",
         "Continue as intentional discussion: add --as-discussion",
         `Structured shared work: ${grpCommand("act --help")}`,
@@ -5023,7 +5023,10 @@ async function writeActionResponse(
         );
       }
       if (event === "completion proposed")
-        lines.push("Completion proposed; this is not a completed action.");
+        lines.push(
+          "Completion proposed; this is not a completed action.",
+          "Proposing completion does not record your acceptance.",
+        );
       if (
         Array.isArray(review.required_participant_ids) &&
         Array.isArray(review.responded_participant_ids)
@@ -5762,7 +5765,7 @@ function renderActionState(
           ? `Propose completion with the exact result: ${grpCommand(`act complete ${id}${completionResultFlag}${room}`)}`
           : `Finish on your report: ${grpCommand(`act complete ${id}${room}`)}`,
       `Hand to one participant: ${grpCommand(`act handoff ${id} --to=NAME${room}`)}`,
-      `Open the next turn to the group: ${grpCommand(`act handoff ${id} --to=group${room}`)}`,
+      `Make this action available for another holder: ${grpCommand(`act handoff ${id} --to=group${room}`)}`,
     );
   } else if (mode === "handoff") {
     lines.push(
@@ -10538,7 +10541,7 @@ function appendCoordinationState(
             : completion === "group"
               ? `    Propose completion: ${grpCommand(`act complete ${id}${completionResult}${room}`)}`
               : `    Finish on your report: ${grpCommand(`act complete ${id}${room}`)}`,
-          `    Hand off the shared turn: ${grpCommand(`act handoff ${id} --to=NAME --note="What is next"${room}`)}`,
+          `    Hand off action ownership: ${grpCommand(`act handoff ${id} --to=NAME --note="What is next"${room}`)}`,
         );
       } else if (isActive && mode === "handoff" && holder !== callerId) {
         lines.push(`    Next: ${grpCommand(`watch --action=${id}${room}`)}`);
@@ -12187,7 +12190,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
   turn: {
     usage: "grp turn request|renew|release [room]",
     summary:
-      "Request, explicitly renew, or release a speaking turn in rooms that enable them. Requesting or watching never counts as reading.",
+      "Request, explicitly renew, or release a speaking turn in rooms that enable them. A speaking turn permits a conversation contribution; it is separate from holding an action. Requesting or watching never counts as reading. A successful discuss, ask or propose consumes the turn; no release is then needed.",
     flags: [
       "--request-id=ID  exact request to retry/renew/release (otherwise remembered)",
       "--epoch=N        exact held generation (otherwise remembered)",
@@ -12336,7 +12339,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
   discuss: {
     usage: 'grp discuss "<message>" [room] | grp discuss --composing [room]',
     summary:
-      "Exchange context with the room. Discussion creates no formal outcome.\n\nFor shell-sensitive discussion, use --file=PATH or stdin. For exact shared work that will be revised or approved, use an action with an artifact: grp act --help.",
+      "Exchange context with the room. Discussion creates no formal outcome.\n\nFor shell-sensitive discussion, use --file=PATH or stdin. An action separately tracks work, ownership and completion; it may link to external work without an artifact. An optional artifact provides versioned content or a supported pinned reference. See grp act --help.",
     flags: [
       "--file=PATH      post the file's contents as the message",
       "--stance=KIND    agree, disagree, clarify, or extend",
@@ -12352,12 +12355,11 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
   action: {
     usage:
       "grp act start|read|reviews|take|handoff|request-review|review|review-note|complete|resume|fail|cancel|takeover ...",
-    summary:
-      "Use an action when you are going to do something and the room should track who has it, what you report back, and what counts as complete.\n\nBy default, starting an action means you hold it and your completion report finishes it. Use --completion=group when the room must agree before GRP marks a single or handoff action complete. Use all when every required participant must report.\n\nThe action record lives in GRP. The work may happen elsewhere, or the holder may edit an optional native GRP artifact.",
+    summary: `${ACTION_OVERVIEW}\n\nMinimal work/report example:\n  grp act start --title="Check the release data"\n  grp act complete ACTION_ID --result-text="Checked; no blocker found"\n\nBy default, you hold the action and your report completes it. Mode chooses who works: single, handoff, or all participants. Completion chooses what finishes single/handoff work: the holder's report, or group agreement (--completion=group). An artifact is a separate optional choice.\n\nGroup completion without an artifact proposes your exact result text for a decision. With an artifact, use request-review pinned to --revision=REVISION_ID; your approval is recorded and the required peers review that revision. All-participant mode completes when every required report is in.`,
     flags: [
       "Modes:",
       "  single   one holder works; peers may continue",
-      "  handoff  one current holder; holder-scoped transitions require that holder",
+      "  handoff  one current holder; hand work to another participant (not a speaking turn)",
       "  all      every required participant reports",
       "start [room] --title=TEXT [--mode=single|handoff|all] [--completion=holder|group] [--to=NAME] [--description=TEXT] [--supersedes=ACTION_ID]",
       "  single and handoff default to holder completion; group completion requires room agreement",
@@ -12391,8 +12393,6 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "takeover ID [room] --reason=TEXT [--override]  recover an expired holder; early override is recorded",
       "",
       "Examples:",
-      '  grp act start --title="Check the release data" --mode=single',
-      '  grp act complete ACTION_ID --result-text="Checked; no blocker found"',
       '  grp act start --title="Revise the shared plan" --mode=handoff --completion=group --artifact-name="Shared plan" --artifact-file=plan.md',
       "  grp artifact patch ARTIFACT_ID --action=ACTION_ID --file=changes.json",
       "  grp act request-review ACTION_ID --revision=REVISION_ID",
@@ -12400,7 +12400,6 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       '  grp act start --title="Consult our principals" --mode=all --required=Neon,Cobalt',
       '  grp act start --title="Amend the reviewed result" --supersedes=ACTION_ID',
     ],
-    example: 'grp act start --title="Check the release data" --mode=single',
   },
   "action:complete": {
     usage: "grp act complete <action-id> [room] [--result-text=TEXT]",
@@ -12436,8 +12435,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
   },
   artifact: {
     usage: "grp artifact create|read|diff|patch|publish ...",
-    summary:
-      "An artifact is an optional versioned resource attached to an action. Reads number the blocks in one exact revision; diff compares two immutable revisions in unified-diff form. Only the current action holder may edit a native artifact. For group completion, request exact review from the owning action; unanimous approval of that revision completes it.",
+    summary: `${ARTIFACT_OVERVIEW}\n\nNative reads number blocks in one exact revision; diff compares native revisions. Only the current action holder may edit a native artifact. For group completion, request exact review from the owning action; unanimous required approval completes it. A review freezes the GRP artifact revision, not the external system.`,
     flags: [
       "create [room] --name=TEXT --action=ID [--kind=native] [--file=PATH|--content=TEXT]",
       "read ID [room] [--version=N]  native reads show numbered blocks",

@@ -1449,7 +1449,7 @@ describe("room CLI requests", () => {
     expect(stdout).toContain("Ask — record a group choice.");
     expect(stdout).toContain("Watch — wait for relevant room activity.");
     expect(stdout).toContain(
-      "Attach an artifact for exact shared work. Modes and artifacts: grp act --help",
+      "Artifacts are optional; external work can stay external. Modes and completion: grp act --help",
     );
     expect(stdout).not.toContain("One participant; peers continue");
     expect(stdout).not.toContain("Canonical resource only when that action needs one");
@@ -9834,6 +9834,88 @@ describe("spec 228 action-centered coordination", () => {
     expect(error).toContain("grp act request-review act_1");
   });
 
+  it.each([
+    ["group", "text"],
+    ["group", "json"],
+    ["group", "quiet"],
+    ["holder", "text"],
+  ])(
+    "keeps the %s completion receipt in %s mode explicit without recording acceptance",
+    async (completion, format) => {
+      const env = providerEnv(
+        roomConfig({ observedStateRevision: "11", coordinationStateCapability: "experimental" }),
+      );
+      const active = {
+        id: "act_1",
+        revision: "ar_9",
+        status: "in_progress",
+        holder_id: "p_northline",
+        completion,
+      };
+      const response = {
+        action: {
+          ...active,
+          revision: "ar_10",
+          status: completion === "group" ? "awaiting_completion" : "completed",
+          result: { kind: "text", reference: "The result" },
+        },
+        state_revision: "12",
+      };
+      const requests: string[] = [];
+      let body: unknown;
+      let stdout = "";
+      expect(
+        await runRoomCli(
+          [
+            "act",
+            "complete",
+            "act_1",
+            "--result-text=The result",
+            ...(format === "text" ? [] : [`--${format}`]),
+          ],
+          {
+            stdout: (text) => {
+              stdout += text;
+            },
+            stderr: () => {},
+            fetch: withCoordinationDiscovery(async (input, init) => {
+              const request = new Request(input, init);
+              const pathname = new URL(request.url).pathname;
+              requests.push(`${request.method} ${pathname}`);
+              if (request.method === "GET" && pathname.endsWith("/actions/act_1")) {
+                return jsonResponse({ action: active });
+              }
+              if (request.method === "POST" && pathname.endsWith("/actions/act_1/complete")) {
+                body = await request.json();
+                return jsonResponse(response);
+              }
+              throw new Error(`unexpected request ${request.method} ${pathname}`);
+            }),
+            env,
+          },
+        ),
+      ).toBe(0);
+      expect(requests).toEqual([
+        "GET /api/rooms/abc123/actions/act_1",
+        "POST /api/rooms/abc123/actions/act_1/complete",
+      ]);
+      expect(body).toEqual({
+        expected_revision: "ar_9",
+        result: { kind: "text", reference: "The result" },
+      });
+      if (format === "json") expect(JSON.parse(stdout)).toEqual(response);
+      else if (format === "quiet") expect(stdout).toBe("act_1\n");
+      else if (completion === "group") {
+        expect(stdout).toContain("Completion proposed; this is not a completed action.");
+        expect(stdout).toContain("Proposing completion does not record your acceptance.");
+        expect(stdout).toContain("Inspect action: grp act read act_1");
+      } else {
+        expect(stdout).toContain("Action act_1 completion recorded.");
+        expect(stdout).not.toContain("Proposing completion");
+      }
+    },
+  );
+
   it("renders a group-completion read as one exact-result path, not a generic ballot workflow", async () => {
     const env = providerEnv(
       roomConfig({
@@ -10449,7 +10531,7 @@ describe("spec 228 action-centered coordination", () => {
     ).toBe(0);
     expect(help).toContain("single   one holder works; peers may continue");
     expect(help).toContain(
-      "handoff  one current holder; holder-scoped transitions require that holder",
+      "handoff  one current holder; hand work to another participant (not a speaking turn)",
     );
     expect(help).toContain("all      every required participant reports");
     expect(help).toContain("all defaults to the joined participant roster");

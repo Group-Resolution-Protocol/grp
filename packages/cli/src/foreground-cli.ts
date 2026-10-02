@@ -203,7 +203,7 @@ function renderAction(
     );
   }
   if (has(foreground, "action.request_review") && stringOrNull(action.completion) === "group") {
-    commands.push(grpCommand(`act request-review ${id}${room}`));
+    commands.push(grpCommand(`act request-review ${id} --revision=REVISION_ID${room}`));
   }
   if (has(foreground, "decision.open_blocking")) commands.push(grpCommand(`ask "..."${room}`));
   if (has(foreground, "action.claim")) commands.push(grpCommand(`act take ${id}${room}`));

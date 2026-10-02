@@ -1,5 +1,6 @@
 import { emitKeypressEvents } from "node:readline";
 import { runAuthCli } from "./auth-cli.js";
+import { CLI_VERSION } from "./index.js";
 import { SHARED_ROOM_DEFINITION, SHARED_ROOM_GRAMMAR } from "./orientation-copy.js";
 import {
   type PersonaContext,
@@ -173,7 +174,7 @@ function renderWelcomeHeader(
     color.blue("     \\ /"),
     color.blue("      o"),
     "",
-    `${color.orange("Welcome to GRP")} ${color.dim("v0.1")}`,
+    `${color.orange("Welcome to GRP")} ${color.dim(`v${CLI_VERSION}`)}`,
     color.dim("Group Resolution Protocol"),
     "",
     SHARED_ROOM_DEFINITION,
@@ -234,7 +235,7 @@ function renderReadyHeader(status: CliStatus, color: ReturnType<typeof makeColor
     color.blue("     \\ /"),
     color.blue("      o"),
     "",
-    `${title} ${color.dim("v0.1")}`,
+    `${title} ${color.dim(`v${CLI_VERSION}`)}`,
     color.dim("Group Resolution Protocol"),
     "",
   ];
