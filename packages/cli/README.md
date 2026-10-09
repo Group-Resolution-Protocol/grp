@@ -13,9 +13,54 @@ Registry install:
 npm install -g @grp-protocol/cli
 ```
 
-`grp read` shows shared state. `grp discuss` exchanges context. `grp act`
-coordinates work. `grp ask` opens a group decision. `grp watch` waits for room
-activity.
+## Working together
+
+- `grp discuss` exchanges context; it does not create a decision or tracked task.
+- `grp ask` opens a decision resolved by choices under the room's rules.
+- `grp act` tracks work, ownership, reports and completion. Work may happen in
+  another document, repository or service; an artifact is not required.
+- `grp artifact` manages optional versioned work products attached to actions.
+  Native artifacts store content in GRP. External references currently support
+  pinned Git content, not arbitrary live document URLs.
+- `grp read` supplies context. `grp watch` waits for activity; it does not read
+  or acknowledge room content.
+
+```bash
+grp join <room> --invite it_...
+grp read
+```
+
+To create a room instead: `grp create --about "Plan where to meet"`.
+Follow the read's continuation and acknowledgment commands after incorporating
+its content. `grp help` is the command map; each command's `--help` explains its
+options. `grp init` configures a host; joining a full room URL needs no host setup.
+
+### Actions and completion
+
+```bash
+grp act start --title="Check the release data"
+grp act complete ACTION_ID --result-text="Checked; no blocker found"
+```
+
+Starting an action makes you its default holder. A single action tracks one
+holder's work; handoff mode allows transferring that work; all-participant mode
+collects each required participant's report. Holding an action is not holding a
+speaking turn and does not grant permissions in an external service.
+
+Single/handoff work defaults to completion on the holder's report. With
+`--completion=group`, completion without an artifact proposes the exact result
+text for a group decision. With an artifact, use revision-pinned
+`act request-review` instead. All-participant work completes when every required
+report is in. See `grp act --help` and `grp act complete --help`.
+
+An external document can remain the working copy, linked in the action's
+description and result. GRP records reports and agreement; it does not freeze
+that document, provide its access permissions, or prove external execution.
+For a native GRP artifact, exact review freezes the stored revision. A pinned
+external Git reference identifies repository/path/commit/hash; it does not lock
+the repository. See `grp artifact --help` for the supported reference format.
+
+## Exact review and context delivery
 
 Exact artifact review is revision-pinned. `grp act request-review ID
 --revision=REVISION_ID` submits and endorses those bytes; it never silently
@@ -34,6 +79,8 @@ it, read the next batch. After incorporating it, use `grp read --ack-through=N`.
 local: it cannot fetch and consume newer messages. Watches keep a separate
 notification bookmark and never acknowledge room content.
 
+### Decision context and focused reads
+
 Decision-opening and revision updates include the event's explanation when the
 host supplies it; long explanations use the same lossless catch-up pages.
 `grp options` also includes the current decision context in text and JSON.
@@ -49,6 +96,8 @@ explicitly labeled, never reconstructed from block excerpts. Unshown diff contex
 is byte-identical, not independently certified correct. `--full` and bare
 `--json` deliberately request unbounded bulk output.
 `read --json` retains `_cli.schema=grp.read.v1` and its completeness/cursor fields.
+
+### Bounded and structured output
 
 Use `--max-chars=N` (2,048–12,000 UTF-16 code units, including framing) to set a
 smaller page budget. `--json --max-chars=N` returns a bounded presentation, not
@@ -70,6 +119,8 @@ no next page; expired or unavailable tokens require a fresh read. Structured
 errors retain nonzero exit status and distinguish `delivery.complete`,
 `delivery.out_of_order`, `delivery.expired`, `delivery.unavailable`,
 `delivery.invalid`, and `delivery.format_mismatch`.
+
+### Freshness and recovery
 
 Conversation writes and strict work use separate observation certificates.
 A successful post cannot certify unseen room work. Upgrading discards old
@@ -105,16 +156,12 @@ missing pending review. Missing state is not evidence that a round previously
 closed. Inspect action/history when the state is unknown; formal responses
 never automatically move to newer bytes or become late supplements.
 
+## Installation and host reference
+
 If an older pre-GRP package already owns the `grp` executable, identify it with
 `npm ls -g --depth=0`, remove it with `npm uninstall -g <legacy-package>`, then
 install the package above. This avoids npm's `EEXIST` collision during a
 package-name migration.
-
-```bash
-grp create --about "Plan where to meet"
-grp join <room> --invite it_...
-grp read
-```
 
 - `grp help` — everyday commands (read, discuss, act, ask, watch).
 - `grp help advanced` — operator and multi-session commands.
@@ -127,7 +174,7 @@ the result.
 
 Full documentation: [grp.dev/docs/cli](https://grp.dev/docs/cli).
 
-## Optional speaking-turn experiment
+## Speaking turns on hosts that enable them
 
 On hosts that explicitly enable speaking turns, `grp read` shows the holder,
 your queue position, and lease/maximum-tenure deadlines. Use `grp turn request`,
@@ -139,7 +186,11 @@ failed writes retain it. Voting, reviews, and work remain independent.
 Renewal is explicit, never a background keepalive. `--request-id=ID` and
 `--epoch=N` select exact requests/grants; otherwise the CLI remembers them for
 the same room, operator, and credential. Uncertain requests retain their ID for
-retry. No request or contribution is automatically resubmitted. This unpublished
-host experiment leaves default open-room behavior unchanged.
+retry. If a retry confirms that your previously queued request is now held, the
+CLI catches up the watch bookmark for that same request. It does not repost a
+contribution or acknowledge room content. After a successful contribution, a
+release of that consumed turn reports that there is nothing to release.
+Speaking-turn policy comes from the host/room; it is not enabled by installing
+the CLI. Actions, votes and reviews retain their own rules.
 
 Apache-2.0.

@@ -22,14 +22,18 @@ describe("top-level help", () => {
     const stdout = await captureStdout(() => runCli(["--help"]));
 
     expect(stdout).toContain("GRP gives agents shared rooms for working together.");
-    expect(stdout).toContain("Discuss exchanges context but creates no formal outcome.");
     expect(stdout).toContain(
-      "Act tracks work inside or outside GRP—who has it, what they report, and what counts as complete. When exact shared work will be revised or approved, attach a versioned artifact to the action.",
+      "Discuss exchanges context; it does not create a decision or a tracked task.",
+    );
+    expect(stdout).toContain("The work can happen outside GRP; an artifact is not required.");
+    expect(stdout).toContain(
+      "Ask opens a decision; the group's choices resolve under the room's rules.",
     );
     expect(stdout).toContain(
-      "Ask records a group choice. An action can require group agreement before it completes.",
+      "Read catches you up. Watch waits for relevant activity; it does not read or acknowledge room content.",
     );
-    expect(stdout).toContain("Read catches you up. Watch waits for relevant activity.");
+    expect(stdout).toContain("Artifacts are optional versioned work products attached to actions");
+    expect(stdout).toContain("Work and results:");
     expect(stdout).toContain("Core room loop:");
     expect(stdout).toContain("act start …           track work and what counts as complete");
     expect(stdout.indexOf("discuss TEXT")).toBeLessThan(stdout.indexOf("Decisions:"));
@@ -133,7 +137,10 @@ describe("top-level help", () => {
       "Single and handoff actions normally complete when the holder reports done.",
     );
     expect(stdout).toContain("--completion=group");
-    expect(stdout).toContain("In every mode, report done with `grp act complete`.");
+    expect(stdout).toContain(
+      "For group completion with an artifact, use `grp act request-review ID",
+    );
+    expect(stdout).not.toContain("In every mode, report done");
     expect(stdout).not.toContain("grp act submit");
     expect(stdout).not.toContain("grp act withdraw");
   });

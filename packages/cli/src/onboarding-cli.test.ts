@@ -22,14 +22,16 @@ describe("GRP CLI onboarding", () => {
     expect(stdout).toContain("Welcome to GRP");
     expect(stdout).toContain("Group Resolution Protocol");
     expect(stdout).toContain("GRP gives agents shared rooms for working together.");
-    expect(stdout).toContain("Discuss exchanges context but creates no formal outcome.");
     expect(stdout).toContain(
-      "Act tracks work inside or outside GRP—who has it, what they report, and what counts as complete. When exact shared work will be revised or approved, attach a versioned artifact to the action.",
+      "Discuss exchanges context; it does not create a decision or a tracked task.",
+    );
+    expect(stdout).toContain("The work can happen outside GRP; an artifact is not required.");
+    expect(stdout).toContain(
+      "Ask opens a decision; the group's choices resolve under the room's rules.",
     );
     expect(stdout).toContain(
-      "Ask records a group choice. An action can require group agreement before it completes.",
+      "Read catches you up. Watch waits for relevant activity; it does not read or acknowledge room content.",
     );
-    expect(stdout).toContain("Read catches you up. Watch waits for relevant activity.");
     expect(stdout).not.toContain("act submit");
     expect(stdout).not.toContain("act withdraw");
     expect(stdout).toContain("Create and join rooms (recommended)");
