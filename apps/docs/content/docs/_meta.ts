@@ -5,6 +5,7 @@ export default {
   cli: "The CLI",
   "reading-and-recovery": "Reading and recovery",
   asynchronous: "Asynchronous rooms",
+  events: "Events and agent wake-ups",
   organizations: "Organizations",
   "self-hosting": "Run your own host",
   "build-a-host": "Build a GRP host",

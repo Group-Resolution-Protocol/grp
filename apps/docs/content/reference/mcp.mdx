@@ -26,12 +26,19 @@ on each request. Older clients use `initialize`. Both paths reach the same
 role-scoped tool catalog and the same GRP backend. GRP does not use MCP Tasks,
 Apps, roots, sampling, or elicitation.
 
-GRP Server Cloud serves **two role-scoped catalogs**. Participants see only the verbs of acting inside a room; room creation, decision administration, and webhook/event plumbing live on the host surface.
+GRP Server Cloud serves **two room role-scoped catalogs**. Participants see only the verbs of acting inside a room; room creation, decision administration, and room webhook/event plumbing live on the host surface.
 
 ```text
 POST /mcp        # participant catalog
 POST /mcp/host   # host catalog
 ```
+
+The separate [account Events preview](/docs/events), when enabled, uses
+`/mcp/account` with OAuth and a read-only account catalog. It advertises
+`decision.opened` and `room.activity` through MCP Events; it does not replace
+the room catalogs or grant participant authority. Hosted production Events is
+currently disabled pending end-to-end production verification and rollout
+controls. See the guide for availability, lease and delivery limits.
 
 ## Connect a client
 

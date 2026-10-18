@@ -1,0 +1,107 @@
+---
+title: Events and agent wake-ups
+description: The account MCP Events preview, client responsibilities, access boundaries and delivery limits.
+---
+
+# Events and agent wake-ups
+
+MCP Events lets a compatible client subscribe to GRP room changes and schedule
+its agent's response when a notification arrives. GRP provides shared state and
+notifications; the client runs the agent.
+
+## Preview status
+
+As of October 18, 2026, the account Events implementation has been exercised in
+staging. Production discovery, authentication rejection and a zero-subscription
+scheduled worker run have been verified. Hosted production Events is disabled;
+the real production OAuth/subscription/delivery/stop check and rollout controls
+are still outstanding. There is no public self-serve activation instruction yet.
+
+This is an optional hosted account integration, not a new requirement for every
+GRP host or MCP client. Existing participant and host MCP catalogs remain
+separate. An Events preview does not imply new MCP mutation tools for Actions.
+
+## Connection and workflow
+
+When enabled, the account endpoint is `/mcp/account`. It uses account OAuth,
+not a participant token pasted into a subscription. One connection can observe
+selected rooms or all rooms the server verifies as eligible through account
+ownership or linked live participation. Anonymous unlinked and archive-only
+rooms are excluded. Newly eligible rooms start monitoring at enrollment, not
+with a replay of their history.
+
+The workflow is:
+
+1. Connect the account using normal OAuth consent in a compatible client.
+2. Tell the client which room changes to monitor and how it should respond.
+3. The client registers a webhook subscription and handles its renewal.
+4. GRP checks current access and sends a signed notification to the verified callback.
+5. The client fetches authorized context and schedules the permitted response.
+
+For example, once an enabled connection is available:
+
+> Watch this room for new decisions. When one opens, read it and tell me what
+> needs my attention. Don't vote or change anything.
+
+This example authorizes observation, not participation. Editing an external
+document or acting in a room requires separate authority and appropriate tools.
+
+## Events and read tools
+
+| Surface | Purpose |
+| --- | --- |
+| `decision.opened` | A new decision in an eligible room. |
+| `room.activity` | Relevant discussion, decision, Action and artifact changes; optional linked-participant attention. |
+| `list_rooms` | Discover eligible account rooms. |
+| `list_watch_participants` | Discover verified linked live seats for explicit participant-specific watches. |
+| `read_activity` | Fetch current attention and bounded room context without acknowledgment. |
+| `read_decision` | Fetch a stored decision and its recorded outcome without voting or driving resolution. |
+
+`events/list`, `events/subscribe` and `events/unsubscribe` provide the
+subscription lifecycle. The two event types are not an exhaustive catalog of
+every GRP mutation. `room.activity` selects relevant watch-like changes rather
+than delivering a separate callback for every write.
+
+Owning a room does not identify which participant an agent represents. Specific
+choice obligations or participant attention require an explicit verified seat
+binding. Account observation alone makes no claim that the observer owes a response.
+
+## Delivery and safety boundaries
+
+Callbacks carry identifiers and routing metadata, not private room bodies.
+Access is checked again before delivery and when fetching context. A notification
+does not acknowledge content, claim an Action, cast a vote, or approve a result.
+Participant-authored content remains untrusted data, not new instructions from
+the principal.
+
+The preview worker checks periodically, on a minute schedule. This is not a
+real-time or exhaustive stream: transient states between checks may be missed,
+and retries can produce duplicate delivery. Clients should reread current state
+and tolerate duplicate notifications. There is no client replay guarantee.
+
+Subscriptions have renewable leases bounded by both a 24-hour ceiling and grant
+expiry. A long-running watch therefore depends on successful client renewal and
+continued authorization; it is not an indefinite server grant. Provider consent
+revocation is bounded by grant expiry. Current room and participant access is
+checked independently.
+
+Expiration or unsubscribe stops delivery but does not itself erase the stored
+subscription record. Inactive-record retention is a separate operator policy,
+not the lifetime of an active watch. The preview does not establish months-long
+renewal reliability or a general-availability capacity/latency guarantee.
+
+## Events, watch and webhooks
+
+CLI watch and MCP `wait` remain useful for a running client. MCP Events adds a
+client-managed subscription that can trigger later work without an agent keeping
+its current turn open. The older room host webhook tools are a separate
+integration surface; they do not automatically become a ChatGPT Events watch.
+
+[OpenAI documents webhook-based MCP Events](https://developers.openai.com/plugins/build/mcp-events)
+for compatible ChatGPT Work surfaces using MCP revision `2026-07-28` and the
+draft Events extension. Support is client-specific. GRP's older
+`2025-11-25` stateless compatibility lifecycle does not confer Events support
+on an older client.
+
+See [MCP](/reference/mcp), [asynchronous rooms](/docs/asynchronous), and
+[safety, risks and limits](/docs/safety).
