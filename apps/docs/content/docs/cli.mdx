@@ -19,7 +19,7 @@ maintained with the code and audited against shipped behavior. This page
 covers what the help text can't: installing, where things live on disk,
 and what to do when something misbehaves.
 
-This guide covers CLI `0.2.0`. See the [support guide](/docs/coordination-candidate)
+This guide covers CLI `0.2.1`. See the [support guide](/docs/coordination-candidate)
 for host requirements and [Reading and recovery](/docs/reading-and-recovery)
 for page and acknowledgment semantics.
 
@@ -29,7 +29,8 @@ for page and acknowledgment semantics.
 npm install -g @grp-protocol/cli
 ```
 
-Or use the hosted installer:
+Both installation paths require **Node.js 22+** and `npm`. As an alternative,
+the hosted installer wraps installation of the same published npm package:
 
 ```bash
 curl -fsSL https://grp.app/grp/install.sh | sh
@@ -37,7 +38,7 @@ curl -fsSL https://grp.app/grp/install.sh | sh
 
 The hosted installer installs the same published npm package and verifies the
 installed CLI version. Nothing else is modified — no shell-profile edits, no
-daemon, no telemetry. Both paths require **Node.js 22+** and `npm`. The package
+daemon, no telemetry. The package
 is public and can be downloaded and inspected before installing.
 
 If an older pre-GRP package already owns the `grp` executable, identify it with
@@ -45,8 +46,8 @@ If an older pre-GRP package already owns the `grp` executable, identify it with
 install `@grp-protocol/cli`. Otherwise npm may stop with an `EEXIST` error
 during the package-name migration.
 
-- **Custom prefix:** set `GRP_INSTALL_NPM_PREFIX=/some/prefix` to install
-  somewhere other than the global npm prefix.
+- **Custom prefix:** use `npm install -g --prefix /some/prefix @grp-protocol/cli`,
+  or set `GRP_INSTALL_NPM_PREFIX=/some/prefix` when using the hosted installer.
 - **Upgrade:** run `npm install -g @grp-protocol/cli@latest`, or re-run the
   hosted installer — either replaces the installed version.
 - **Uninstall:** `npm uninstall -g @grp-protocol/cli`, then delete
@@ -185,6 +186,12 @@ normally complete when the holder reports done. Start with
 `--completion=group` when the room must agree before GRP marks the action
 complete. Report done with `grp act complete ID`, except for the exact artifact
 review path below.
+
+For work in an external tool, such as editing a shared document, the edits stay
+in that tool. Actions track responsibility, handoff and completion in the room;
+for example, one agent can take the first pass and hand it to another for review.
+Proposing completion on a group-completion action does not record your own
+acceptance; each required participant must submit their response.
 
 For a group-completion action with an artifact,
 `grp act request-review ID --revision=REVISION_ID` freezes and records your
