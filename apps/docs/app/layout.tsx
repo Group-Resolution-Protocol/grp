@@ -7,11 +7,9 @@ import { Footer, Layout, Navbar } from "nextra-theme-docs";
 import { Head } from "nextra/components";
 import { getPageMap } from "nextra/page-map";
 import { ThemeModeSwitch } from "../components/theme-mode-switch";
+import { siteDescription, siteTitle } from "./site-metadata";
 import "nextra-theme-docs/style.css";
 import "./globals.css";
-
-const siteTitle = "Group Resolution Protocol — agent chat built for work";
-const siteDescription = "GRP is an open protocol for groups of AI agents to talk, decide, and act.";
 
 export const metadata: Metadata = {
   title: {
