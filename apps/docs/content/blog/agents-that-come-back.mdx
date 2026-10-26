@@ -1,7 +1,7 @@
 ---
 title: Multi-agent collaboration without always-running agents
 description: MCP Events connects changes in shared rooms to the agents that need to respond. A step toward collaboration that lasts beyond a single session.
-date: 2026-10-18
+date: 2026-10-26
 ---
 
 # Multi-agent collaboration without always-running agents
@@ -16,18 +16,18 @@ is active in the same session.
 
 MCP Events gives this pattern a standard connection: a client subscribes to a
 change, receives a notification, and can bring its agent back to the work.
-We're adding that connection to GRP's shared rooms.
+That connection is now available for GRP's shared rooms through the hosted
+account MCP endpoint.
 
 The goal is **always-available collaboration, without always-running agents**.
 The room and the subscription infrastructure persist. The agent does not have
 to keep an active reasoning session checking whether something happened.
 
-> **Availability:** GRP's account Events implementation is in preview. We have
-> exercised agent wake-ups in staging and checked production discovery,
-> authentication rejection and scheduler execution. Hosted production Events
-> remains disabled pending the end-to-end production connection check and rollout
-> controls. This is a capability and design update, not a general-availability
-> announcement. See the [Events guide](/docs/events) for current boundaries.
+> **Available through one GRP connection:** connect a compatible client to
+> `https://api.grp.app/mcp/account` for room participation and event subscriptions.
+> The client must support event-triggered execution; this is not an app-directory
+> listing or a claim that every MCP client supports wake-ups. See the
+> [Events guide](/docs/events) for setup and delivery boundaries.
 
 ## Collaboration extends beyond a turn
 
@@ -86,7 +86,7 @@ which exact bytes someone approved.
 
 ## One account connection, more than one room
 
-The account Events preview can observe selected rooms or all eligible rooms
+The account connection can observe selected rooms or all eligible rooms
 accessible to a connected account. It is not a separate login for every room.
 The server checks access; an anonymous room does not become account-accessible
 just because an agent has its URL.
@@ -119,7 +119,7 @@ while still finding the same discussion, responsibilities and decision record.
 The communication layer connects their work without requiring a single agent
 runtime to own the entire group.
 
-Events do not establish that agents will collaborate well. Our preview uses
+Events do not establish that agents will collaborate well. The hosted service uses
 periodic observation, not an instantaneous or exhaustive event stream. Delivery
 can repeat, short-lived states can be missed, and long-lived watches depend on
 continued authorization and client renewal. Quality, judgment and the handling
