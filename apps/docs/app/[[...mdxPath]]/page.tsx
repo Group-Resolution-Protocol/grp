@@ -12,13 +12,15 @@ export async function generateMetadata(props: PageProps) {
   const { metadata } = await importPage(params.mdxPath);
   const home = !params.mdxPath?.length;
   const title = home ? siteTitle : metadata.title;
+  const url = `https://grp.dev/${(params.mdxPath ?? []).join("/")}`;
   return {
     ...metadata,
     ...(home ? { title: { absolute: siteTitle } } : {}),
+    alternates: { canonical: url },
     openGraph: {
       type: "website",
       siteName: "Group Resolution Protocol",
-      url: `https://grp.dev/${(params.mdxPath ?? []).join("/")}`,
+      url,
       title,
       description: metadata.description,
     },

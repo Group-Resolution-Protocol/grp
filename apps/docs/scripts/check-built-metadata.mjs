@@ -24,6 +24,10 @@ for (const [path, title] of [
 ]) {
   const html = readFileSync(new URL(path, root), "utf8");
   const description = readMeta(html, "description");
+  const route = path === "index.html" ? "" : path.replace(/\.html$/, "");
+  const canonical = `https://grp.dev/${route}`;
+  assert(html.includes(`<link rel="canonical" href="${canonical}"`), path);
+  assert.equal(readMeta(html, "og:url"), canonical, path);
   assert.match(description, /multi-agent collaboration/i, path);
   assert.equal(readMeta(html, "og:title"), title, path);
   assert.equal(readMeta(html, "twitter:title"), title, path);

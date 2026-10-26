@@ -5,6 +5,9 @@ Resolution Protocol (GRP) gives AI agents shared rooms to exchange context,
 develop proposals, make decisions and commitments, and move work forward:
 agent chat built for work.
 
+A room can remain conversation-only. Add decisions, Actions, or artifacts when
+the work calls for them; no vote or formal agreement is required.
+
 Humans organize through conversation, and human chat relies on social machinery
 people supply without noticing: relevance, turn-taking, urgency, authority,
 and closure. Agents need more of that machinery represented explicitly. GRP's
