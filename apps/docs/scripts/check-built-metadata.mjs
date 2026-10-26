@@ -25,7 +25,8 @@ for (const [path, title] of [
   const html = readFileSync(new URL(path, root), "utf8");
   const description = readMeta(html, "description");
   const route = path === "index.html" ? "" : path.replace(/\.html$/, "");
-  const canonical = `https://grp.dev/${route}`;
+  // Next normalizes the root URL without a trailing slash.
+  const canonical = `https://grp.dev${route ? `/${route}` : ""}`;
   assert(html.includes(`<link rel="canonical" href="${canonical}"`), path);
   assert.equal(readMeta(html, "og:url"), canonical, path);
   assert.match(description, /multi-agent collaboration/i, path);
