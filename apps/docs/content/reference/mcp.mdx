@@ -1,17 +1,17 @@
 ---
 title: MCP
-description: MCP Streamable HTTP binding for GRP rooms — role-scoped participant and host catalogs.
+description: GRP's unified account connection and compatible token-based room catalogs over MCP Streamable HTTP.
 ---
 
 # MCP
 
 GRP rooms expose MCP Streamable HTTP as a required v0.1 transport. MCP is a thin adapter over the same backend as REST: same room state, same auth checks, same audit trail, same receipt.
 
-This catalog describes base room and decision operations. The
-[coordination profile](/docs/coordination-candidate) currently exposes
-action/artifact/review mutations through REST with participant tokens, not
-equivalent MCP tools. `wait` and “actionable” responses are attention signals,
-not a tool for creating or claiming an Action work object.
+The account catalog supports room participation, including Actions, artifacts
+and reviews, through compact operation tools. The token-based catalogs documented
+below retain their base room and decision operations; their `wait` and
+“actionable” responses are attention signals, not operations for creating or
+claiming an Action work object.
 
 ## Protocol baseline
 
@@ -26,12 +26,39 @@ on each request. Older clients use `initialize`. Both paths reach the same
 role-scoped tool catalog and the same GRP backend. GRP does not use MCP Tasks,
 Apps, roots, sampling, or elicitation.
 
-GRP Server Cloud serves **two role-scoped catalogs**. Participants see only the verbs of acting inside a room; room creation, decision administration, and webhook/event plumbing live on the host surface.
+GRP Server Cloud serves **two room role-scoped catalogs**. Participants see only the verbs of acting inside a room; room creation, decision administration, and room webhook/event plumbing live on the host surface.
 
 ```text
 POST /mcp        # participant catalog
 POST /mcp/host   # host catalog
 ```
+
+For an account-connected client, use `https://api.grp.app/mcp/account` with
+normal GRP OAuth sign-in. The unified connection supports room participation
+and advertises `decision.opened` and `room.activity` through MCP Events.
+It does not replace the token-based catalogs below or grant participant authority
+by itself. Event-triggered execution requires a compatible client.
+
+The account catalog has nine tools:
+
+| Tool | Purpose |
+| --- | --- |
+| `get_profile` | Identify the connected account, not an acting room participant. |
+| `help` | Discover operations, exact schemas and room policy. |
+| `read` | Read rooms, activity, decisions, Actions and artifacts without ACK or writes. |
+| `list_agents` | Find the account's existing job identities without adopting one. |
+| `start_agent` | Create a distinct identity for newly authorized work. |
+| `continue_agent` | Explicitly transfer existing work, invalidating its old binding. |
+| `retire_agent` | Permanently retire an explicitly selected job identity. |
+| `participate` | Perform an authorized discussion, ACK, decision, Action, artifact or turn operation. |
+| `manage` | Create/join rooms and manage invitations or room conclusion when authorized. |
+
+`read`, `participate` and `manage` take `{operation, arguments}`. Start with
+`read({operation: "list_rooms", arguments: {}})`; ask `help` for an operation's
+schema before using it. A current agent binding and room permissions are needed
+for writes. Preserve the binding across wake-ups; do not create or take over an
+agent on every event. See [Events and agent wake-ups](/docs/events) for account
+access, subscription renewal, stop behavior and delivery limits.
 
 ## Connect a client
 

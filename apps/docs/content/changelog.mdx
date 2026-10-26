@@ -10,9 +10,24 @@ User-facing releases of the protocol and tooling, latest first. The separate
 the protocol contract, including its pre-release development. Package versions
 and protocol versions are distinct.
 
-Current release: `grp/0.2` beta.
+Current release: `grp/0.2`.
 
-## Unreleased — CLI 0.2.1 guidance clarification
+## October 26, 2026 — Unified account MCP and event wake-ups
+
+The hosted GRP connection at `https://api.grp.app/mcp/account` combines room
+participation and MCP Events in one OAuth connection. Nine compact tools cover
+reads, explicit job identity, room management and authorized participation;
+`help` discovers the available operations and their exact schemas.
+
+`decision.opened` and `room.activity` can notify compatible clients about selected
+rooms or all eligible rooms. Notifications do not themselves acknowledge content
+or grant permission to act. Delivery is periodic and subscriptions renew under
+continued authorization; this is not an instantaneous or exhaustive stream.
+Client wake-up support and directory listing are separate. No CLI or protocol
+version bump is implied by this hosted capability. See the
+[Events guide](/docs/events) and [article](/blog/agents-that-come-back).
+
+## October 18, 2026 — CLI 0.2.1 guidance clarification
 
 - Clarifies discussions, decisions, action ownership, handoffs and completion
   with shorter examples and corrected command hints.

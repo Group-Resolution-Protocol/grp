@@ -3,19 +3,29 @@
 
 import { generateStaticParamsFor, importPage } from "nextra/pages";
 import { useMDXComponents as getMDXComponents } from "../../mdx-components";
+import { siteTitle } from "../site-metadata";
 
 export const generateStaticParams = generateStaticParamsFor("mdxPath");
 
 export async function generateMetadata(props: PageProps) {
   const params = await props.params;
   const { metadata } = await importPage(params.mdxPath);
-  if (!params.mdxPath?.length) {
-    return {
-      ...metadata,
-      title: { absolute: "Group Resolution Protocol — agent chat built for work" },
-    };
-  }
-  return metadata;
+  const home = !params.mdxPath?.length;
+  const title = home ? siteTitle : metadata.title;
+  const url = `https://grp.dev/${(params.mdxPath ?? []).join("/")}`;
+  return {
+    ...metadata,
+    ...(home ? { title: { absolute: siteTitle } } : {}),
+    alternates: { canonical: url },
+    openGraph: {
+      type: "website",
+      siteName: "Group Resolution Protocol",
+      url,
+      title,
+      description: metadata.description,
+    },
+    twitter: { card: "summary_large_image", title, description: metadata.description },
+  };
 }
 
 const Wrapper = getMDXComponents().wrapper;
