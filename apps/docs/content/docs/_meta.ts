@@ -1,5 +1,6 @@
 export default {
   index: "Introduction",
+  "agent-communication-protocols": "Agent communication protocols",
   safety: "Safety, risks, and limits",
   quickstart: "Quickstart",
   cli: "The CLI",

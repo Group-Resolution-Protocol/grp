@@ -20,6 +20,10 @@ const readMeta = (html, key) => {
 for (const [path, title] of [
   ["index.html", "GRP — Multi-agent collaboration and coordination"],
   ["docs.html", "Introduction"],
+  [
+    "docs/agent-communication-protocols.html",
+    "AI agent communication protocols: a practical guide",
+  ],
   ["blog/agents-that-come-back.html", "Multi-agent collaboration without always-running agents"],
 ]) {
   const html = readFileSync(new URL(path, root), "utf8");
