@@ -161,6 +161,7 @@ describe("spec 248 CLI projections and read economy", () => {
           id: "message-1",
           posted_as: { participant_id: "p1", name: "Server Name" },
           about_action_id: "a-new",
+          speaking_turn_completed: true,
         }),
       ) as typeof globalThis.fetch,
     );
@@ -168,6 +169,7 @@ describe("spec 248 CLI projections and read economy", () => {
     expect(await runRoomCli(["discuss", "A scoped comment"], io)).toBe(0);
     expect(stdout.join("")).toContain("Discussion posted as Server Name.");
     expect(stdout.join("")).toContain("Commentary on action: a-new.");
+    expect(stdout.join("")).toContain("Speaking turn complete");
   });
 
   it("starts a successor without replacing the inherited completion gate", async () => {

@@ -869,6 +869,33 @@ describe("room CLI requests", () => {
     });
   });
 
+  it("lists the host menu without creating a room and rejects an unknown preset before posting", async () => {
+    const env = providerEnv({ defaultProvider: "local", providers: {} });
+    const requests: string[] = [];
+    let output = "";
+    const io = {
+      env,
+      isInteractive: false,
+      stdout: (value: string) => {
+        output += value;
+      },
+      stderr: () => {},
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+        const req = new Request(input, init);
+        requests.push(`${req.method} ${new URL(req.url).pathname}`);
+        return jsonResponse({
+          presets: [
+            { id: "open_discussion", label: "Open discussion", description: "Post freely." },
+          ],
+        });
+      },
+    };
+    expect(await runRoomCli(["create", "--preset", "--json"], io)).toBe(0);
+    expect(JSON.parse(output).presets[0].id).toBe("open_discussion");
+    expect(await runRoomCli(["create", "--preset=misspelled"], io)).toBe(1);
+    expect(requests).toEqual(["GET /api/rooms/-/presets", "GET /api/rooms/-/presets"]);
+  });
+
   it("prompts for room purpose when create is run bare in a terminal", async () => {
     const env = providerEnv({ defaultProvider: "local", providers: {} });
     const bodies: unknown[] = [];
@@ -876,13 +903,23 @@ describe("room CLI requests", () => {
     const code = await runRoomCli(["create"], {
       env,
       isInteractive: true,
-      stdin: Readable.from(["Planning Friday dinner\n"]),
+      stdin: Readable.from(["Planning Friday dinner\n1\n"]),
       stdout: (text) => {
         stdout += text;
       },
       stderr: () => {},
       fetch: async (input, init) => {
         const request = new Request(input, init);
+        if (new URL(request.url).pathname === "/api/rooms/-/presets")
+          return jsonResponse({
+            presets: [
+              {
+                id: "open_discussion",
+                label: "Open discussion",
+                description: "Exchange messages freely.",
+              },
+            ],
+          });
         expect(new URL(request.url).pathname).toBe("/api/rooms");
         bodies.push(await request.json());
         return jsonResponse({
@@ -897,7 +934,7 @@ describe("room CLI requests", () => {
     expect(code).toBe(0);
     expect(bodies[0]).toMatchObject({
       about: "Planning Friday dinner",
-      config: { visibility: "private", early_close: true },
+      config: { visibility: "private", early_close: true, preset: "open_discussion" },
     });
     const password = (bodies[0] as { password: string }).password;
     expect(password).toMatch(/^[A-Za-z0-9_-]{32}$/);

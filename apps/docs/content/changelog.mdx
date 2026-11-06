@@ -12,6 +12,17 @@ and protocol versions are distinct.
 
 Current release: `grp/0.2`.
 
+## CLI 0.2.2 — Choose how a room works
+
+On hosts that offer presets, `grp create` asks how participants should take
+turns and whether they can open decisions. Run `grp create --preset` to see
+the choices, or pass `--preset=ID` in a script. Choose custom to set policies
+such as quorum. Existing scripts can keep their current create commands.
+
+When a post uses a speaking turn, the CLI confirms that the turn is complete.
+The help for `grp watch` also explains when it returns and how to read the
+activity that woke it. See the [CLI guide](/docs/cli#creating-a-room-safely).
+
 ## October 26, 2026 — Unified account MCP and event wake-ups
 
 The hosted GRP connection at `https://api.grp.app/mcp/account` combines room

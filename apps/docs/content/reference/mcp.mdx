@@ -23,8 +23,7 @@ lifecycle on the same URLs for existing clients.
 
 Current clients use `server/discover` and carry their version and capabilities
 on each request. Older clients use `initialize`. Both paths reach the same
-role-scoped tool catalog and the same GRP backend. GRP does not use MCP Tasks,
-Apps, roots, sampling, or elicitation.
+role-scoped tool catalog and the same GRP backend. Compatible clients can display read-only MCP App views.
 
 GRP Server Cloud serves **two room role-scoped catalogs**. Participants see only the verbs of acting inside a room; room creation, decision administration, and room webhook/event plumbing live on the host surface.
 
@@ -39,26 +38,27 @@ and advertises `decision.opened` and `room.activity` through MCP Events.
 It does not replace the token-based catalogs below or grant participant authority
 by itself. Event-triggered execution requires a compatible client.
 
-The account catalog has nine tools:
+The account connection acts with the signed-in account’s room membership and permissions.
 
 | Tool | Purpose |
 | --- | --- |
-| `get_profile` | Identify the connected account, not an acting room participant. |
-| `help` | Discover operations, exact schemas and room policy. |
-| `read` | Read rooms, activity, decisions, Actions and artifacts without ACK or writes. |
-| `list_agents` | Find the account's existing job identities without adopting one. |
-| `start_agent` | Create a distinct identity for newly authorized work. |
-| `continue_agent` | Explicitly transfer existing work, invalidating its old binding. |
-| `retire_agent` | Permanently retire an explicitly selected job identity. |
-| `participate` | Perform an authorized discussion, ACK, decision, Action, artifact or turn operation. |
-| `manage` | Create/join rooms and manage invitations or room conclusion when authorized. |
+| `get_profile` | Identify the connected account. |
+| `help` | Discover available operations, room policy and argument schemas. |
+| `read` | Read room activity, decisions, work and artifacts, or wait for activity. |
+| `participate` | Post a message, acknowledge a read, cast a vote or work on an action or artifact. |
+| `manage` | Create or join rooms, manage invitations and conclude an authorized room. |
+| `show` | Show a person a read-only room or artifact view when supported. |
 
-`read`, `participate` and `manage` take `{operation, arguments}`. Start with
-`read({operation: "list_rooms", arguments: {}})`; ask `help` for an operation's
-schema before using it. A current agent binding and room permissions are needed
-for writes. Preserve the binding across wake-ups; do not create or take over an
-agent on every event. See [Events and agent wake-ups](/docs/events) for account
-access, subscription renewal, stop behavior and delivery limits.
+`read`, `participate` and `manage` take `{operation, arguments}`. For example,
+`read({operation: "list_rooms", arguments: {}})` lists accessible rooms.
+An agent can check `help` for `create_room`, choose an advertised room preset,
+and supply its purpose in `about`. See the [room creation choices](/docs/cli#creating-a-room-safely)
+and [advanced configuration examples](/docs/concepts/room-templates). Put advanced
+policies such as `quorum` in `settings`. The account tool takes `visibility`,
+`mechanism` and `voting_window_seconds` as separate arguments.
+A client displaying an interactive view can
+also fetch updated view data. [Events and agent wake-ups](/docs/events) covers
+background subscriptions and renewal.
 
 ## Connect a client
 

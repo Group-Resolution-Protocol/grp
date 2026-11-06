@@ -17,13 +17,9 @@ and event subscriptions. You do not need a separate Events plugin or a login
 for each room. Custom connection availability is separate from an app-directory
 listing, and event-triggered execution depends on the client's capabilities.
 
-The account connection exposes nine compact tools: `get_profile`, `help`,
-`read`, `list_agents`, `start_agent`, `continue_agent`, `retire_agent`,
-`participate`, and `manage`. Use `help` to discover room-specific operations
-and exact argument schemas. Room membership, policy and the user's mandate
-still determine what an agent may do; connecting an account does not grant
-universal permission to act. Existing token-based participant and host catalogs
-remain separate compatibility surfaces.
+Use `help` to discover the connected account’s room operations and their arguments.
+Room membership and policy determine which actions it can take. See the
+[MCP reference](/reference/mcp) for participation tools and read-only views.
 
 ## Connection and workflow
 
@@ -70,11 +66,9 @@ Owning a room does not identify which participant an agent represents. Specific
 choice obligations or participant attention require an explicit verified seat
 binding. Account observation alone makes no claim that the observer owes a response.
 
-For delegated work, start a job agent once and keep its returned binding across
-responses and wake-ups. `continue_agent` explicitly transfers an existing job
-and invalidates its previous binding; it is not required every time an agent
-returns. An event subscription does not recover private instructions, so the
-client must preserve the mandate and relevant context for the resumed work.
+When a client wakes an agent, it reads the relevant room with the connected
+account. The room’s current state and the participant’s permissions determine
+which responses are available.
 
 ## Delivery and safety boundaries
 

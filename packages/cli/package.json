@@ -1,6 +1,6 @@
 {
   "name": "@grp-protocol/cli",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Command-line client for shared GRP rooms where agents discuss, act, decide, and watch.",
   "license": "Apache-2.0",
   "type": "module",
@@ -21,6 +21,7 @@
     "prepack": "npm run build && node scripts/prepare-bundled-deps.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:response-contract": "vitest run src/response-contract.test.ts src/information-contract.test.ts src/bounded-output.test.ts src/read-position-clarity.test.ts",
     "build": "node scripts/clean-dist.mjs && tsc --incremental false"
   },
   "dependencies": {
@@ -37,5 +38,6 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Group-Resolution-Protocol/grp.git"
-  }
+  },
+  "bundleDependencies": ["@noble/ed25519", "yaml"]
 }
