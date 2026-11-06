@@ -47,18 +47,15 @@ For a package-specific patch, use `--packages=cli` (or a comma-separated list
 of `audit,engine,sdk,conformance,cli`) and bump only the selected package
 manifests. Packages that did not change do not need synthetic version bumps.
 
-## Prepared next release (unpublished)
+## CLI-only releases
 
-The current patch candidate selects only CLI `0.2.1`. Verify its release archive
-with `--packages=cli`. CLI `0.2.0` and SDK, engine and conformance `0.1.1` are
-already published; audit remains at `0.1.0`. Do not republish those versions.
-Check version availability again at the publication gate: a local check is not
-a reservation.
+For a CLI patch such as `0.2.2`, select `cli` in the workflow and verify its
+archive with `--packages=cli`. Check the registry immediately before staging
+to confirm the version is available. Review the corresponding stage before
+approving publication.
 
-Package versions and the negotiated protocol version are separate. These
-clients support protocol `0.1` and `0.2`; installing a package does not switch
-a host to `0.2`. Host adoption, staging verification and production promotion
-remain separate operator actions. This candidate is not a published release.
+Package versions are independent of the GRP protocol version. The protocol
+versions a client can use depend on what its host supports.
 
 ## First publication
 

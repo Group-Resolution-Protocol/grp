@@ -68,6 +68,19 @@ git config --local --get-regexp '^user\.(name|email)$'
 
 ## Code style
 
+### Agent response contracts
+
+Changes to CLI output must update representative response tests: help/empty
+state, ordinary results, and large user content. Run
+`npm run test:response-contract --workspace=@grp-protocol/cli` (also in CI).
+Check both required information and unexpected additions. Fixed help and
+metadata have explicit UTF-8 budgets; user messages and documents do not.
+Preserve content, cursors, acknowledgment state, recovery handles and errors.
+Do not truncate content or remove necessary metadata to satisfy a size check.
+Changes to allowlists or budgets need a reviewed explanation of why the new
+information is needed, not automatic snapshot regeneration. These guards
+catch structural drift; reviewers must still assess usefulness.
+
 - TypeScript, strict mode. No `any` outside generated code.
 - Biome for linting and formatting (`npx biome check .`).
 - Conventional commits (`feat:`, `fix:`, `docs:`, `chore:`).

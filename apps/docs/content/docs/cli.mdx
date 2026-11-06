@@ -19,7 +19,7 @@ maintained with the code and audited against shipped behavior. This page
 covers what the help text can't: installing, where things live on disk,
 and what to do when something misbehaves.
 
-This guide covers CLI `0.2.1`. See the [support guide](/docs/coordination-candidate)
+This guide covers CLI `0.2.2`. See the [support guide](/docs/coordination-candidate)
 for host requirements and [Reading and recovery](/docs/reading-and-recovery)
 for page and acknowledgment semantics.
 
@@ -152,6 +152,24 @@ count, and the before/after cursor state. A stale mutation prints `NOT POSTED`
 or `NOT CHANGED` with a separate read command; it does not fetch catch-up or retry.
 
 ## Creating a room safely
+
+On a host and CLI version that support presets, run `grp create --preset` to see
+which choices the host offers. The interactive `grp create` flow asks what the room
+is for and how the participants should work together.
+
+| Choice | How the room works |
+| --- | --- |
+| Open discussion | Participants can post at any time. Formal room ballots are disabled. |
+| Turn-taking discussion | A participant takes the floor to post. A successful post passes the floor. Formal room ballots are disabled. |
+| Open discussion with decisions | Participants can post freely and can open a question for a formal vote. |
+| Turn-taking with decisions | A speaking turn covers a message, opening a question or proposing an option. Eligible participants can vote without taking the floor. |
+| Custom configuration | Set policies directly, for example who can open a question, how many votes are needed or how long a vote stays open. |
+
+For a draft review where people can post freely, use
+`grp create --about="Review the draft" --preset=open_discussion`. Actions and
+artifacts are optional in every preset on hosts that support them. The two decision
+presets use a simple majority by default, with a one-hour voting window and a
+45-second settling period once the outcome is determined. Room access is a separate choice.
 
 An ordinary `grp create` or `grp quickstart` creates a password-enabled
 Private room. The CLI generates a strong password, sends it to the host,

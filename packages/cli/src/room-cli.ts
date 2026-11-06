@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { createInterface } from "node:readline";
 import {
   type CoordinationCapability,
   GRP_ACCEPT_PROTOCOL,
@@ -1241,6 +1242,8 @@ const ROOM_COMMAND_FLAG_KEYS: Record<string, ReadonlySet<string>> = {
     ROOM_ACTION_OUTPUT_FLAG_KEYS,
     [
       "about",
+      "preset",
+      "conversation-policy",
       "ask",
       "question",
       "context",
@@ -2146,7 +2149,9 @@ async function roomCreate(
     missingDefaultHost()
   ).replace(/\/$/, "");
   const question = flags.ask ?? flags.question;
-  const about = await resolveCreateAbout(flags, question, io);
+  const selection = await resolveCreateOptions(baseUrl, flags, question, io);
+  if (selection.showedMenu) return;
+  const { about, preset, settings } = selection;
   const context = await resolveDecisionContext(flags, io);
   const deferFirstDecision =
     flags["defer-first-decision"] !== undefined
@@ -2169,10 +2174,11 @@ async function roomCreate(
     password: access.password,
     defer_first_decision: deferFirstDecision,
     display_name: creatorDisplayName,
-    config: buildConfig({
-      ...flags,
-      ...(access.visibility ? { visibility: access.visibility } : {}),
-    }),
+    config: {
+      ...buildConfig({ ...flags, ...(access.visibility ? { visibility: access.visibility } : {}) }),
+      ...settings,
+      ...(preset ? { preset } : {}),
+    },
   });
   const createOptions: RequestOptions = {
     method: "POST",
@@ -2213,40 +2219,105 @@ async function roomCreate(
   );
 }
 
-async function resolveCreateAbout(
+async function resolveCreateOptions(
+  baseUrl: string,
   flags: Record<string, string>,
   question: string | undefined,
   io: RoomCliIo,
-): Promise<string | undefined> {
-  const explicit = flags.about?.trim();
-  if (explicit) return explicit;
-  if (question || !io.isInteractive || isJson(flags) || flags.quiet === "true") return undefined;
-
-  io.stdout(
-    [
-      "Create a GRP room",
-      "",
-      "What is this room for?",
-      'Example: "Planning Friday dinner" or "Triage customer bugs"',
-      "",
-      "Room purpose: ",
-    ].join("\n"),
-  );
-  const answer = (await readLine(io.stdin)).trim();
-  return answer || "New GRP room";
-}
-
-async function readLine(input: NodeJS.ReadableStream): Promise<string> {
-  const iterator = input[Symbol.asyncIterator]();
-  let out = "";
-  while (true) {
-    const next = await iterator.next();
-    if (next.done) return out;
-    const chunk =
-      typeof next.value === "string" ? next.value : Buffer.from(next.value).toString("utf8");
-    const newline = chunk.search(/\r?\n/);
-    if (newline !== -1) return `${out}${chunk.slice(0, newline)}`;
-    out += chunk;
+): Promise<{
+  about: string | undefined;
+  preset?: string;
+  settings?: Record<string, unknown>;
+  showedMenu?: true;
+}> {
+  const about = flags.about?.trim() || undefined;
+  const interactive =
+    io.isInteractive && !isJson(flags) && flags.quiet !== "true" && flags["context-file"] !== "-";
+  if (!interactive && flags.preset === undefined) return { about }; // Existing scripts keep the original create contract.
+  let catalog: unknown;
+  try {
+    catalog = await requestJson(baseUrl, "/api/rooms/-/presets", io);
+  } catch (err) {
+    if (!(err instanceof CliHttpError && err.status === 404 && flags.preset === undefined))
+      throw err;
+  }
+  const choices: { id: string; label: string; description: string }[] = [];
+  if (catalog !== undefined) {
+    if (!isRecord(catalog) || !Array.isArray(catalog.presets) || !catalog.presets.length)
+      throw new Error("Host returned an invalid room preset menu.");
+    for (const item of catalog.presets) {
+      if (
+        !isRecord(item) ||
+        typeof item.id !== "string" ||
+        typeof item.label !== "string" ||
+        typeof item.description !== "string"
+      )
+        throw new Error("Invalid room preset from host.");
+      choices.push({ id: item.id, label: item.label, description: item.description });
+    }
+  }
+  const menu = choices
+    .map((c, i) => `${i + 1}. ${c.label} (${c.id}) — ${c.description}`)
+    .join("\n");
+  const explicit = flags.preset;
+  if (explicit === "true") {
+    io.stdout(isJson(flags) ? `${JSON.stringify({ presets: choices })}\n` : `${menu}\n`);
+    return { about, showedMenu: true };
+  }
+  if (explicit !== undefined && !choices.some((c) => c.id === explicit))
+    throw new Error(`Select a room with --preset=ID:\n${menu}`);
+  if (!interactive || ((about || question) && (explicit || !choices.length)))
+    return { about, ...(explicit ? { preset: explicit } : {}) };
+  const terminal = createInterface({
+    input: io.stdin,
+    terminal: false,
+    crlfDelay: Number.POSITIVE_INFINITY,
+  });
+  const lines = terminal[Symbol.asyncIterator]();
+  const prompt = async (message: string) => {
+    io.stdout(message);
+    const line = await lines.next();
+    if (line.done) throw new Error("Room creation cancelled before configuration was complete.");
+    return line.value.trim();
+  };
+  try {
+    const purpose =
+      about ??
+      (question
+        ? undefined
+        : (await prompt("Create a GRP room\nWhat is this room for?\nRoom purpose: ")) ||
+          "New GRP room");
+    if (!choices.length || explicit)
+      return { about: purpose, ...(explicit ? { preset: explicit } : {}) };
+    const answer = await prompt(
+      `Choose a room preset. Actions and artifacts are optional.\n${menu}\nPreset: `,
+    );
+    const selected = choices.find((c, i) => c.id === answer || String(i + 1) === answer);
+    if (!selected) throw new Error("Select a listed preset before creating the room.");
+    if (selected.id !== "custom") return { about: purpose, preset: selected.id };
+    const raw = await prompt(
+      'Advanced room settings as a JSON object (for example {"quorum":3}); Enter to use the supplied flags: ',
+    );
+    const settings: unknown = raw ? JSON.parse(raw) : {};
+    if (
+      !isRecord(settings) ||
+      ["password", "visibility", "auth", "preset", "foreground_policy"].some((key) =>
+        Object.hasOwn(settings, key),
+      )
+    )
+      throw new Error(
+        "Supply room settings as an object. Use dedicated flags for visibility and authentication.",
+      );
+    const supplied = buildConfig(flags) ?? {};
+    for (const key of Object.keys(settings))
+      if (
+        Object.hasOwn(supplied, key) &&
+        (key !== "early_close" || flags["early-close"] !== undefined)
+      )
+        throw new Error(`Room setting supplied twice: ${key}`);
+    return { about: purpose, preset: selected.id, settings };
+  } finally {
+    terminal.close();
   }
 }
 
@@ -2338,6 +2409,7 @@ function renderRoomCreated(
     `Room: ${slug}`,
     `URL: ${url}`,
     `Room access: ${roomAccess}`,
+    ...(typeof room.room_setup === "string" ? [room.room_setup] : []),
     ...(access.passwordGenerated && access.password
       ? [
           `Room password: ${access.password}`,
@@ -11345,7 +11417,9 @@ function renderDiscussionPosted(
   const destination = ` Room: ${ref.slug}.`;
   const lines = [
     `Discussion posted${author ? ` as ${author}` : ""}.${destination}`,
-    ...(turnConsumed ? ["Speaking turn complete; no release needed."] : []),
+    ...(turnConsumed || record.speaking_turn_completed === true
+      ? ["Speaking turn complete; no release needed."]
+      : []),
     ...(stringOrNull(record.id) ? [`Discussion ID: ${record.id}.`] : []),
     ...(aboutActionId ? [`Commentary on action: ${aboutActionId}.`] : []),
   ];
@@ -11480,6 +11554,7 @@ function parsePaceFlag(
 function buildConfig(flags: Record<string, string>): Record<string, unknown> | undefined {
   const pace = parsePaceFlag(flags.pace);
   const config = withoutUndefined({
+    ...(flags["conversation-policy"] ? { conversation_policy: flags["conversation-policy"] } : {}),
     type: flags.type,
     visibility: flags.visibility,
     mechanism: flags.mechanism,
@@ -12207,7 +12282,8 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "--option=TEXT    seed one option; repeat for each option (commas stay literal)",
       "--host=NAME      create on a specific configured host",
       "",
-      "Room shape (optional; defaults: private with generated password, simple_majority, early close on):",
+      "--preset=ID      choose a host room configuration. Pass --preset for the menu.",
+      "Advanced settings (availability depends on the preset):",
       "--mechanism=NAME       simple_majority, supermajority, plurality, approval,",
       "                       ranked_choice, ranked_pairwise, score_vote, quadratic_vote",
       "--quorum=N             electorate floor: a decision cannot resolve with fewer",
@@ -12215,9 +12291,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
       "--max-participants=N   cap the roster",
       "--voting-window=SECS   choice window length",
       "--settle-window=SECS   revision window after a provisional outcome",
-      "--pace=async           size windows for seats that check in on a schedule",
-      "                       (~3-day window, 5-minute settle); if a seat runs on a",
-      "                       routine, keep the window longer than its cadence",
+      "--pace=async           ~3-day voting window, 5-minute settling for scheduled check-ins",
       "--early-close=false    wait out the full window even when the outcome is set",
       "--max-open-decisions=N let up to N decisions run at once (default 1)",
       "--creator-votes=false  create as a non-voting host",
@@ -12537,7 +12611,7 @@ const ROOM_COMMAND_HELP: Record<string, CommandHelp> = {
   watch: {
     usage: "grp watch [room]",
     summary:
-      "Wait for relevant room activity, then exit with the reason. Scope to an action, artifact, or decision when waiting on that state. A decision waiting on YOUR choice always wakes you.",
+      "By default, return once on relevant activity, an owed choice, or timeout. Exit 0 includes timeout; reason text varies by event. Use grp read after return for current state. Watching does not acknowledge content.",
     flags: [
       "--timeout=N      quiet-time bound in seconds (default 110; 0 waits indefinitely)",
       "--until=resolved|next-resolved  wait for current-or-future, or future-only resolution",
