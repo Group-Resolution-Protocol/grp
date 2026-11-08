@@ -47,6 +47,20 @@ mechanism behavior, mandatory transports) follow the change process in
 [GOVERNANCE.md](GOVERNANCE.md). Maintainer work may be reviewed locally;
 there is no mandatory public discussion or waiting period.
 
+## Documentation style and accuracy
+
+Use room, discussion, decision, action and artifact as common nouns in prose.
+Capitalize them at the start of a sentence or heading, not as product names.
+Preserve code identifiers, protocol keywords and proper names such as GitHub Actions.
+Describe room configuration in terms of what the group needs: conversation,
+auditable choices, shared work or speaking turns.
+
+When documenting a capability, check its current interface and authorization
+path. Distinguish the protocol contract from hosted features, account MCP from
+token-based catalogs, and CLI versions from protocol versions. Keep dated release
+history clearly historical and link to current guidance. Run `npm run docs:check`
+and build the docs to verify links, examples and generated metadata.
+
 ## Maintainer commit identity
 
 Maintainers should use a repository-local GitHub noreply identity so public

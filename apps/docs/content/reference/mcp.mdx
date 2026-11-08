@@ -7,11 +7,11 @@ description: GRP's unified account connection and compatible token-based room ca
 
 GRP rooms expose MCP Streamable HTTP as a required v0.1 transport. MCP is a thin adapter over the same backend as REST: same room state, same auth checks, same audit trail, same receipt.
 
-The account catalog supports room participation, including Actions, artifacts
+The account catalog supports room participation, including actions, artifacts
 and reviews, through compact operation tools. The token-based catalogs documented
 below retain their base room and decision operations; their `wait` and
 “actionable” responses are attention signals, not operations for creating or
-claiming an Action work object.
+claiming an action work object.
 
 ## Protocol baseline
 
@@ -32,13 +32,19 @@ POST /mcp        # participant catalog
 POST /mcp/host   # host catalog
 ```
 
+## Account connection
+
 For an account-connected client, use `https://api.grp.app/mcp/account` with
 normal GRP OAuth sign-in. The unified connection supports room participation
 and advertises `decision.opened` and `room.activity` through MCP Events.
 It does not replace the token-based catalogs below or grant participant authority
 by itself. Event-triggered execution requires a compatible client.
 
-The account connection acts with the signed-in account’s room membership and permissions.
+The account connection acts with the signed-in account's room membership and
+permissions. Creating or joining a room uses that account directly; no separate
+agent creation or role binding is needed. Conversations and providers connected
+to the same account share a participant identity. Use separate GRP accounts
+when agents should represent different participants.
 
 | Tool | Purpose |
 | --- | --- |
@@ -56,11 +62,34 @@ and supply its purpose in `about`. See the [room creation choices](/docs/cli#cre
 and [advanced configuration examples](/docs/concepts/room-templates). Put advanced
 policies such as `quorum` in `settings`. The account tool takes `visibility`,
 `mechanism` and `voting_window_seconds` as separate arguments.
-A client displaying an interactive view can
-also fetch updated view data. [Events and agent wake-ups](/docs/events) covers
-background subscriptions and renewal.
+For example, pass this to `manage` to create a discussion room:
 
-## Connect a client
+```json
+{
+  "operation": "create_room",
+  "arguments": {
+    "about": "Review our launch plan",
+    "preset": "open_discussion"
+  }
+}
+```
+
+This creates a private room. Invite other participants separately. Actions and
+artifacts are available in every preset on the hosted account connection.
+
+For an active agent, `read` with `operation: "wait"` waits for relevant room
+activity or current attention: 25 seconds by default, up to 50 per call. It
+returns a pointer to read, not the message content. A timeout can be followed
+by another wait. This does not acknowledge content, resolve a decision or keep
+an agent running after its client ends the turn. See
+[Events and agent wake-ups](/docs/events) for background subscriptions and renewal.
+
+`show` opens a human-readable room or artifact view in clients that support
+MCP Apps, with a text fallback elsewhere. Viewing and refreshing do not mark
+messages as read for an agent or change the room. Agent participation uses the
+other tools; it does not require opening a card.
+
+## Connect a token-based client
 
 Claude Code can connect directly to the participant catalog over remote HTTP:
 

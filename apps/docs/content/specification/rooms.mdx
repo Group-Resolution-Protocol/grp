@@ -17,7 +17,7 @@ A room is identified by a globally-unique **slug**. A conforming room implementa
 
 1.4. A room MAY carry an **`about`** — a durable, room-scoped description of what the room is for, independent of any particular decision. `about` is the standing context every joiner reads. It appears in the default agent view, in full room state, and in invite-creation responses so a pasted invite carries its own context.
 
-1.5. **Room-first creation.** A room MAY be created with no first decision: `about` (and optionally `config`) with no `question`. Decisions are then opened later via the `ask` operation ([Decisions](/specification/decisions)). In GRP Server Cloud, a room created without a first decision defaults to `type: "persistent"` unless the caller sets an explicit type — so the room can honestly advertise `ask` as the next action.
+1.5. **Room-first creation.** A room MAY be created with no first decision: `about` (and optionally `config`) with no `question`. Decisions are then opened later via the `ask` operation ([decisions](/specification/decisions)). In GRP Server Cloud, a room created without a first decision defaults to `type: "persistent"` unless the caller sets an explicit type — so the room can honestly advertise `ask` as the next action.
 
 ## 2. Room configuration
 
@@ -121,11 +121,11 @@ capacity ceiling, not an access-control list.
 
 This setting affects state visibility, not mechanism execution. Implementations still MUST retain the vote inputs needed to resolve the decision and produce the configured receipt/verifier artifact.
 
-2.16. **`early_close`.** When `true`, a decision resolves when its outcome is locked instead of waiting for the voting window to expire, and a cast choice becomes final once the outcome is determined. A mechanism may prove a leader unbeatable before every response arrives. Complete eligible turnout also locks an ordinary decision because no uncast response remains; the reference implementation uses that proof for ranked mechanisms while leaving partial ranked turnout conservative. When `false` (default), choices are revisable until the window closes and the decision resolves on expiry. The window stays as the fallback timeout in both modes. Early close additionally waits for the expected roster: while the room has pending invites whose expected role is `participant`, the electorate is still growing and early resolution MUST NOT fire ([Decisions §6.7](/specification/decisions#6-quorum-and-resolution)); window expiry resolves regardless.
+2.16. **`early_close`.** When `true`, a decision resolves when its outcome is locked instead of waiting for the voting window to expire, and a cast choice becomes final once the outcome is determined. A mechanism may prove a leader unbeatable before every response arrives. Complete eligible turnout also locks an ordinary decision because no uncast response remains; the reference implementation uses that proof for ranked mechanisms while leaving partial ranked turnout conservative. When `false` (default), choices are revisable until the window closes and the decision resolves on expiry. The window stays as the fallback timeout in both modes. Early close additionally waits for the expected roster: while the room has pending invites whose expected role is `participant`, the electorate is still growing and early resolution MUST NOT fire ([decisions §6.7](/specification/decisions#6-quorum-and-resolution)); window expiry resolves regardless.
 
 2.17. **`creator_votes`.** When `false`, the auto-joined room creator is a non-voting operator and is excluded from `eligible_voters` — quorum and early-close count only the real choosers. Default `true`: the creator chooses alongside joiners. (A non-playing game host or bridge sets this `false`.)
 
-2.17a. **`max_open_decisions`.** How many decisions the room may hold open at once ([Decisions §1.4](/specification/decisions)). Semantics normative; the default value and ceiling are host policy, advertised in `room_config_defaults`. A host MUST reject at config time any value it does not honor. GRP Server Cloud defaults to `1` (a room is a sequence unless it opts into concurrency) and accepts up to `5`. With more than one decision open, untargeted decision-scoped verbs meet the OLDEST open decision, and callers target others with the `decision` selector ([Decisions §1.6](/specification/decisions)).
+2.17a. **`max_open_decisions`.** How many decisions the room may hold open at once ([decisions §1.4](/specification/decisions)). Semantics normative; the default value and ceiling are host policy, advertised in `room_config_defaults`. A host MUST reject at config time any value it does not honor. GRP Server Cloud defaults to `1` (a room is a sequence unless it opts into concurrency) and accepts up to `5`. With more than one decision open, untargeted decision-scoped verbs meet the OLDEST open decision, and callers target others with the `decision` selector ([decisions §1.6](/specification/decisions)).
 
 ### 2.18. Mutable settings
 
@@ -193,7 +193,7 @@ admitted mandate-bound seat MAY reconnect idempotently. Likewise,
 
 4.3. Observers MUST NOT count toward quorum, capacity-relevant electorate math, or `eligible_voters`; their attempted actions MUST be rejected with `authority.denied`.
 
-4.4. **Expected roster.** Invites carry an `expected` flag. The room's agent view exposes the roster as `joined` (name + role), `expected` (labeled invites and their status), and `waiting_for` (expected invites still pending) — so agents can see who the room is waiting on before acting. The expected roster also floors early resolution: pending expected `participant` invites suspend `early_close` until they are redeemed, revoked, or expired ([Decisions §6.7](/specification/decisions#6-quorum-and-resolution)).
+4.4. **Expected roster.** Invites carry an `expected` flag. The room's agent view exposes the roster as `joined` (name + role), `expected` (labeled invites and their status), and `waiting_for` (expected invites still pending) — so agents can see who the room is waiting on before acting. The expected roster also floors early resolution: pending expected `participant` invites suspend `early_close` until they are redeemed, revoked, or expired ([decisions §6.7](/specification/decisions#6-quorum-and-resolution)).
 
 ## 5. Engagement signals
 

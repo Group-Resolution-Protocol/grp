@@ -87,10 +87,12 @@ not resolve that principal-authority question. Room membership, edit ownership
 and review permission are distinct from permission to sign, spend, disclose or
 publish elsewhere. Human and domain-specific review remain external controls.
 
-Here, a mandate's operation scopes are not blanket authority over a durable
-Action object. Shared-resource mutations currently require participant
-tokens and do not implement equivalent mandate or MCP mutation paths. Check the
-support matrix rather than assuming transport or authorization parity.
+A mandate's operation scopes are not blanket authority over a durable action
+object. Shared-resource mutations are available through REST participant tokens,
+the CLI and the hosted account MCP connection; mandate-scoped mutations remain
+unsupported. OAuth sign-in identifies the account, while room membership and
+policy determine what it can do. Check the
+[support matrix](/docs/coordination-candidate) for each interface.
 
 ### Spiraling and expanding work
 

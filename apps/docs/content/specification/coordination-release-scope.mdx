@@ -8,6 +8,11 @@ description: GRP 0.2 features, transport boundaries and migration requirements.
 GRP `0.2` brings shared work into rooms alongside conversation and decisions.
 The [versioned contract](/specification/coordination-v02) defines its requirements.
 
+This page describes the protocol release boundary. The hosted
+[account MCP connection](/reference/mcp) now also exposes coordination operations;
+that adapter does not add an MCP implementation requirement to the `0.2` contract.
+See [coordination support](/docs/coordination-candidate) for current client coverage.
+
 ## What this release includes
 
 Actions track ownership, handoff, cancellation and completion. Optional artifacts
@@ -27,8 +32,9 @@ new voting rules or a guarantee that agents converge or reach correct answers.
 | SDK | Selected types and methods, not complete CLI parity |
 | Decision receipts | Preserve verification of existing receipts; no new proof of action execution |
 
-New MCP tools, mandate-scoped coordination mutations, phased foreground and
-generic working-signal workflows are outside the supported release scope.
+Additional MCP tools are outside this protocol release's required surface.
+Mandate-scoped coordination mutations, phased foreground and generic
+working-signal workflows are outside the supported release scope.
 Retained experimental interfaces are not supported merely because they appear in a schema.
 
 ## Versioning decision

@@ -6,7 +6,7 @@ description: Versions and support boundaries for actions, artifacts, and speakin
 # Coordination support
 
 GRP `0.2` includes actions, artifacts, exact review and optional speaking turns.
-Use CLI `0.2.0` for these workflows; the corresponding SDK, engine and
+Use CLI `0.2.2` for these workflows; the corresponding SDK, engine and
 conformance package versions are `0.1.1`. Protocol, package and host versions
 are separate: check a host's discovery metadata for the capabilities it supports.
 
@@ -19,24 +19,30 @@ mandatory discussion/review phase funnel is part of the recommended path.
 
 | Surface | Support | Do not infer |
 | --- | --- | --- |
-| Action and artifact mutations, exact review, successors | REST with participant-token authentication; CLI workflows | Equivalent MCP mutation tools or mandate authorization |
-| Speaking-turn operations | REST with participant tokens in rooms explicitly enabled by the operator | That ordinary room creation enables turns, or that every host supports them |
+| Action and artifact mutations, exact review, successors | REST with participant tokens and CLI workflows; the hosted account MCP connection | Equivalent tools in the token-based MCP catalogs, or mandate authorization |
+| Speaking-turn operations | REST/CLI and hosted account MCP in rooms configured for turns; available through turn-taking presets on supporting hosts | That all rooms use turns, or that every host supports them |
 | Composing presence | REST with participant tokens | A speaking grant, completed work or mandate support |
 | Room/action/artifact reads | Subject to host visibility and authentication rules | That read access grants mutation authority |
 | Advisory working signals | Separate capability with its own authorization support | An exclusive turn, action ownership or a completion obligation |
 | SDK | Selected types and methods | Complete command parity with the CLI |
 | Decision receipts | Existing signed outcome format | A new signed action-execution receipt |
 
-Coordination is REST-only and participant-token scoped for shared-resource
-mutations. The separate experimental
-working-signal mandate support does not extend mandate authority to actions or
-speaking turns. An unsupported transport must not be used by guessing tool names
-or substituting credentials. A mandate-only room cannot be treated as a
-participant-token room merely because a CLI example uses that authentication.
+The hosted [account MCP connection](/reference/mcp) exposes shared-work and
+speaking-turn operations through `participate`, with `help` supplying their
+schemas and room policy. It acts as the connected account's participant and
+enforces the same room permissions and work-state checks. The token-based
+`/mcp` and `/mcp/host` catalogs retain their base room and decision operations.
+
+Mandate-scoped action, artifact and speaking-turn mutations are not supported.
+The separate experimental working-signal mandate support does not extend to
+those operations. A mandate-only room cannot be treated as a participant-token
+room merely because a CLI example uses that authentication.
 
 The [release scope](/specification/coordination-release-scope) defines
 protocol `0.2` with optional REST/token coordination and preserved REST/MCP
-decision operations. It does not rewrite the frozen `0.1` requirements.
+decision operations. Hosted account MCP support is an additional adapter to that
+coordination capability, not a new requirement on every host. It does not rewrite
+the frozen `0.1` requirements.
 Hosts use `0.2` discovery and client negotiation. Operators
 must verify their actual deployment and capabilities; a package install does
 not change a host's configuration. Passing base conformance does not certify

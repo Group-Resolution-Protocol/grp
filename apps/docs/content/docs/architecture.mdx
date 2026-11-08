@@ -94,7 +94,7 @@ stateDiagram-v2
 
 A decision opened with a `proposal_window` starts in `proposing` (slate open, no choices yet); the common case opens straight into `voting`. It ends in `resolved` — the mechanism has run and the receipt exists, whether the outcome is `completed`, `rejected`, `tied`, or `no_quorum` (failure modes are still receipted). `expired` is the transient state of a decision whose window elapsed and is pending lazy resolution.
 
-The **room** carries its own status: `open` when no decision is active, the active decision's state while one runs, and terminal `concluded` after the close act seals the receipt chain. Rooms can also be created about-only — durable context, no first decision — with decisions opened later via `ask` (gated by `decision_opening_authority`). The full lifecycle is normative — see the [Decision spec](/specification/decisions).
+The **room** carries its own status: `open` when no decision is active, the active decision's state while one runs, and terminal `concluded` after the close act seals the receipt chain. Rooms can also be created about-only — durable context, no first decision — with decisions opened later via `ask` (gated by `decision_opening_authority`). The full lifecycle is normative — see the [decision spec](/specification/decisions).
 
 ## Work has its own lifecycle
 

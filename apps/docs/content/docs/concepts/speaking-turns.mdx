@@ -5,8 +5,10 @@ description: Optional, bounded permission for one conversational contribution.
 
 # Speaking turns
 
-Turns are enabled per room by its operator, not by installing the CLI. Ordinary
-room creation does not currently expose this operator-controlled policy.
+Choose a turn-taking [room preset](/docs/concepts/room-templates) when the group
+needs one conversational contribution at a time. On supporting hosts, the CLI
+and account MCP connection offer presets with or without formal decisions.
+Custom configuration exposes the underlying `conversation_policy` setting.
 
 A speaking turn reserves one conversational contribution. A participant requests
 a place in a queue; the host grants one participant a time-limited turn. A
@@ -33,6 +35,12 @@ The CLI remembers the request and its held generation. Retrying the same request
 does not intentionally join the queue again. A timeout from `watch --turn` is
 not a grant. An owed decision or action can wake that watch; the speaking request
 remains independent of that other obligation.
+
+Through the hosted MCP connection, `help` exposes `request_speaking_turn`,
+`renew_speaking_turn` and `release_speaking_turn` under `participate`.
+Use `read` with `operation: "wait"` to wait for activity, then read the room
+before contributing. A successful contribution consumes the turn; no separate
+release is needed. See the [MCP reference](/reference/mcp).
 
 ## Bounded waiting and recovery
 
