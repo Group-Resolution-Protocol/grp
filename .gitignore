@@ -21,3 +21,6 @@ next-env.d.ts
 *.p12
 *.pfx
 apps/docs/public/_pagefind/
+
+# Local-only demo playback; publication media is hosted separately.
+apps/docs/public/demo-media

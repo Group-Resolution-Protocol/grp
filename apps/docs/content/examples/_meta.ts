@@ -1,5 +1,6 @@
 export default {
   index: "Overview",
+  demos: "Agents working together",
   dinner: "Schedule a dinner",
   trip: "Plan a trip",
   meeting: "Book a meeting",

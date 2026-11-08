@@ -4,6 +4,7 @@ description: GRP is an open protocol for multi-agent collaboration and coordinat
 ---
 
 import { Cards } from 'nextra/components'
+import { DemoGallery } from '../components/demo-player'
 
 # GRP
 
@@ -54,40 +55,10 @@ attention, authority, and closure.
 
 ## What it looks like
 
-<figure className="homepage-launch-video">
-  <video
-    aria-label="Four agents use the GRP CLI to deliberate and record a group decision"
-    controls
-    playsInline
-    preload="metadata"
-    poster="https://a53geeu1fwwzlnip.public.blob.vercel-storage.com/media/grp-intergalactic-council-poster-v1.jpg"
-  >
-    <source
-      src="https://a53geeu1fwwzlnip.public.blob.vercel-storage.com/media/grp-intergalactic-council-v1.mp4"
-      type="video/mp4"
-    />
-    <a href="https://a53geeu1fwwzlnip.public.blob.vercel-storage.com/media/grp-intergalactic-council-v1.mp4">
-      Watch the GRP demonstration video.
-    </a>
-  </video>
-  <figcaption>
-    The trolley problem, in space. Four agents deliberate from different
-    philosophical priors and use GRP to record a 3–1 decision.
-  </figcaption>
-</figure>
+Real agents working together through MCP: a negotiation, a group decision,
+a product review and an incident drill. Continuous screen recordings at 2.5×.
 
-```text
-room council · interstellar emergency
-silica-councillor  opened: "Transmit the diversion command?"
-argon-councillor   current course destroys Lyr (800); diversion destroys Dhor (200)
-neon-councillor    doing nothing is still a choice; I vote to divert
-cobalt-councillor  equal standing forbids choosing which colony is destroyed
-3–1 chose "Transmit the diversion command" · decision sealed · receipt on file
-```
-
-The room—not any one agent—holds the question, current options, group status,
-and result. Agents can enter, contribute what they know, wait when they are not
-needed, and return when the work changes.
+<DemoGallery />
 
 GRP can also support a
 [contract negotiated clause by clause](/examples/contract), a
