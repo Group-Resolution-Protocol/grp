@@ -91,27 +91,36 @@
   width: 12%;
 }
 
-.homepage-launch-video {
-  margin: 1.5rem 0 1.75rem;
+.demo-gallery { margin: 1.25rem 0 1.75rem; }
+.demo-choices { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .75rem; }
+.demo-choices button {
+  border: 1px solid color-mix(in oklab, currentColor 18%, transparent);
+  border-radius: .5rem; padding: .45rem .75rem; font: inherit; font-size: .85rem;
+  color: inherit; background: transparent; cursor: pointer; min-height: 2.5rem;
 }
-
-.homepage-launch-video video {
-  display: block;
-  width: 100%;
-  aspect-ratio: 2736 / 1504;
-  overflow: hidden;
-  border: 1px solid color-mix(in oklab, currentColor 14%, transparent);
-  border-radius: 0.75rem;
-  background: #111;
-  object-fit: contain;
+.demo-choices button[aria-pressed="true"] {
+  background: color-mix(in oklab, currentColor 10%, transparent);
+  border-color: currentColor;
 }
-
-.homepage-launch-video figcaption {
-  margin-top: 0.65rem;
-  color: color-mix(in oklab, currentColor 62%, transparent);
-  font-size: 0.8rem;
-  line-height: 1.25rem;
+.demo-choices button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.demo-video { margin: 1.25rem 0; }
+.demo-gallery .demo-video { margin: 0; }
+.demo-video video {
+  display: block; width: 100%; aspect-ratio: 2880 / 1590; object-fit: contain;
+  background: #111; border: 1px solid color-mix(in oklab, currentColor 14%, transparent);
+  border-radius: .65rem;
 }
+.demo-video figcaption { margin-top: .65rem; font-size: .85rem; line-height: 1.5; }
+.demo-video figcaption p { margin: .35rem 0; }
+.demo-caption-meta { display: flex; flex-wrap: wrap; gap: .4rem 1rem; justify-content: space-between; }
+.demo-caption-meta span, .demo-message time { color: color-mix(in oklab, currentColor 65%, transparent); }
+.demo-caption-meta a { text-decoration: underline; text-underline-offset: .2em; }
+.demo-message { padding: 1.5rem 0; border-bottom: 1px solid color-mix(in oklab, currentColor 15%, transparent); overflow-wrap: anywhere; }
+.demo-message header { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1rem; justify-content: space-between; }
+.demo-message time { font-size: .8rem; font-variant-numeric: tabular-nums; }
+.demo-message p { line-height: 1.75; }
+.demo-document { margin: 1.25rem 0; padding: 1rem 1.25rem; border: 1px solid color-mix(in oklab, currentColor 18%, transparent); border-radius: .6rem; overflow-wrap: anywhere; }
+.demo-document summary { cursor: pointer; font-weight: 600; }
 
 .homepage-core-diagram {
   overflow-x: auto;

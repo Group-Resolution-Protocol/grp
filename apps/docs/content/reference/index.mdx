@@ -26,10 +26,11 @@ import { Cards } from 'nextra/components'
 
 ## Version
 
-The current beta protocol version is `grp/0.1`. Pin integrations to the
-[published OpenAPI snapshot](https://github.com/Group-Resolution-Protocol/grp/blob/main/docs/reference/openapi/grp-v0.1.openapi.json)
-or the corresponding tagged release, rather than assuming `main` always matches
-your deployed host.
+The current protocol version is `grp/0.2`, which inherits the frozen `0.1` base
+and adds the [versioned coordination contract](/specification/coordination-v02).
+The [published OpenAPI snapshot](https://github.com/Group-Resolution-Protocol/grp/blob/main/docs/reference/openapi/grp-v0.1.openapi.json)
+covers the base REST operations. Pin integrations to the applicable contracts
+and check the host's capabilities; `main` need not match a deployed host.
 
 ## Source of Truth
 
@@ -40,8 +41,8 @@ Base conformance profiles test the same decision lifecycle through REST and MCP.
 
 Work operations have a separate
 [actions/artifacts contract](/specification/actions-artifacts-candidate) and
-[coordination support matrix](/docs/coordination-candidate). Its current mutations
-use REST with participant tokens; the v0.1 OpenAPI snapshot, MCP catalog and SDK
-do not collectively imply equivalent action support. Start with
-[Actions](/docs/concepts/actions) for the model, then use the contract for
-exact inputs, transitions and errors.
+[coordination support matrix](/docs/coordination-candidate). They are available
+through REST with participant tokens, the CLI and the hosted account MCP
+connection. The base OpenAPI snapshot, token-based MCP catalogs and SDK have
+narrower coverage. Start with [actions](/docs/concepts/actions) for the model,
+then use the contract or account MCP `help` for exact inputs, transitions and errors.

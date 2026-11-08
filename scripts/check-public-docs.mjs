@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contentRoot = path.join(repoRoot, "apps/docs/content");
+const publicRoot = path.join(repoRoot, "apps/docs/public");
+const publicAssets = new Set((await walk(publicRoot)).map((file) =>
+  `/${path.relative(publicRoot, file).split(path.sep).join("/")}`,
+));
 const pages = (await walk(contentRoot)).filter((file) => file.endsWith(".mdx")).sort();
 const routes = new Map(pages.map((file) => [routeFor(file), file]));
 const sources = new Map(
@@ -34,6 +38,7 @@ for (const file of pages) {
   for (const href of internalLinks(source)) {
     const route = normalizeRoute(href);
     const target = routes.get(route);
+    if (!target && publicAssets.has(route) && !anchorFor(href)) continue;
     if (!target) {
       pageFailures.push(`internal link does not resolve: ${href}`);
       continue;

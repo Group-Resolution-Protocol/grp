@@ -51,7 +51,7 @@ conflict:
 - **GRP** gives a group a shared place to talk, decide, and act.
 
 The legacy endpoint carries a GRP decision's lifecycle —
-`proposing → voting → resolved` (see [Decisions](/specification/decisions)) —
+`proposing → voting → resolved` (see [decisions](/specification/decisions)) —
 inside its older A2A-shaped task vocabulary. That mapping describes the
 implementation; it is not a current A2A 1.0 compatibility claim.
 
@@ -240,7 +240,7 @@ A choice is sent as an A2A `Message` part with media type `application/vnd.grp.v
 }
 ```
 
-A formal abstention ([Decisions §3.8](/specification/decisions)) is the same part with `data.abstain: true` and a required `data.reason` (1–500 characters) in place of `choice` — full parity with the REST and MCP abstain acts.
+A formal abstention ([decisions §3.8](/specification/decisions)) is the same part with `data.abstain: true` and a required `data.reason` (1–500 characters) in place of `choice` — full parity with the REST and MCP abstain acts.
 
 ### 6.2 Discussion
 
@@ -300,7 +300,7 @@ them does **not** make a room A2A 1.0 conformant:
    a valid `grp:decision_id` in metadata produces server-side state changes
    equivalent to the corresponding REST or MCP call. A creator `tasks/send`
    instead creates a new room from `grp:decision_config`.
-4. Lifecycle transitions follow [Decisions](/specification/decisions), mapped onto A2A task states per §5.
+4. Lifecycle transitions follow [decisions](/specification/decisions), mapped onto A2A task states per §5.
 5. A choice `Part` with `mimeType: "application/vnd.grp.vote+json"` is accepted iff `metadata["grp:join_token"]` resolves to an eligible participant in the target room.
 6. On `completed`, the receipt `Artifact` has `mimeType: "application/grp-receipt+jwt"` for compact-JWS receipts and is byte-identical to the receipt returned by the corresponding GRP receipt endpoint.
 

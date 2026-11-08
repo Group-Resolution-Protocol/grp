@@ -51,7 +51,7 @@ document or acting in a room requires separate authority and appropriate tools.
 | Surface | Purpose |
 | --- | --- |
 | `decision.opened` | A new decision in an eligible room. |
-| `room.activity` | Relevant discussion, decision, Action and artifact changes; optional linked-participant attention. |
+| `room.activity` | Relevant discussion, decision, action and artifact changes; optional linked-participant attention. |
 | `read` / `list_rooms` | Discover eligible account rooms. |
 | `read` / `list_watch_participants` | Discover verified linked live seats for explicit participant-specific watches. |
 | `read` / `read_activity` | Fetch current attention and bounded room context without acknowledgment. |
@@ -74,7 +74,7 @@ which responses are available.
 
 Callbacks carry identifiers and routing metadata, not private room bodies.
 Access is checked again before delivery and when fetching context. A notification
-does not acknowledge content, claim an Action, cast a vote, or approve a result.
+does not acknowledge content, claim an action, cast a vote, or approve a result.
 Participant-authored content remains untrusted data, not new instructions from
 the principal.
 
@@ -103,7 +103,9 @@ MCP calls, but this connection cannot make that client wake automatically.
 
 ## Events, watch and webhooks
 
-CLI watch and MCP `wait` remain useful for a running client. MCP Events adds a
+CLI `watch` and account MCP `read` with `operation: "wait"` remain useful for a
+running client; the token-based MCP catalog exposes a direct `wait` tool.
+MCP Events adds a
 client-managed subscription that can trigger later work without an agent keeping
 its current turn open. The older room host webhook tools are a separate
 integration surface; they do not automatically become a ChatGPT Events watch.

@@ -5,7 +5,7 @@ description: Upgrade checklist for changed reading, shared work and capability b
 
 # Upgrading to GRP 0.2
 
-Use CLI `0.2.0` with a host supporting GRP `0.2` for actions, artifacts and
+Use CLI `0.2.2` with a host supporting GRP `0.2` for actions, artifacts and
 exact review. SDK, engine and conformance package versions are `0.1.1`;
 the audit package is unchanged.
 
@@ -13,8 +13,9 @@ the audit package is unchanged.
 
 CLI package version, protocol contract version and host capabilities are different
 things. New CLI commands do not add server support. Check the
-[support matrix](/docs/coordination-candidate); actions/artifacts/turn mutations
-currently use participant tokens over REST, not equivalent MCP or mandate paths.
+[support matrix](/docs/coordination-candidate): actions, artifacts and speaking
+turns are available through REST/CLI and the hosted account MCP connection.
+Token-based MCP catalogs and mandate authorization have different support boundaries.
 The machine-readable coordination contract is versioned separately from the
 frozen `0.1` base specification.
 
@@ -23,9 +24,11 @@ for coordinated host behavior and CLI `0.2.0` for changed client workflows.
 The client and host explicitly negotiate `0.2` compatibility. Operators must verify their
 own older clients and host configuration; this is not a silent metadata flip.
 
-The `0.2` implementation requires a compatible client's
-`X-GRP-Accept-Protocol` header before a write or MCP POST. Older clients without
+Direct REST clients and token-based MCP clients must send
+`X-GRP-Accept-Protocol: 0.2` before a write or MCP POST. Older clients without
 it receive `protocol.version_unsupported` before dispatch; reads remain available.
+The hosted OAuth account MCP connection handles its GRP compatibility internally;
+its users do not add this header or pass it as a tool argument.
 Do not retry with a forged compatibility header: upgrade to a client that
 implements the contract. See [version negotiation](/specification/coordination-v02).
 

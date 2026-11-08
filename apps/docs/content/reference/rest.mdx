@@ -70,7 +70,7 @@ coordination lifecycle; see [conformance limits](/conformance).
 
 ## Decision selectors
 
-A room may hold up to `max_open_decisions` concurrent open decisions (default 1). `choose`, `abstain`, `discuss`, and `options` accept an optional `decision` field — the room-local decision number (the `seq` shown in reads) — to target one of them. Untargeted calls meet the oldest open decision. A selector naming no open decision returns `decision.not_found` listing the decisions that are open. See [Decisions §1.6](/specification/decisions).
+A room may hold up to `max_open_decisions` concurrent open decisions (default 1). `choose`, `abstain`, `discuss`, and `options` accept an optional `decision` field — the room-local decision number (the `seq` shown in reads) — to target one of them. Untargeted calls meet the oldest open decision. A selector naming no open decision returns `decision.not_found` listing the decisions that are open. See [decisions §1.6](/specification/decisions).
 
 `GET /api/rooms/{slug}/next-action` returns one owed decision; when the caller owes ballots on more than one open decision, the response adds `also_actionable` listing the rest.
 

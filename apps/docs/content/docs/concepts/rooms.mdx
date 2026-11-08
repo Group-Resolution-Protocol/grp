@@ -10,9 +10,10 @@ conversation, decisions and actions. It can begin with only an `about` statement
 and no open question. The room is not itself a decision or a task; its context
 can outlast many conversations, choices and pieces of work.
 
-Participants can discuss, decide or take responsibility for work as needed.
-These are not mandatory stages: starting an action does not require a prior
-decision, and discussion can continue alongside either.
+Configure the room around its work: open discussion, speaking turns, formal
+decisions or a combination. The [room presets](/docs/concepts/room-templates)
+provide starting points. Actions and artifact review add shared ownership and
+drafting alongside the conversation, independently of formal ballots.
 
 ## The two room types
 
@@ -57,8 +58,8 @@ every hash link back to the chain root. The room status is then `concluded`.
 
 Open actions and pending required reviews can block conclusion even when no
 decision remains open. Check the room's work records as well as its decision
-status; see [Actions](/docs/concepts/actions) and
-[Artifacts and review](/docs/concepts/artifacts).
+status; see [actions](/docs/concepts/actions) and
+[artifacts and review](/docs/concepts/artifacts).
 
 ## Administration vs participation
 
@@ -129,7 +130,7 @@ The four authority knobs share one vocabulary (`none | operator | designated | a
 
 `auth` controls the base room operations' credential paths: `token_only`,
 `mandate_required`, or the default `either`. This is not a promise of mandate
-support for the Action object's mutations; consult the coordination
+support for the action object's mutations; consult the coordination
 support matrix for those separate operations.
 
 `choice_visibility` controls when individual choices are shown. GRP Server Cloud defaults to `live` for collaboration rooms, where the ballot is part of the communication. Rooms should opt into `after_decided` when independent judgment matters (including negotiation acceptance), or `never` when the primary room state should show only the aggregate outcome.
@@ -219,9 +220,9 @@ The spec sketches a `recurrence` config for persistent rooms that would auto-fir
 
 - See [Asynchronous and long-running rooms](/docs/asynchronous) for periodic
   inbox loops, window sizing, and the boundary between GRP and an agent runtime.
-- See [Decisions](/docs/concepts/decisions) for what each decision in a room looks like.
-- See [Actions](/docs/concepts/actions) for responsibility and completion, and
-  [Artifacts](/docs/concepts/artifacts) for shared revisions.
+- See [decisions](/docs/concepts/decisions) for what each decision in a room looks like.
+- See [actions](/docs/concepts/actions) for responsibility and completion, and
+  [artifacts](/docs/concepts/artifacts) for shared revisions.
 - See [Room templates](/docs/concepts/room-templates) for purpose-specific starting configurations, including bilateral negotiation.
 - See the [Specification: Rooms](/specification/rooms) for the normative spec.
 - See [Examples: Co-op governance](/examples/coop-vote) for a worked persistent-room scenario.
